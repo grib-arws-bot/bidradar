@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Table,
     UniqueConstraint,
@@ -27,6 +28,11 @@ customer = Table(
     Column("plan_tier", String(20), nullable=False, server_default="standard"),
     Column("contact_email", String(255)),
     Column("active", Boolean, nullable=False, server_default="true"),
+    # S7 관심도 공식(설계안 08절)의 "금액 부합"·"지역 부합" 조건 — 설정 안 하면(NULL) 그 조건은
+    # 적용 안 됨(가산도 제외도 없음). 설정하면 어긋나는 공고는 가산이 아니라 목록에서 제외.
+    Column("price_min", Numeric(16, 0)),
+    Column("price_max", Numeric(16, 0)),
+    Column("regions", JSONB),  # 문자열 배열
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

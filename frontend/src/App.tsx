@@ -5,6 +5,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 
 import { DashboardLayout } from "@/layouts/DashboardLayout";
 import { ComingSoonPage } from "@/pages/ComingSoonPage";
+import { CustomerInterestsPage } from "@/pages/CustomerInterestsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
@@ -49,7 +50,7 @@ function AppRoutes() {
         <Route path="/pipeline" element={<ComingSoonPage title="파이프라인" />} />
         <Route path="/orgs" element={<ComingSoonPage title="기관 프로파일" />} />
         <Route path="/analytics" element={<ComingSoonPage title="시장 분석" />} />
-        <Route path="/customers/interests" element={<ComingSoonPage title="고객 관심 주제" />} />
+        <Route path="/customers/interests" element={<CustomerInterestsPage />} />
         <Route path="/admin/sources" element={<ComingSoonPage title="소스 관리" />} />
         <Route path="/admin/keywords" element={<ComingSoonPage title="키워드 사전" />} />
         <Route path="/admin/products" element={<ComingSoonPage title="제품 카탈로그" />} />
