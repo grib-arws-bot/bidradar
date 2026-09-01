@@ -136,3 +136,95 @@ def test_filter_options_shape(client: TestClient):
     assert set(body.keys()) == {"topics", "orgs", "sources", "stages", "regions"}
     assert len(body["topics"]) > 0
     assert len(body["orgs"]) > 0
+
+
+# ---- U5: 분류 검수 액션 + S1-d 상세 -------------------------------------------------
+
+
+def _any_notice_id(client: TestClient) -> int:
+    items = client.get("/api/notices", params={"tab": "all", "size": 1}).json()["items"]
+    assert items, "시드 데이터에 공고가 있어야 함"
+    return items[0]["id"]
+
+
+def test_notice_detail_200(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.get(f"/api/notices/{notice_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == notice_id
+    assert {"scores", "requirements", "org_followed"} <= body.keys()
+
+
+def test_notice_detail_404(client: TestClient):
+    response = client.get("/api/notices/999999999")
+    assert response.status_code == 404
+
+
+def test_classification_confirm(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(f"/api/notices/{notice_id}/classification", json={"action": "confirm"})
+    assert response.status_code == 204
+
+
+def test_classification_recategorize_requires_categories(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(f"/api/notices/{notice_id}/classification", json={"action": "recategorize"})
+    assert response.status_code == 422
+
+
+def test_classification_recategorize_with_categories_succeeds(client: TestClient):
+    notice_id = _any_notice_id(client)
+    topic_id = client.get("/api/notices/filter-options").json()["topics"][0]["id"]
+    response = client.post(
+        f"/api/notices/{notice_id}/classification",
+        json={"action": "recategorize", "categories": [topic_id]},
+    )
+    assert response.status_code == 204
+
+
+def test_classification_irrelevant_requires_reason(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(f"/api/notices/{notice_id}/classification", json={"action": "irrelevant"})
+    assert response.status_code == 422
+
+    with_blank_reason = client.post(
+        f"/api/notices/{notice_id}/classification", json={"action": "irrelevant", "reason": "   "}
+    )
+    assert with_blank_reason.status_code == 422
+
+
+def test_classification_irrelevant_with_reason_succeeds(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(
+        f"/api/notices/{notice_id}/classification", json={"action": "irrelevant", "reason": "범위 밖"}
+    )
+    assert response.status_code == 204
+
+
+def test_classification_unknown_action_rejected(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(f"/api/notices/{notice_id}/classification", json={"action": "bogus"})
+    assert response.status_code == 422
+
+
+def test_neighbors_preserve_filter_and_sort(client: TestClient):
+    listing = client.get("/api/notices", params={"tab": "all", "sort": "open_desc", "size": 5}).json()["items"]
+    assert len(listing) >= 3
+    middle_id = listing[1]["id"]
+
+    response = client.get(
+        f"/api/notices/{middle_id}/neighbors", params={"tab": "all", "sort": "open_desc"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prev_id"] == listing[0]["id"]
+    assert body["next_id"] == listing[2]["id"]
+
+
+def test_follow_org(client: TestClient):
+    notice_id = _any_notice_id(client)
+    response = client.post(f"/api/notices/{notice_id}/follow-org")
+    assert response.status_code == 204
+    detail = client.get(f"/api/notices/{notice_id}").json()
+    assert detail["org_followed"] is True

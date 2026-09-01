@@ -6,6 +6,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 import { DashboardLayout } from "@/layouts/DashboardLayout";
 import { ComingSoonPage } from "@/pages/ComingSoonPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
 import { useSession } from "@/hooks/useSession";
 import { theme } from "@/theme";
@@ -43,7 +44,7 @@ function AppRoutes() {
       >
         <Route path="/" element={<Navigate to="/notices" replace />} />
         <Route path="/notices" element={<NoticeExplorePage />} />
-        <Route path="/notices/:id" element={<ComingSoonPage title="공고 상세" />} />
+        <Route path="/notices/:id" element={<NoticeDetailPage />} />
         <Route path="/analyses" element={<ComingSoonPage title="심층 분석" />} />
         <Route path="/pipeline" element={<ComingSoonPage title="파이프라인" />} />
         <Route path="/orgs" element={<ComingSoonPage title="기관 프로파일" />} />

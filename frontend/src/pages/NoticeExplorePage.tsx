@@ -13,7 +13,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { fetchFilterOptions, fetchNoticeCounts, fetchNotices, type NoticeItem, type NoticeTab } from "@/api/notices";
+import type { ClassificationAction } from "@/api/classification";
+import { fetchFilterOptions, fetchNoticeCounts, fetchNotices, type FilterOptions, type NoticeItem, type NoticeTab } from "@/api/notices";
 import { EmptyState } from "@/components/EmptyState";
 import { NoticeCard } from "@/components/NoticeCard";
 import { EMPTY_FILTERS, NoticeFilterBar, type NoticeFilterValues } from "@/components/NoticeFilterBar";
@@ -61,6 +62,8 @@ function buildQuery(sp: URLSearchParams): URLSearchParams {
 export function NoticeExplorePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState(searchParams.get("q") ?? "");
+  // U5: 분류검수 액션은 "카드만 갱신" — 목록을 다시 안 부르고 이 로컬 맵만 바꾼다.
+  const [classifiedMap, setClassifiedMap] = useState<Map<number, ClassificationAction>>(new Map());
 
   const tab = (searchParams.get("tab") as NoticeTab) || "mine";
   const sort = searchParams.get("sort") || "priority";
@@ -189,6 +192,9 @@ export function NoticeExplorePage() {
         q={q}
         tab={tab}
         hasAnyFilter={hasAnyFilter}
+        topics={filterOptionsQuery.data?.topics ?? []}
+        classifiedMap={classifiedMap}
+        onClassified={(id, action) => setClassifiedMap((prev) => new Map(prev).set(id, action))}
         onClearSearch={() => {
           setSearchInput("");
           updateParams({ q: null, page: null });
@@ -216,6 +222,9 @@ function NoticeListBody({
   q,
   tab,
   hasAnyFilter,
+  topics,
+  classifiedMap,
+  onClassified,
   onClearSearch,
   onClearFilters,
   onGoAllTab,
@@ -225,6 +234,9 @@ function NoticeListBody({
   q: string;
   tab: NoticeTab;
   hasAnyFilter: boolean;
+  topics: FilterOptions["topics"];
+  classifiedMap: Map<number, ClassificationAction>;
+  onClassified: (noticeId: number, action: ClassificationAction) => void;
   onClearSearch: () => void;
   onClearFilters: () => void;
   onGoAllTab: () => void;
@@ -248,7 +260,14 @@ function NoticeListBody({
   return (
     <Stack spacing={1.5}>
       {items.map((notice) => (
-        <NoticeCard key={notice.id} notice={notice} highlight={q} />
+        <NoticeCard
+          key={notice.id}
+          notice={notice}
+          highlight={q}
+          topics={topics}
+          classifiedAs={classifiedMap.get(notice.id) ?? null}
+          onClassified={onClassified}
+        />
       ))}
     </Stack>
   );

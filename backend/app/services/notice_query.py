@@ -38,7 +38,7 @@ class NoticeFilters:
     size: int = PAGE_SIZE
 
 
-def _grib_customer_id(conn: Connection) -> int | None:
+def grib_customer_id(conn: Connection) -> int | None:
     stmt = select(customer.c.id).where(customer.c.plan_tier == "internal").limit(1)
     return conn.execute(stmt).scalar_one_or_none()
 
@@ -169,7 +169,7 @@ def _apply_sort(stmt: Select, sort: str, priority_sq) -> Select:
 
 
 def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:
-    grib_id = _grib_customer_id(conn)
+    grib_id = grib_customer_id(conn)
     grib_topic_ids = _grib_topic_ids(conn, grib_id)
 
     priority_sq = _priority_subquery()
@@ -207,8 +207,24 @@ def count_tabs(conn: Connection) -> dict[str, int]:
 
 
 def has_grib_interests(conn: Connection) -> bool:
-    grib_id = _grib_customer_id(conn)
+    grib_id = grib_customer_id(conn)
     return bool(_grib_topic_ids(conn, grib_id))
+
+
+def ordered_ids(conn: Connection, filters: NoticeFilters) -> list[int]:
+    """S1-d 이전/다음(neighbors)용 — 현재 필터·정렬 기준으로 전체 id 순서를 반환.
+
+    페이지 규모(설계안 기준 연간 수만 건)에서는 전량 조회가 무리 없다. 커지면 그때 윈도우
+    함수로 바꾸면 되고, 지금 미리 최적화할 이유는 없다.
+    """
+    grib_id = grib_customer_id(conn)
+    grib_topic_ids = _grib_topic_ids(conn, grib_id)
+
+    priority_sq = _priority_subquery()
+    stmt = select(notice.c.id).select_from(notice).join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
+    stmt = _apply_filters(stmt, filters, grib_topic_ids)
+    stmt = _apply_sort(stmt, filters.sort, priority_sq)
+    return [row[0] for row in conn.execute(stmt)]
 
 
 def filter_options(conn: Connection) -> dict:
