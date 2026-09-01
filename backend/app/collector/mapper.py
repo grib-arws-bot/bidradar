@@ -12,7 +12,25 @@ REQUIRED_FIELDS = ("title", "org_name", "open_dt", "url")
 _DATE_FIELDS = {"open_dt", "close_dt"}
 
 
+_CONST_PREFIX = "const:"
+_URLFMT_PREFIX = "urlfmt:"
+
+
 def _resolve(item: dict, path: str) -> str | None:
+    # 부처 자체 API처럼 발주기관이 응답 필드가 아니라 소스 전체에 고정값인 경우를 위한 탈출구
+    # (advisory INBOX #2 — 과기정통부 사업공고는 org_name이 매 아이템마다 오는 게 아니라 항상
+    # "과학기술정보통신부" 고정값이다).
+    if path.startswith(_CONST_PREFIX):
+        return path[len(_CONST_PREFIX):]
+    # 상세 URL이 응답에 아예 없고 ID 필드로 직접 조립해야 하는 소스를 위한 탈출구(advisory
+    # INBOX #3 — IRIS 접수예정 응답엔 상세 URL이 없고 ancmId만 있어, 우리가 직접 조립해야 함).
+    # {필드명}은 원본 아이템의 최상위 키만 치환한다 — 중첩 경로가 필요해지면 그때 확장한다.
+    if path.startswith(_URLFMT_PREFIX):
+        template = path[len(_URLFMT_PREFIX):]
+        try:
+            return template.format(**item)
+        except (KeyError, IndexError):
+            return None
     expr = jsonpath_parse(path)
     matches = [m.value for m in expr.find(item)]
     return matches[0] if matches else None

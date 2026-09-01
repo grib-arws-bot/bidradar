@@ -79,13 +79,17 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
           <Typography variant="body2" className="tnum" fontWeight={600}>
             {formatPrice(notice.est_price)}
           </Typography>
-          {dday && (
+          {dday ? (
             <Chip
               label={dday.label}
               size="small"
               color={dday.urgent ? "error" : "default"}
               variant={dday.urgent ? "filled" : "outlined"}
             />
+          ) : (
+            // 마감일 항목 자체가 없는 소스(예: 과기정통부 사업공고)도 있다 — advisory INBOX #1
+            // 권고: 자리 자체를 비우지 말고 명시적으로 "마감일 미공개"를 보여준다.
+            <Chip label="마감일 미공개" size="small" variant="outlined" />
           )}
         </Stack>
       </Stack>

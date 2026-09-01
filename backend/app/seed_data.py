@@ -41,109 +41,18 @@ from app.models import (
     source_field_map,
     source_run,
 )
+from app.seed_constants import (
+    INTEREST_TOPICS,
+    KEYWORD_SEED,
+    NOTICE_TITLE_TEMPLATES,
+    ORG_SEED,
+    PIPELINE_STAGES,
+    REAL_OPENAPI_CONFIG,
+    SOURCE_SEED,
+    STAGES,
+)
 
 _RNG = random.Random(42)  # 재현 가능한 시드
-
-# L2-b 대분류 초안 20개 (설계안 05절 L2-b, 확정 아님 — 검토 대상)
-INTEREST_TOPICS = [
-    "산업안전/CCTV·영상보안", "스마트제조/팩토리", "로봇/자동화", "IoT/센서", "AI/데이터",
-    "스마트교육/에듀테크", "에너지/신재생·ESS", "환경/탄소중립", "헬스케어/바이오·의료기기",
-    "모빌리티/자율주행", "반도체/디스플레이", "스마트시티/인프라관제", "국방/보안",
-    "콘텐츠/미디어/XR", "물류/스마트항만", "농수산/스마트팜", "통신/5G·6G", "우주/항공",
-    "관광", "핀테크/금융보안",
-]
-
-KEYWORD_SEED = {
-    "산업안전/CCTV·영상보안": [
-        ("지능형 CCTV", "core", 3), ("영상관제", "core", 3), ("객체인식", "core", 3),
-        ("IoT 센서", "tech", 2), ("무선 AP", "tech", 2), ("구축", "ctx", 1),
-        ("임대", "block", -5), ("렌탈", "block", -5),
-    ],
-    "스마트교육/에듀테크": [
-        ("스마트교실", "core", 3), ("전자칠판", "core", 3), ("AI 디지털교과서", "core", 3),
-        ("무선 AP", "tech", 2), ("보급", "ctx", 1), ("급식", "block", -5),
-    ],
-}
-
-# 발주기관 시드 — (기관명(한글), 기관약자(영어), 분류, 소속 SOURCE_SEED 이름 또는 None, 공고 URL 또는 None).
-# "조달청"·"IRIS"는 발주기관이 아니라 공고기관(수집 채널)이라 여기 넣지 않는다(2026-09-01 지적) —
-# 채널 자체는 source 테이블에서 관리하고, org.source_id로 어느 채널을 통해 수집되는지만 연결한다.
-# 기관명은 가급적 한글로, 기관약자는 영어로 통일(2026-09-01 요청).
-ORG_SEED = [
-    ("한국수자원공사", None, "공기업(자체조달)", "K-water 입찰공고", "https://ebid.kwater.or.kr/"),
-    ("한국도로공사", None, "공기업(자체조달)", None, "https://ebid.ex.co.kr/"),
-    ("방위사업청", "DAPA", "중앙행정기관(자체조달)", None, "https://www.d2b.go.kr/"),
-    ("한국토지주택공사", "LH", "공기업(자체조달)", None, "https://ebid.lh.or.kr/"),
-    ("한국철도공사", "KORAIL", "공기업(자체조달)", None, "https://ebid.korail.com/"),
-    ("국가철도공단", "KR", "공기업(자체조달)", None, "https://ebid.kr.or.kr/"),
-    ("서울특별시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("부산광역시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("강원도교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("정보통신산업진흥원", "NIPA", "R&D 지원기관", "나라장터 입찰공고정보서비스", None),
-    ("한국콘텐츠진흥원", "KOCCA", "R&D 지원기관", None, None),
-    ("한국에너지기술평가원", "KETEP", "R&D 지원기관", None, "https://www.ketep.re.kr/"),
-    ("인천국제공항공사", "IIAC", "공기업(자체조달)", None, None),
-]
-
-SOURCE_SEED = [
-    # (이름, 기관, base_url, 홈페이지, 단계, 어댑터, is_system, skip_l1)
-    ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService",
-     "https://www.data.go.kr/data/15129462/openapi.do", "발주계획", "openapi", True, True),
-    ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService",
-     "https://www.data.go.kr/data/15129437/openapi.do", "사전규격", "openapi", True, False),
-    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/BidPublicInfoService",
-     "https://www.data.go.kr/data/15129394/openapi.do", "입찰공고", "openapi", True, False),
-    ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService",
-     "https://www.data.go.kr/data/15129397/openapi.do", "낙찰", "openapi", True, False),
-    ("K-water 입찰공고", "한국수자원공사", "https://apis.data.go.kr/B500001/kwaterBidInfo",
-     "https://www.data.go.kr/data/15101635/openapi.do", "입찰공고", "openapi", False, False),
-    ("IRIS 사업공고", "과학기술정보통신부 등", "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do",
-     "https://www.iris.go.kr", "사업공고", "html", False, True),
-    ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices",
-     None, "입찰공고", "feed", False, True),
-]
-
-# U11 collector가 실제로 소비하는 정확한 config/필드매핑 — "나라장터 입찰공고정보서비스" 하나만
-# 진짜 값으로 채워둔다(설계안 03절 호출 예시 그대로). 나머지 소스는 U13(등록마법사) 전까지
-# 구조만 있으면 되는 자리표시자라 건드리지 않는다. DATA_GO_KR_SERVICE_KEY 환경변수가 실제로
-# 설정되면 이 소스로 바로 `python -m app.cli collect --source-id <id>` 라이브 검증이 가능하다.
-REAL_OPENAPI_CONFIG = {
-    "나라장터 입찰공고정보서비스": {
-        "config": {
-            "endpoint": "https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoServc",
-            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
-            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
-            "items_path": "$.response.body.items[*]",
-        },
-        "field_maps": [
-            ("notice_no", "$.bidNtceNo", None),
-            ("title", "$.bidNtceNm", None),
-            ("org_name", "$.ntceInsttNm", None),
-            ("open_dt", "$.bidNtceDt", "%Y%m%d%H%M"),
-            ("close_dt", "$.bidClseDt", "%Y%m%d%H%M"),
-            ("est_price", "$.presmptPrce", None),
-            ("url", "$.bidNtceDtlUrl", None),
-        ],
-    }
-}
-
-# (제목 템플릿, 업무구분, 사업유형) — 사업유형은 app/collector/work_type.py의 실제 추정
-# 규칙과 일치하게 맞춰뒀다(데모 데이터도 같은 근거로 채워지도록).
-NOTICE_TITLE_TEMPLATES = [
-    ("{org} 지능형 CCTV 통합관제시스템 구축", "용역", "구축"),
-    ("{org} 스마트 안전관리시스템 고도화", "용역", "개발"),
-    ("{org} IoT 센서 기반 시설물 안전관제 용역", "용역", "운영"),
-    ("{org} AI 영상분석 관제 플랫폼 도입", "용역", "구축"),
-    ("{org} 스마트교실 전자칠판 보급사업", "물품", "구매"),
-    ("{org} AI 디지털교과서 단말 구매", "물품", "구매"),
-    ("{org} 순찰로봇 시범사업", "용역", "구축"),
-    ("{org} 무인이동체(드론) 안전점검 용역", "용역", "운영"),
-    ("{org} 관제실 청소용역", "용역", "운영"),
-    ("{org} CCTV 임대 및 유지보수", "용역", "유지보수"),
-]
-
-STAGES = ["발주계획", "사전규격", "입찰공고", "낙찰", "계약"]
-PIPELINE_STAGES = ["collected", "l1_passed", "l2_scored", "l3_judged", "triaged", "archived"]
 
 
 def _now() -> datetime:
@@ -221,12 +130,12 @@ def _seed_orgs(conn, source_id_by_name: dict[str, int]) -> list[int]:
 def _seed_sources(conn) -> tuple[list[int], list[int]]:
     source_ids: list[int] = []
     config_ids: list[int] = []
-    for name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1 in SOURCE_SEED:
+    for name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1, frequency_minutes in SOURCE_SEED:
         row = conn.execute(
             insert(source).values(
                 name=name, org_name=org_name, base_url=url, homepage_url=homepage_url,
                 stage=stage, adapter_type=adapter,
-                frequency_minutes=60, is_system=is_system, skip_l1=skip_l1, active=True,
+                frequency_minutes=frequency_minutes, is_system=is_system, skip_l1=skip_l1, active=True,
             ).returning(source.c.id)
         ).one()
         source_ids.append(row.id)

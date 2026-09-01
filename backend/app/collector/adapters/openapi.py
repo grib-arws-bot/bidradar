@@ -19,6 +19,9 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
     """source_config.config(JSONB) 형태:
     {
       "endpoint": "https://apis.data.go.kr/1230000/ao/BidPublicInfoService/getBidPblancListInfoServc",
+      "method": "GET",  # 생략 시 GET. "POST"면 params를 폼 바디로 보낸다(공공데이터포털 API가
+                        # 아니라 IRIS처럼 서비스키 없는 내부 JSON 엔드포인트를 그대로 호출할 때 씀 —
+                        # advisory INBOX #3, 2026-09-01 직접 확인
       "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
       "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
       "items_path": "$.response.body.items[*]"
@@ -29,6 +32,7 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
     호출기로 남겨야 새 소스 추가 시 이 파일을 고치지 않아도 된다(설계안 04-1).
     """
     endpoint = config["endpoint"]
+    method = config.get("method", "GET").upper()
     params = dict(config.get("params", {}))
     if service_key:
         params["ServiceKey"] = service_key
@@ -39,7 +43,10 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
         params[date_range["begin"]] = begin.strftime(fmt)
         params[date_range["end"]] = end.strftime(fmt)
 
-    response = fetch(endpoint, params=params)
+    if method == "POST":
+        response = fetch(endpoint, method="POST", data=params)
+    else:
+        response = fetch(endpoint, params=params)
     payload = response.json()
 
     items_path = config.get("items_path", "$.response.body.items[*]")

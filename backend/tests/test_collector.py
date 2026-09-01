@@ -90,6 +90,31 @@ def test_fetch_openapi_items_parses_response_and_builds_params(monkeypatch):
     assert "inqryBgnDt" in sent_params and "inqryEndDt" in sent_params
 
 
+def test_fetch_openapi_items_post_method_sends_form_body(monkeypatch):
+    # advisory INBOX #3(2026-09-01) — IRIS 접수예정은 서비스키 없는 내부 JSON 엔드포인트를
+    # POST 폼바디로 호출해야 실제 데이터가 나온다(GET으로 페이지 자체를 열면 빈 템플릿만 옴).
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"listBsnsAncmBtinSitu": SAMPLE_ITEMS}
+    mock_fetch = mock.Mock(return_value=mock_response)
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    config = {
+        "endpoint": "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
+        "method": "POST",
+        "params": {"pageIndex": "1"},
+        "items_path": "$.listBsnsAncmBtinSitu[*]",
+    }
+    now = datetime.now(timezone.utc)
+    items = fetch_openapi_items(config, None, begin=now, end=now)
+
+    assert items == SAMPLE_ITEMS
+    call_args = mock_fetch.call_args
+    assert call_args.args[0] == config["endpoint"]
+    assert call_args.kwargs["method"] == "POST"
+    assert call_args.kwargs["data"]["pageIndex"] == "1"
+    assert "params" not in call_args.kwargs
+
+
 # ---- 수집 기간(직전 성공 이후~지금, 없으면 2개월 캡, 2026-09-01 결정) ------------------
 
 
@@ -165,6 +190,22 @@ def test_map_item_success():
 def test_map_item_missing_required_field_returns_none():
     broken = {**SAMPLE_ITEMS[0], "bidNtceNm": ""}
     assert map_item(broken, FIELD_MAPS) is None
+
+
+def test_map_item_const_prefix_sets_fixed_value_regardless_of_item():
+    # advisory INBOX #2 — 과기정통부 사업공고처럼 발주기관이 응답 필드가 아니라 소스 전체
+    # 고정값인 경우. close_dt가 아예 없는 소스도 흉내낸다(마감일 없는 공고, INBOX #1).
+    field_maps = [
+        {"target_field": "title", "source_path": "$.subject", "format_hint": None},
+        {"target_field": "org_name", "source_path": "const:과학기술정보통신부", "format_hint": None},
+        {"target_field": "open_dt", "source_path": "$.pressDt", "format_hint": "%Y%m%d"},
+        {"target_field": "url", "source_path": "$.viewUrl", "format_hint": None},
+    ]
+    item = {"subject": "2026년도 R&D 사업 공고", "pressDt": "20260901", "viewUrl": "https://msit.example/1"}
+    mapped = map_item(item, field_maps)
+    assert mapped is not None
+    assert mapped["org_name"] == "과학기술정보통신부"
+    assert mapped.get("close_dt") is None  # 매핑 자체가 없으므로 항상 None — 필수 필드가 아니라 통과됨
 
 
 # ---- 스코어러(L2) --------------------------------------------------------
