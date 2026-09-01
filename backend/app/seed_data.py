@@ -72,6 +72,7 @@ ORG_NAMES = [
 ]
 
 SOURCE_SEED = [
+    ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService", "발주계획", "openapi", True, True),
     ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService", "사전규격", "openapi", True, False),
     ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/BidPublicInfoService", "입찰공고", "openapi", True, False),
     ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService", "낙찰", "openapi", True, False),
@@ -112,7 +113,7 @@ NOTICE_TITLE_TEMPLATES = [
     "{org} 관제실 청소용역", "{org} CCTV 임대 및 유지보수",
 ]
 
-STAGES = ["사전규격", "입찰공고", "낙찰", "계약"]
+STAGES = ["발주계획", "사전규격", "입찰공고", "낙찰", "계약"]
 PIPELINE_STAGES = ["collected", "l1_passed", "l2_scored", "l3_judged", "triaged", "archived"]
 
 
