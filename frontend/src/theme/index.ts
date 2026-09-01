@@ -1,0 +1,77 @@
+import { createTheme } from "@mui/material/styles";
+
+// 출처: prototype/bidradar-prototype.html :root (구현스펙 05절 디자인 토큰). 값을 그대로 옮김 —
+// 프로토타입이 바뀌면 여기도 같이 바꿔야 "테마가 프로토타입과 일치"가 계속 성립한다.
+export const theme = createTheme({
+  palette: {
+    primary: {
+      lighter: "#FFE9DC",
+      light: "#FF9E6B",
+      main: "#DE5B21",
+      dark: "#B24314",
+      darker: "#78290C",
+      contrastText: "#FFFFFF",
+    },
+    secondary: {
+      lighter: "#D8F1F0",
+      light: "#4BB3B0",
+      main: "#0B7A78",
+      dark: "#065452",
+      contrastText: "#FFFFFF",
+    },
+    success: { main: "#118D57" },
+    warning: { main: "#B76E00" },
+    error: { main: "#B71D18" },
+    grey: {
+      100: "#F9FAFB",
+      200: "#F4F6F8",
+      300: "#DFE3E8",
+      400: "#C4CDD5",
+      500: "#919EAB",
+      600: "#637381",
+      700: "#454F5B",
+      800: "#212B36",
+      900: "#161C24",
+    },
+    background: {
+      default: "#F4F6F8",
+      paper: "#FFFFFF",
+    },
+    text: {
+      primary: "#212B36",
+    },
+  },
+  shape: {
+    borderRadius: 8, // 버튼 기준(--r-btn). 카드는 컴포넌트별로 16 오버라이드
+  },
+  typography: {
+    fontFamily: '"DM Sans","Noto Sans KR",-apple-system,system-ui,sans-serif',
+    fontSize: 14,
+    h2: { fontSize: 24, fontWeight: 700 },
+    h3: { fontSize: 15.5, fontWeight: 700 },
+    body1: { fontSize: 14, lineHeight: 1.6 },
+  },
+  components: {
+    MuiCard: {
+      styleOverrides: {
+        root: { borderRadius: 16 },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: { borderRadius: 6 },
+      },
+    },
+  },
+});
+
+declare module "@mui/material/styles" {
+  interface PaletteColor {
+    lighter?: string;
+    darker?: string;
+  }
+  interface SimplePaletteColorOptions {
+    lighter?: string;
+    darker?: string;
+  }
+}

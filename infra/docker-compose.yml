@@ -1,5 +1,5 @@
 # BidRadar 로컬(stg) 개발용 docker-compose. ARWS infra/ 구조를 복제하되 n8n·Baserow는 없음
-# (의사결정_로그 2번). U1 범위: postgres + backend 골격만. frontend는 U3에서 추가.
+# (의사결정_로그 2번).
 #
 # ⚠️ 2026-09-01 사고 기록: 이 폴더명이 ARWS의 infra/와 동일("infra")하고, docker compose가
 # 기본으로 "폴더명"을 프로젝트명으로 쓰기 때문에, 최초 작성 시 `name:`을 지정하지 않아
@@ -48,6 +48,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  frontend:
+    build: ../frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      # 브라우저가 실제로 보는 유일한 포트. /api는 nginx.conf가 backend로 프록시.
+      - "127.0.0.1:13200:80"
+    depends_on:
+      - backend
 
 volumes:
   db_data:

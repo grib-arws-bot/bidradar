@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     session_secret: str = "dev-only-change-me"
     admin_email: str = "report@grib.co.kr"
     admin_password_hash: str = ""
+    environment: str = "development"
+
+    @property
+    def is_dev(self) -> bool:
+        return self.environment != "production"
 
 
 settings = Settings()

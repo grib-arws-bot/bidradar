@@ -4,6 +4,7 @@
 """
 
 from app.models.base import metadata
+from app.models.auth import auth_session, login_attempt
 from app.models.customers import (
     customer,
     customer_followed_org,
@@ -42,6 +43,9 @@ from app.models.sources import (
 
 __all__ = [
     "metadata",
+    # auth
+    "auth_session",
+    "login_attempt",
     # customers
     "customer",
     "interest_topic",

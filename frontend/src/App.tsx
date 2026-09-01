@@ -1,0 +1,72 @@
+import { CircularProgress, CssBaseline, ThemeProvider } from "@mui/material";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
+import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
+
+import { DashboardLayout } from "@/layouts/DashboardLayout";
+import { ComingSoonPage } from "@/pages/ComingSoonPage";
+import { LoginPage } from "@/pages/LoginPage";
+import { useSession } from "@/hooks/useSession";
+import { theme } from "@/theme";
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+});
+
+function RequireAuth({ children }: { children: ReactElement }) {
+  const { data, isLoading, isError } = useSession();
+
+  if (isLoading) {
+    return (
+      <div style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
+        <CircularProgress />
+      </div>
+    );
+  }
+  if (isError || !data) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <DashboardLayout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/" element={<Navigate to="/notices" replace />} />
+        <Route path="/notices" element={<ComingSoonPage title="공고 탐색" />} />
+        <Route path="/notices/:id" element={<ComingSoonPage title="공고 상세" />} />
+        <Route path="/analyses" element={<ComingSoonPage title="심층 분석" />} />
+        <Route path="/pipeline" element={<ComingSoonPage title="파이프라인" />} />
+        <Route path="/orgs" element={<ComingSoonPage title="기관 프로파일" />} />
+        <Route path="/analytics" element={<ComingSoonPage title="시장 분석" />} />
+        <Route path="/customers/interests" element={<ComingSoonPage title="고객 관심 주제" />} />
+        <Route path="/admin/sources" element={<ComingSoonPage title="소스 관리" />} />
+        <Route path="/admin/keywords" element={<ComingSoonPage title="키워드 사전" />} />
+        <Route path="/admin/products" element={<ComingSoonPage title="제품 카탈로그" />} />
+        <Route path="/admin/audit" element={<ComingSoonPage title="감사 로그" />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export function App() {
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
+  );
+}
