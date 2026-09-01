@@ -6,6 +6,7 @@ from app.api.notices import router as notices_router
 from app.api.overview import router as overview_router
 from app.api.public import router as public_router
 from app.api.sources import router as sources_router
+from app.api.topics import router as topics_router
 from app.config import settings
 
 app = FastAPI(title="BidRadar API")
@@ -15,6 +16,7 @@ app.include_router(customers_router)
 app.include_router(overview_router)
 app.include_router(public_router)
 app.include_router(sources_router)
+app.include_router(topics_router)
 
 
 @app.get("/api/health")

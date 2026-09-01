@@ -1,6 +1,7 @@
 import ApartmentIcon from "@mui/icons-material/ApartmentOutlined";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import BookmarkIcon from "@mui/icons-material/BookmarkBorderOutlined";
+import CategoryIcon from "@mui/icons-material/CategoryOutlined";
 import DictionaryIcon from "@mui/icons-material/MenuBookOutlined";
 import HomeIcon from "@mui/icons-material/HomeOutlined";
 import InsightsIcon from "@mui/icons-material/InsightsOutlined";
@@ -69,6 +70,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "관리",
     items: [
       { label: "소스 관리", to: "/admin/sources", icon: <SourceIcon fontSize="small" /> },
+      { label: "관심주제 분류", to: "/admin/topics", icon: <CategoryIcon fontSize="small" /> },
       { label: "키워드 사전", to: "/admin/keywords", icon: <DictionaryIcon fontSize="small" /> },
       { label: "제품 카탈로그", to: "/admin/products", icon: <InventoryIcon fontSize="small" /> },
       { label: "감사 로그", to: "/admin/audit", icon: <SettingsIcon fontSize="small" /> },
