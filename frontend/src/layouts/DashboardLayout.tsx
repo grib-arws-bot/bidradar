@@ -26,6 +26,7 @@ import type { ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { logout } from "@/api/auth";
+import Logo from "@/components/Logo";
 import { useSession } from "@/hooks/useSession";
 
 const NAV_WIDTH = 300;
@@ -102,31 +103,9 @@ export function DashboardLayout() {
           flexDirection: "column",
         }}
       >
-        <Stack direction="row" spacing={1.25} alignItems="center" sx={{ px: 1, pb: 2.5 }}>
-          <Box
-            sx={{
-              width: 34,
-              height: 34,
-              borderRadius: "10px",
-              display: "grid",
-              placeItems: "center",
-              color: "#fff",
-              fontWeight: 700,
-              background: (theme) =>
-                `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.primary.dark})`,
-            }}
-          >
-            B
-          </Box>
-          <Box>
-            <Typography fontWeight={700} sx={{ letterSpacing: "-0.02em" }}>
-              BidRadar
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              입찰 레이더
-            </Typography>
-          </Box>
-        </Stack>
+        <Box sx={{ px: 1, pb: 2.5 }}>
+          <Logo size={34} showSub />
+        </Box>
 
         {NAV_SECTIONS.map((section) => (
           <Box key={section.label} sx={{ mb: 1 }}>

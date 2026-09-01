@@ -57,7 +57,7 @@ a{color:inherit;text-decoration:none}
 .brand .logo{
   width:34px;height:34px;border-radius:10px;flex:0 0 34px;
   background:linear-gradient(135deg,var(--p-main),var(--p-dark));
-  display:grid;place-items:center;color:#fff;font-weight:700;font-size:15px;
+  display:grid;place-items:center;
 }
 .brand b{font-size:17px;font-weight:700;letter-spacing:-.02em}
 .brand small{display:block;color:var(--g500);font-size:11px;font-weight:500;margin-top:-3px}
@@ -391,8 +391,12 @@ a{color:inherit;text-decoration:none}
   <!-- ============ Sidebar : MUI Drawer + List ============ -->
   <aside class="nav">
     <div class="brand">
-      <div class="logo">BR</div>
-      <div><b>BidRadar</b><small>(주)그립 입찰 레이더</small></div>
+      <div class="logo"><svg width="22" height="22" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#fff" stroke-width="2.8" stroke-opacity=".55"/>
+        <circle cx="24" cy="24" r="10.5" stroke="#fff" stroke-width="2.8" stroke-opacity=".8"/>
+        <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#fff" stroke-width="2.8" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="3.6" fill="#fff"/></svg></div>
+      <div><b>Bid<span style="color:var(--p-main)">Radar</span></b><small>(주)그립 입찰 레이더</small></div>
     </div>
 
     <div class="nav-lbl">공고</div>

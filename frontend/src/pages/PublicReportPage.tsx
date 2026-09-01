@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 
 import { fetchPublicReport } from "@/api/reports";
+import Logo from "@/components/Logo";
 
 function formatPrice(value: number | null): string {
   if (value === null) return "미공개";
@@ -39,21 +40,7 @@ export function PublicReportPage() {
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default", py: { xs: 3, md: 6 } }}>
       <Stack spacing={3} sx={{ maxWidth: 720, mx: "auto", px: 2 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
-          <Box
-            sx={{
-              width: 34,
-              height: 34,
-              borderRadius: "10px",
-              display: "grid",
-              placeItems: "center",
-              color: "#fff",
-              fontWeight: 700,
-              background: (theme) => `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.primary.dark})`,
-            }}
-          >
-            B
-          </Box>
-          <Typography fontWeight={700}>BidRadar</Typography>
+          <Logo size={34} />
           <Chip label={data.customer_name} size="small" sx={{ ml: "auto" }} />
         </Stack>
 
