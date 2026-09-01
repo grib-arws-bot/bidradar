@@ -10,14 +10,15 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword@127.0.0.1:15432/bidradar")
 
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
 
 from app.collector.adapters.openapi import fetch_openapi_items
 from app.collector.mapper import map_item
-from app.collector.runner import run_source
+from app.collector.runner import _collection_window, run_source
 from app.collector.scorer import score_l2
 from app.db import engine
 from app.models import notice, notice_score, raw_payload, source, source_run
@@ -77,7 +78,8 @@ def test_fetch_openapi_items_parses_response_and_builds_params(monkeypatch):
         "items_path": "$.response.body.items[*]",
     }
 
-    items = fetch_openapi_items(config, "test-service-key", lookback_days=3)
+    now = datetime.now(timezone.utc)
+    items = fetch_openapi_items(config, "test-service-key", begin=now - timedelta(days=3), end=now)
 
     assert items == SAMPLE_ITEMS
     call_args = mock_fetch.call_args
@@ -85,6 +87,37 @@ def test_fetch_openapi_items_parses_response_and_builds_params(monkeypatch):
     sent_params = call_args.kwargs["params"]
     assert sent_params["ServiceKey"] == "test-service-key"
     assert "inqryBgnDt" in sent_params and "inqryEndDt" in sent_params
+
+
+# ---- 수집 기간(직전 성공 이후~지금, 없으면 2개월 캡, 2026-09-01 결정) ------------------
+
+
+def test_collection_window_uses_last_ok_run_with_one_hour_overlap():
+    source_id = _bid_service_source_id()
+    # 시드 데이터가 이 소스에 무작위 status의 source_run 30일치를 이미 넣어뒀으므로, "지금"보다
+    # 살짝 이전 시각을 넣으면 그 어떤 시드 이력보다도 최신이라 func.max()가 이걸 고르게 된다 —
+    # 기존 이력을 지우지 않고도(다른 테스트·현재 켜진 데모 화면에 영향 없이) 검증 가능하다.
+    last_ok = datetime.now(timezone.utc) - timedelta(seconds=1)
+    with engine.begin() as conn:
+        run_id = conn.execute(
+            insert(source_run).values(source_id=source_id, run_at=last_ok, status="ok", items_fetched=1).returning(
+                source_run.c.id
+            )
+        ).scalar_one()
+    try:
+        with engine.connect() as conn:
+            begin, _end = _collection_window(conn, source_id, max_lookback_days=60)
+        assert begin == last_ok - timedelta(hours=1)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(source_run).where(source_run.c.id == run_id))
+
+
+def test_collection_window_caps_at_max_lookback_when_no_success_history():
+    # source_run이 아예 없는 소스(존재하지 않는 source_id로도 충분 — 함수가 source 테이블은 안 봄)
+    with engine.connect() as conn:
+        begin, end = _collection_window(conn, source_id=-1, max_lookback_days=60)
+    assert end - begin == timedelta(days=60)
 
 
 # ---- 매퍼 --------------------------------------------------------------
@@ -182,6 +215,25 @@ def test_run_source_is_idempotent_on_rerun(monkeypatch):
     # 같은 url(공고)이 이미 있으면 새로 insert하지 않는다 — "inserted" 0.
     assert second["inserted"] == 0
     assert second["fetched"] == 2
+
+
+def test_run_source_second_call_narrows_window_to_last_success(monkeypatch):
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"response": {"body": {"items": SAMPLE_ITEMS}}}
+    mock_fetch = mock.Mock(return_value=mock_response)
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    source_id = _bid_service_source_id()
+    with engine.begin() as conn:
+        run_source(conn, source_id)
+    first_begin = mock_fetch.call_args.kwargs["params"]["inqryBgnDt"]
+
+    with engine.begin() as conn:
+        run_source(conn, source_id)
+    second_begin = mock_fetch.call_args.kwargs["params"]["inqryBgnDt"]
+
+    # 직전 성공 수집 시각을 기준으로 좁혀져야 한다 — 매번 60일 전 고정값으로 되돌아가면 안 됨
+    assert second_begin > first_begin
 
 
 def test_run_source_records_failure_and_reraises(monkeypatch):
