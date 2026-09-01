@@ -1,0 +1,53 @@
+# BidRadar 로컬(stg) 개발용 docker-compose. ARWS infra/ 구조를 복제하되 n8n·Baserow는 없음
+# (의사결정_로그 2번). U1 범위: postgres + backend 골격만. frontend는 U3에서 추가.
+#
+# ⚠️ 2026-09-01 사고 기록: 이 폴더명이 ARWS의 infra/와 동일("infra")하고, docker compose가
+# 기본으로 "폴더명"을 프로젝트명으로 쓰기 때문에, 최초 작성 시 `name:`을 지정하지 않아
+# ARWS의 실제 운영 backend 컨테이너(infra-backend-1)가 BidRadar 이미지로 잠깐 교체되는
+# 사고가 있었음(즉시 ARWS 쪽에서 재기동해 복구함). 재발 방지를 위해 프로젝트명을 명시 고정한다.
+name: bidradar
+
+services:
+  db:
+    image: postgres:16.4-bookworm
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-bidradar}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-bidradar}
+      - POSTGRES_DB=${POSTGRES_DB:-bidradar}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bidradar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      # 로컬 개발 편의용(psql 직접 접속). prod는 이 포트를 열지 않음(docker-compose.prod.yml, U16).
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  backend:
+    build: ../backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-bidradar}:${POSTGRES_PASSWORD:-bidradar}@db:5432/${POSTGRES_DB:-bidradar}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-report@grib.co.kr}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+    ports:
+      # 브라우저는 이 포트를 직접 호출하지 않음(nginx가 /api를 리버스 프록시, U3에서 추가) —
+      # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출.
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
