@@ -57,6 +57,7 @@ notice = Table(
     Column("close_dt", DateTime(timezone=True)),
     Column("url", Text, nullable=False),
     Column("pipeline_stage", String(30), nullable=False, server_default="collected"),  # S2 칸반 단계
+    Column("assignee_name", String(100)),  # 자유텍스트 담당자명(개별 계정 없음, 03절 v0.3)
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
