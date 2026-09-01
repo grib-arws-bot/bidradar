@@ -9,13 +9,13 @@ from app.db import engine
 from app.deps import require_auth
 from app.services.classification import ClassificationError, record_classification
 from app.services.notice_detail import follow_org, get_neighbors, get_notice_detail
-from app.services.notice_query import NoticeFilters, count_tabs, filter_options, has_grib_interests, list_notices
+from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
 
 router = APIRouter(prefix="/api/notices", tags=["notices"])
 
 
 def _notice_filters(
-    tab: str = Query("mine"),
+    tab: str = Query(DEFAULT_TAB),
     q: str | None = Query(None),
     domain: list[int] = Query(default_factory=list, alias="domain[]"),
     org: list[int] = Query(default_factory=list, alias="org[]"),
@@ -57,11 +57,7 @@ def get_notices(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ) -> dict:
-    # 관심 프로필이 비어 있으면 '내 관심' 대신 전체를 기본으로(S1 빈 상태 원칙) — 서비스 레이어가
-    # 아니라 여기서 결정하는 이유는 "탭을 뭘로 보여줄지"가 화면 정책이라 라우터가 알맞기 때문.
     with engine.connect() as conn:
-        if filters.tab == "mine" and not has_grib_interests(conn):
-            filters.tab = "all"
         filters.page, filters.size = page, size
         items, total = list_notices(conn, filters)
 
@@ -94,8 +90,6 @@ def get_notice_neighbors(
     notice_id: int, _email: str = Depends(require_auth), filters: NoticeFilters = Depends(_notice_filters)
 ) -> dict:
     with engine.connect() as conn:
-        if filters.tab == "mine" and not has_grib_interests(conn):
-            filters.tab = "all"
         return get_neighbors(conn, notice_id, filters)
 
 

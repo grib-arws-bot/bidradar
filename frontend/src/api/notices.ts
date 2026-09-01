@@ -36,7 +36,7 @@ export interface FilterOptions {
   work_types: string[];
 }
 
-export type NoticeTab = "mine" | "all" | "untriaged" | "assigned";
+export type NoticeTab = "all" | "pre_stage" | "bid_stage";
 export type NoticeSort = "priority" | "close_asc" | "open_desc" | "price_desc" | "price_asc";
 
 export async function fetchNotices(params: URLSearchParams): Promise<NoticeListResponse> {

@@ -62,9 +62,12 @@ SOURCE_SEED = [
     # 어댑터도 html→openapi로 재분류 — 실제로 확인해보니 페이지 자체(GET)는 빈 템플릿이고,
     # 진짜 데이터는 별도 JSON 엔드포인트(POST)에서 나옴. HTML 파싱이 필요 없어 openapi 어댑터를
     # 그대로 재사용한다(2026-09-01 직접 검증 — advisory 원안의 "GET·서버렌더링" 설명과 다름).
+    # stage="공모예고"(2026-09-01) — "사업공고"로 두면 이미 공식 공고된 단계(입찰공고 탭)와
+    # 섞인다. 접수예정은 아직 공식 접수 전이라 사전규격·발주계획과 같은 묶음(공고탐색 탭 2번)에
+    # 들어가야 의미가 맞는다.
     ("IRIS 접수예정", "과학기술정보통신부 등(범부처, 42개 전문기관)",
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
-     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "사업공고", "openapi", False, True, 1440),
+     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440),
     # advisory INBOX #2(2026-09-01) — 과기정통부 "자체" 공고만 다룬다(범부처 아님). 이름에
     # 명시해 IRIS(범부처)와 혼동하지 않게 함. close_dt 항목 자체가 없는 소스 — INBOX #1 참고.
     ("과학기술정보통신부 사업공고(부처 자체, 범부처 아님)", "과학기술정보통신부",
@@ -153,5 +156,5 @@ NOTICE_TITLE_TEMPLATES = [
     ("{org} CCTV 임대 및 유지보수", "용역", "유지보수"),
 ]
 
-STAGES = ["발주계획", "사전규격", "입찰공고", "낙찰", "계약"]
+STAGES = ["발주계획", "사전규격", "공모예고", "입찰공고", "낙찰", "계약"]
 PIPELINE_STAGES = ["collected", "l1_passed", "l2_scored", "l3_judged", "triaged", "archived"]

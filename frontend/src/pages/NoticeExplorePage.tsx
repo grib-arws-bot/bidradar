@@ -10,7 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { ClassificationAction } from "@/api/classification";
@@ -19,12 +19,14 @@ import { EmptyState } from "@/components/EmptyState";
 import { NoticeCard } from "@/components/NoticeCard";
 import { EMPTY_FILTERS, NoticeFilterBar, type NoticeFilterValues } from "@/components/NoticeFilterBar";
 
+// 탭 3종(2026-09-01 재구성) — "내 관심"·"미처리"·"내 담당"은 빠지고, 공고 단계로 묶었다.
+// 기본값은 3번(입찰공고/사업공고) — 관심주제·발주기관은 탭이 아니라 필터바의 다중선택으로.
 const TABS: { value: NoticeTab; label: string }[] = [
-  { value: "mine", label: "내 관심" },
   { value: "all", label: "전체" },
-  { value: "untriaged", label: "미처리" },
-  { value: "assigned", label: "내 담당" },
+  { value: "pre_stage", label: "사전규격·발주계획·공모예고" },
+  { value: "bid_stage", label: "입찰공고·사업공고" },
 ];
+const DEFAULT_TAB: NoticeTab = "bid_stage";
 
 const SORTS = [
   { value: "priority", label: "관심도순" },
@@ -54,7 +56,7 @@ function paramsToFilters(sp: URLSearchParams): NoticeFilterValues {
 function buildQuery(sp: URLSearchParams): URLSearchParams {
   // 백엔드에 그대로 전달할 쿼리 — page/size 기본값까지 명시해서 URL만 봐도 전체 상태가 보이게 함.
   const out = new URLSearchParams(sp);
-  if (!out.get("tab")) out.set("tab", "mine");
+  if (!out.get("tab")) out.set("tab", DEFAULT_TAB);
   if (!out.get("sort")) out.set("sort", "priority");
   if (!out.get("page")) out.set("page", "1");
   if (!out.get("size")) out.set("size", "20");
@@ -67,7 +69,7 @@ export function NoticeExplorePage() {
   // U5: 분류검수 액션은 "카드만 갱신" — 목록을 다시 안 부르고 이 로컬 맵만 바꾼다.
   const [classifiedMap, setClassifiedMap] = useState<Map<number, ClassificationAction>>(new Map());
 
-  const tab = (searchParams.get("tab") as NoticeTab) || "mine";
+  const tab = (searchParams.get("tab") as NoticeTab) || DEFAULT_TAB;
   const sort = searchParams.get("sort") || "priority";
   const page = Number(searchParams.get("page") ?? "1");
   const q = searchParams.get("q") ?? "";
@@ -125,23 +127,6 @@ export function NoticeExplorePage() {
     placeholderData: (prev) => prev,
   });
 
-  const hasAnyFilter = useMemo(
-    () =>
-      Boolean(
-        filters.domain.length ||
-          filters.org.length ||
-          filters.source.length ||
-          filters.region.length ||
-          filters.stage.length ||
-          filters.price_min ||
-          filters.price_max ||
-          filters.close_in ||
-          filters.status ||
-          filters.qualified,
-      ),
-    [filters],
-  );
-
   const total = listQuery.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / 20));
 
@@ -194,8 +179,6 @@ export function NoticeExplorePage() {
         loading={listQuery.isLoading}
         items={listQuery.data?.items ?? []}
         q={q}
-        tab={tab}
-        hasAnyFilter={hasAnyFilter}
         topics={filterOptionsQuery.data?.topics ?? []}
         classifiedMap={classifiedMap}
         onClassified={(id, action) => setClassifiedMap((prev) => new Map(prev).set(id, action))}
@@ -204,7 +187,6 @@ export function NoticeExplorePage() {
           updateParams({ q: null, page: null });
         }}
         onClearFilters={() => handleFiltersChange(EMPTY_FILTERS)}
-        onGoAllTab={() => updateParams({ tab: "all", page: null })}
       />
 
       {total > 0 && (
@@ -224,26 +206,20 @@ function NoticeListBody({
   loading,
   items,
   q,
-  tab,
-  hasAnyFilter,
   topics,
   classifiedMap,
   onClassified,
   onClearSearch,
   onClearFilters,
-  onGoAllTab,
 }: {
   loading: boolean;
   items: NoticeItem[];
   q: string;
-  tab: NoticeTab;
-  hasAnyFilter: boolean;
   topics: FilterOptions["topics"];
   classifiedMap: Map<number, ClassificationAction>;
   onClassified: (noticeId: number, action: ClassificationAction) => void;
   onClearSearch: () => void;
   onClearFilters: () => void;
-  onGoAllTab: () => void;
 }) {
   if (loading) {
     return (
@@ -255,9 +231,6 @@ function NoticeListBody({
 
   if (items.length === 0) {
     if (q) return <EmptyState variant="no-search-result" onAction={onClearSearch} />;
-    if (hasAnyFilter) return <EmptyState variant="no-filter-result" onAction={onClearFilters} />;
-    if (tab === "untriaged") return <EmptyState variant="no-untriaged" />;
-    if (tab === "mine") return <EmptyState variant="no-interest-match" onAction={onGoAllTab} />;
     return <EmptyState variant="no-filter-result" onAction={onClearFilters} />;
   }
 

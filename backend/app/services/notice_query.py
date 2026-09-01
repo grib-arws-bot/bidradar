@@ -1,27 +1,36 @@
 """S1 공고 탐색(U4) 목록 조회 로직. 라우터(app/api/notices.py)는 얇게, 여기가 본체.
 
-탭 4종의 실제 의미는 04절 참고 — 단일 계정(03절 v0.3) 전제라 "mine"은 개인이 아니라
-그립 고객 레코드(customer.plan_tier='internal')의 관심 카테고리를 뜻한다.
+탭 3종(2026-09-01 재구성) — "내 관심"(그립 고객 프로필 기반) · "미처리" · "내 담당" 탭은
+빠졌다. 대신 이 화면의 실제 쓰임(수집된 데이터를 단계별로 훑어보기)에 맞춰 공고 단계로
+묶었다. 관심주제·발주기관은 탭이 아니라 여전히 다중선택 필터로 존재한다(_apply_filters).
+"미처리"(classification_correction 미존재)·"내 담당"(assignee_name) 자체는 데이터로는
+남아 있다 — 탭에서만 뺐고, 나중에 필요하면 필터로 되살리면 된다.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
 
 from sqlalchemy import Select, and_, exists, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import customer, customer_interest, notice, notice_score, org, requirement
+from app.models import customer, notice, notice_score, org, requirement
 
 SORT_OPTIONS = ("priority", "close_asc", "open_desc", "price_desc", "price_asc")
-TABS = ("mine", "all", "untriaged", "assigned")
+
+# "전체"는 조건 없음. 나머지 둘은 notice.stage 값을 묶은 것 — 사전규격/발주계획(나라장터)·
+# 공모예고(IRIS 접수예정)는 아직 공식 공고 전 단계, 입찰공고/사업공고는 이미 공식 공고된 단계.
+TABS = ("all", "pre_stage", "bid_stage")
+DEFAULT_TAB = "bid_stage"
+_PRE_STAGE_VALUES = ("사전규격", "발주계획", "공모예고")
+_BID_STAGE_VALUES = ("입찰공고", "사업공고")
 PAGE_SIZE = 20
 
 
 @dataclass
 class NoticeFilters:
-    tab: str = "mine"
+    tab: str = DEFAULT_TAB
     q: str | None = None
     domain_ids: list[int] = field(default_factory=list)
     org_ids: list[int] = field(default_factory=list)
@@ -41,15 +50,11 @@ class NoticeFilters:
 
 
 def grib_customer_id(conn: Connection) -> int | None:
+    """(주)그립 자신의 customer 레코드 id — 발주기관 팔로우(notice_detail.follow_org) 등
+    "그립 스스로도 고객 #1"(의사결정_로그 9번)인 기능에서 계속 쓰인다. S1 탭이었던 "내 관심"은
+    2026-09-01 재구성으로 빠졌지만, 이 조회 자체는 탭과 무관하게 여전히 필요하다."""
     stmt = select(customer.c.id).where(customer.c.plan_tier == "internal").limit(1)
     return conn.execute(stmt).scalar_one_or_none()
-
-
-def _grib_topic_ids(conn: Connection, grib_id: int | None) -> list[int]:
-    if grib_id is None:
-        return []
-    stmt = select(customer_interest.c.interest_topic_id).where(customer_interest.c.customer_id == grib_id)
-    return [row[0] for row in conn.execute(stmt)]
 
 
 def _priority_subquery():
@@ -85,28 +90,13 @@ def _base_select(priority_sq) -> Select:
     )
 
 
-def _apply_filters(stmt: Select, filters: NoticeFilters, grib_topic_ids: list[int]):
+def _apply_filters(stmt: Select, filters: NoticeFilters):
     conditions = []
 
-    if filters.tab == "mine":
-        if not grib_topic_ids:
-            # 관심 프로필이 비어 있으면 서비스 레이어가 아니라 라우터가 "전체"로 폴백 처리한다
-            # (구현스펙 S1 "빈 상태" 참고) — 여기선 매칭 자체가 불가능하니 빈 결과를 정직하게 반환.
-            conditions.append(notice.c.id.is_(None))
-        else:
-            conditions.append(
-                exists().where(
-                    and_(notice_score.c.notice_id == notice.c.id, notice_score.c.interest_topic_id.in_(grib_topic_ids))
-                )
-            )
-    elif filters.tab == "untriaged":
-        from app.models import classification_correction
-
-        conditions.append(
-            ~exists().where(classification_correction.c.notice_id == notice.c.id)
-        )
-    elif filters.tab == "assigned":
-        conditions.append(notice.c.assignee_name.is_not(None))
+    if filters.tab == "pre_stage":
+        conditions.append(notice.c.stage.in_(_PRE_STAGE_VALUES))
+    elif filters.tab == "bid_stage":
+        conditions.append(notice.c.stage.in_(_BID_STAGE_VALUES))
     # tab == "all" → 조건 없음
 
     if filters.q:
@@ -179,12 +169,9 @@ def _apply_sort(stmt: Select, sort: str, priority_sq) -> Select:
 
 
 def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:
-    grib_id = grib_customer_id(conn)
-    grib_topic_ids = _grib_topic_ids(conn, grib_id)
-
     priority_sq = _priority_subquery()
     stmt = _base_select(priority_sq)
-    stmt = _apply_filters(stmt, filters, grib_topic_ids)
+    stmt = _apply_filters(stmt, filters)
 
     count_stmt = select(func.count()).select_from(stmt.with_only_columns(notice.c.id).subquery())
     total = conn.execute(count_stmt).scalar_one()
@@ -216,23 +203,15 @@ def count_tabs(conn: Connection) -> dict[str, int]:
     return counts
 
 
-def has_grib_interests(conn: Connection) -> bool:
-    grib_id = grib_customer_id(conn)
-    return bool(_grib_topic_ids(conn, grib_id))
-
-
 def ordered_ids(conn: Connection, filters: NoticeFilters) -> list[int]:
     """S1-d 이전/다음(neighbors)용 — 현재 필터·정렬 기준으로 전체 id 순서를 반환.
 
     페이지 규모(설계안 기준 연간 수만 건)에서는 전량 조회가 무리 없다. 커지면 그때 윈도우
     함수로 바꾸면 되고, 지금 미리 최적화할 이유는 없다.
     """
-    grib_id = grib_customer_id(conn)
-    grib_topic_ids = _grib_topic_ids(conn, grib_id)
-
     priority_sq = _priority_subquery()
     stmt = select(notice.c.id).select_from(notice).join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
-    stmt = _apply_filters(stmt, filters, grib_topic_ids)
+    stmt = _apply_filters(stmt, filters)
     stmt = _apply_sort(stmt, filters.sort, priority_sq)
     return [row[0] for row in conn.execute(stmt)]
 

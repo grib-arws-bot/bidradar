@@ -1,32 +1,15 @@
 import { Button, Stack, Typography } from "@mui/material";
 
-// S1 빈 상태 5종(구현스펙 06절) — 각각 다른 문구·복구 버튼.
-export type EmptyStateVariant =
-  | "no-interest-profile"
-  | "no-interest-match"
-  | "no-search-result"
-  | "no-untriaged"
-  | "no-filter-result";
+// S1 빈 상태(구현스펙 06절). "내 관심"·"미처리" 탭이 빠지면서(2026-09-01 공고탐색 탭
+// 재구성) 그 탭 전용 빈 상태(no-interest-profile/no-interest-match/no-untriaged)는
+// 도달 불가능해져 정리함 — 필요해지면 탭을 되살릴 때 같이 복원.
+export type EmptyStateVariant = "no-search-result" | "no-filter-result";
 
 const COPY: Record<EmptyStateVariant, { title: string; description: string; actionLabel?: string }> = {
-  "no-interest-profile": {
-    title: "아직 관심 주제를 설정하지 않았습니다",
-    description: "관심 주제를 설정하면 이 탭에 매칭되는 공고만 모아서 보여드립니다.",
-    actionLabel: "관심 주제 설정하러 가기",
-  },
-  "no-interest-match": {
-    title: "설정한 관심 주제에 매칭되는 공고가 없습니다",
-    description: "관심 주제 범위를 넓히거나, '전체' 탭에서 직접 찾아보세요.",
-    actionLabel: "전체 탭으로 보기",
-  },
   "no-search-result": {
     title: "검색 결과가 없습니다",
     description: "검색어 철자를 확인하거나, 검색어를 줄여보세요.",
     actionLabel: "검색어 지우기",
-  },
-  "no-untriaged": {
-    title: "미처리 공고가 없습니다",
-    description: "오늘 확인해야 할 분류 검수 대상을 모두 처리했습니다.",
   },
   "no-filter-result": {
     title: "이 조건에 맞는 공고가 없습니다",

@@ -61,17 +61,29 @@ def test_notices_list_shape(client: TestClient):
         assert {"id", "title", "org_name", "stage", "est_price", "close_dt"} <= item.keys()
 
 
-def test_all_four_tabs_respond(client: TestClient):
+def test_all_three_tabs_respond(client: TestClient):
     for tab in TABS:
         response = client.get("/api/notices", params={"tab": tab, "size": 1})
         assert response.status_code == 200, tab
 
 
-def test_untriaged_and_assigned_are_subsets_of_all(client: TestClient):
+def test_default_tab_is_bid_stage(client: TestClient):
+    # tab 파라미터를 안 주면 백엔드가 DEFAULT_TAB("bid_stage")을 쓴다(2026-09-01 재구성).
+    response = client.get("/api/notices", params={"size": 1})
+    assert response.status_code == 200
+    assert response.json()["tab"] == "bid_stage"
+
+
+def test_pre_and_bid_stage_are_subsets_of_all_and_do_not_overlap(client: TestClient):
     all_total = client.get("/api/notices", params={"tab": "all", "size": 1}).json()["total"]
-    for tab in ("untriaged", "assigned", "mine"):
-        total = client.get("/api/notices", params={"tab": tab, "size": 1}).json()["total"]
-        assert total <= all_total
+    pre_items = client.get("/api/notices", params={"tab": "pre_stage", "size": 50}).json()["items"]
+    bid_items = client.get("/api/notices", params={"tab": "bid_stage", "size": 50}).json()["items"]
+
+    assert len(pre_items) <= all_total
+    assert len(bid_items) <= all_total
+    assert {i["stage"] for i in pre_items} <= {"사전규격", "발주계획", "공모예고"}
+    assert {i["stage"] for i in bid_items} <= {"입찰공고", "사업공고"}
+    assert {i["id"] for i in pre_items}.isdisjoint({i["id"] for i in bid_items})
 
 
 def test_pagination_pages_do_not_overlap(client: TestClient):
