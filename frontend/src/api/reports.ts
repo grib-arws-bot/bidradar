@@ -14,6 +14,9 @@ export interface ReportSummary {
   total: number;
   closing_soon: number;
   top_score: number;
+  // 리포트에 실제로 담긴 공고들의 출처표시 문구(advisory INBOX #7) — 생성 시점에 확정되어
+  // 스냅샷에 고정된다. 구 스냅샷(이 필드 도입 전)엔 없을 수 있어 옵셔널.
+  attributions?: string[];
 }
 
 export interface GeneratedReport {

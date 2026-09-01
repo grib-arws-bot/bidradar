@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import desc, insert, select, update
 from sqlalchemy.engine import Connection
 
-from app.models import customer, newsletter_report
+from app.models import customer, newsletter_report, source
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
 
 REPORT_LIMIT = 20
@@ -34,6 +34,22 @@ def _build_summary(notices: list[dict]) -> dict:
     }
 
 
+def _attributions_for(conn: Connection, notices: list[dict]) -> list[str]:
+    """리포트에 실제로 담긴 공고들의 출처(source.attribution_text)를 중복 없이 모은다
+    (advisory INBOX #7) — 사람이 문구를 기억해 붙이는 게 아니라 스냅샷 생성 시점에 자동으로
+    확정해서 넣는다. 문구가 아직 없는 소스는 조용히 빠진다(빈 리스트가 정상 — 필수 아님)."""
+    source_ids = {n["source_id"] for n in notices if n.get("source_id")}
+    if not source_ids:
+        return []
+    rows = conn.execute(
+        select(source.c.attribution_text)
+        .where(source.c.id.in_(source_ids), source.c.attribution_text.is_not(None))
+        .distinct()
+        .order_by(source.c.attribution_text)
+    ).scalars().all()
+    return list(rows)
+
+
 def generate_report(conn: Connection, customer_id: int) -> dict | None:
     """이번 시점 관심도 계산 결과를 스냅샷으로 고정해 저장한다. 이후 재계산되지 않으므로,
     이메일에 링크를 실어 보낸 뒤 원본 데이터가 바뀌어도 고객이 보는 리포트는 안 흔들린다."""
@@ -44,6 +60,7 @@ def generate_report(conn: Connection, customer_id: int) -> dict | None:
     draft = draft_from_profile(profile)
     matches = top_matches(conn, draft, limit=REPORT_LIMIT)
     summary = _build_summary(matches)
+    summary["attributions"] = _attributions_for(conn, matches)
     token = secrets.token_urlsafe(24)
 
     row = conn.execute(

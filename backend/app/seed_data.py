@@ -42,6 +42,7 @@ from app.models import (
     source_run,
 )
 from app.seed_constants import (
+    ATTRIBUTION_TEXT,
     INTEREST_TOPICS,
     KEYWORD_SEED,
     NOTICE_TITLE_TEMPLATES,
@@ -130,12 +131,20 @@ def _seed_orgs(conn, source_id_by_name: dict[str, int]) -> list[int]:
 def _seed_sources(conn) -> tuple[list[int], list[int]]:
     source_ids: list[int] = []
     config_ids: list[int] = []
-    for name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1, frequency_minutes in SOURCE_SEED:
+    for (
+        name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1, frequency_minutes,
+        legal_tier, license_note, license_evidence_url,
+    ) in SOURCE_SEED:
         row = conn.execute(
             insert(source).values(
                 name=name, org_name=org_name, base_url=url, homepage_url=homepage_url,
                 stage=stage, adapter_type=adapter,
                 frequency_minutes=frequency_minutes, is_system=is_system, skip_l1=skip_l1, active=True,
+                legal_tier=legal_tier, license_note=license_note, license_evidence_url=license_evidence_url,
+                # 시드 시점을 "확인 시각"으로 남긴다 — 실제 운영에서는 INBOX #6 준법 재확인 도구가
+                # robots.txt를 다시 읽어 이 값을 갱신한다(app/collector/compliance.py).
+                legal_verified_at=_now(),
+                attribution_text=ATTRIBUTION_TEXT.get(name),
             ).returning(source.c.id)
         ).one()
         source_ids.append(row.id)

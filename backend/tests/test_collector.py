@@ -22,7 +22,7 @@ from app.collector.runner import _collection_window, _get_or_create_org, run_sou
 from app.collector.scorer import score_l2
 from app.collector.work_type import guess_work_type
 from app.db import engine
-from app.models import notice, notice_score, org, raw_payload, source, source_run
+from app.models import notice, notice_score, org, raw_payload, source, source_config, source_field_map, source_run
 
 SAMPLE_ITEMS = [
     {
@@ -306,6 +306,76 @@ def test_run_source_second_call_narrows_window_to_last_success(monkeypatch):
 
     # 직전 성공 수집 시각을 기준으로 좁혀져야 한다 — 매번 60일 전 고정값으로 되돌아가면 안 됨
     assert second_begin > first_begin
+
+
+# ---- 법적 등급 강제(advisory INBOX #5, 2026-09-01) ------------------------------------
+
+
+def _make_temp_source(conn, *, legal_tier: str, frequency_minutes: int = 1440) -> int:
+    """C/B등급 강제를 검증하려고 만드는 테스트 전용 소스 — 시드 데이터(IRIS 등)를 건드리지
+    않고 격리해서 확인한다."""
+    src_id = conn.execute(
+        insert(source)
+        .values(
+            name=f"테스트 소스({legal_tier}등급)", org_name="테스트기관", base_url="https://example.grib-test.kr/api",
+            stage="입찰공고", adapter_type="openapi", frequency_minutes=frequency_minutes,
+            is_system=False, skip_l1=True, active=True, legal_tier=legal_tier,
+        )
+        .returning(source.c.id)
+    ).scalar_one()
+    cfg_id = conn.execute(
+        insert(source_config)
+        .values(source_id=src_id, ver=1, config={"endpoint": "https://example.grib-test.kr/api", "items_path": "$.items[*]"})
+        .returning(source_config.c.id)
+    ).scalar_one()
+    conn.execute(
+        insert(source_field_map).values(
+            source_config_id=cfg_id, target_field="title", source_path="$.title", format_hint=None
+        )
+    )
+    return src_id
+
+
+def test_run_source_blocks_legal_tier_c():
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="C")
+        try:
+            with pytest.raises(ValueError, match="법적 등급 C"):
+                run_source(conn, source_id)
+        finally:
+            conn.execute(delete(source).where(source.c.id == source_id))
+
+
+def test_run_source_enforces_tier_b_minimum_interval(monkeypatch):
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"items": [{"title": "t"}]}
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    # 각 단계를 별도 트랜잭션으로 커밋한다 — run_source의 _record_run이 호출부와 독립된
+    # 커넥션으로 source_run을 쓰기 때문에(CLAUDE.md 취지: 실패도 반드시 기록), 같은 트랜잭션
+    # 안에서 소스를 만들고 바로 run_source를 부르면 그 커넥션 눈엔 소스가 아직 안 보여
+    # FK 위반이 난다.
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="B", frequency_minutes=1440)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                insert(source_run).values(
+                    source_id=source_id, status="ok", items_fetched=0,
+                    run_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+                )
+            )
+        with engine.begin() as conn:
+            with pytest.raises(ValueError, match="최소 수집 간격"):
+                run_source(conn, source_id)
+        # force=True는 관리자 수동 재수집용 우회 — 이건 통과해야 함
+        with engine.begin() as conn:
+            run_source(conn, source_id, force=True)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
+            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
+            conn.execute(delete(source).where(source.c.id == source_id))
 
 
 def test_run_source_records_failure_and_reraises(monkeypatch):

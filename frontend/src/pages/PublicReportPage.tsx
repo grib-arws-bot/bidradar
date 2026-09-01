@@ -84,9 +84,16 @@ export function PublicReportPage() {
         </Card>
 
         <Divider />
+        {/* 출처표시(advisory INBOX #7) — 리포트에 실제로 담긴 공고의 출처만, 생성 시점에
+            source.attribution_text에서 자동으로 가져와 스냅샷에 고정된다. 사람이 문구를
+            골라 붙이는 게 아니라서 빠뜨릴 수가 없다. */}
+        {(data.summary.attributions ?? []).map((text) => (
+          <Typography key={text} variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
+            {text}
+          </Typography>
+        ))}
         <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
-          본 리포트는 조달청 나라장터/공공데이터포털 오픈API를 활용하여 작성되었습니다. 문의:{" "}
-          <Link href="mailto:report@grib.co.kr">report@grib.co.kr</Link>
+          문의: <Link href="mailto:report@grib.co.kr">report@grib.co.kr</Link>
         </Typography>
       </Stack>
     </Box>

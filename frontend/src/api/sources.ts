@@ -10,6 +10,9 @@ export interface SourceRow {
   stage: string;
   status: "ok" | "warn" | "fail" | "inactive" | "no_run_yet";
   last_run_at: string | null;
+  legal_tier: "A" | "B" | "C";
+  legal_verified_at: string | null;
+  compliance_overdue: boolean;
 }
 
 export async function fetchSources(): Promise<SourceRow[]> {
@@ -29,6 +32,10 @@ export interface AgencyRow {
   adapter_label: string | null;
   status: AgencyStatus;
   last_run_at: string | null;
+  // 준법 확인 배지(advisory INBOX #6) — channel(source)이 없으면 전부 null/false.
+  legal_tier: "A" | "B" | "C" | null;
+  legal_verified_at: string | null;
+  compliance_overdue: boolean;
 }
 
 export interface AgencyFilters {

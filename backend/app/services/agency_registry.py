@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.engine import Connection
 
 from app.models import org, source, source_run
-from app.services.source_registry import ADAPTER_LABELS
+from app.services.source_registry import ADAPTER_LABELS, COMPLIANCE_WARNING_DAYS
 
 _HANGUL_RE = re.compile(r"^[가-힣]")
 
@@ -44,6 +45,8 @@ def list_agencies(
             source.c.homepage_url.label("source_homepage_url"),
             source.c.adapter_type,
             source.c.active.label("source_active"),
+            source.c.legal_tier,
+            source.c.legal_verified_at,
             source_run.c.status,
             source_run.c.run_at,
         )
@@ -60,6 +63,7 @@ def list_agencies(
 
     rows = conn.execute(stmt).mappings().all()
 
+    now = datetime.now(timezone.utc)
     result = []
     for row in rows:
         if row["source_name"] is None:
@@ -70,6 +74,11 @@ def list_agencies(
                 row_status = "no_run_yet"  # 채널은 있으나 아직 한 번도 수집 안 됨
         if status and row_status != status:
             continue
+        verified_at = row["legal_verified_at"]
+        # 채널이 아예 없는 발주기관(no_source)은 준법 확인 대상 자체가 아니다 — 경고 배지도 없음.
+        compliance_overdue = row["source_name"] is not None and (
+            verified_at is None or (now - verified_at) > timedelta(days=COMPLIANCE_WARNING_DAYS)
+        )
         result.append(
             {
                 "id": row["id"],
@@ -81,6 +90,10 @@ def list_agencies(
                 "adapter_label": ADAPTER_LABELS.get(row["adapter_type"], row["adapter_type"]) if row["adapter_type"] else None,
                 "status": row_status,
                 "last_run_at": row["run_at"].isoformat() if row["run_at"] else None,
+                # 준법 확인 배지(advisory INBOX #6) — 채널(source) 단위 값을 그대로 보여준다.
+                "legal_tier": row["legal_tier"],
+                "legal_verified_at": verified_at.isoformat() if verified_at else None,
+                "compliance_overdue": compliance_overdue,
             }
         )
     result.sort(key=lambda r: _sort_key(r["name"]))

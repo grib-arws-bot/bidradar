@@ -111,6 +111,7 @@ def _candidate_notices(conn: Connection) -> list[dict]:
             notice.c.title,
             notice.c.stage,
             notice.c.org_id,
+            notice.c.source_id,
             notice.c.est_price,
             notice.c.region,
             notice.c.open_dt,
@@ -136,6 +137,8 @@ def _serialize(n: dict, score: int) -> dict:
         "title": n["title"],
         "stage": n["stage"],
         "org_name": n["org_name"],
+        "source_id": n["source_id"],  # 리포트 생성 시 출처표시 문구(source.attribution_text)를
+        # 붙이는 데만 씀(advisory INBOX #7) — 화면에 그대로 노출하지 않음.
         "est_price": int(n["est_price"]) if n["est_price"] is not None else None,
         "close_dt": n["close_dt"].isoformat() if n["close_dt"] else None,
         "score": score,

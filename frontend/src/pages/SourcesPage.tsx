@@ -114,6 +114,7 @@ export function SourcesPage() {
               <TableCell>수집 방식</TableCell>
               <TableCell>수집 상태</TableCell>
               <TableCell>최종 수집일</TableCell>
+              <TableCell>준법 확인일</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -142,6 +143,24 @@ export function SourcesPage() {
                     </TableCell>
                     <TableCell className="tnum">
                       {row.last_run_at ? new Date(row.last_run_at).toLocaleString("ko-KR") : "수집 이력 없음"}
+                    </TableCell>
+                    {/* 준법 확인일(advisory INBOX #6) — 채널이 없는 행(no_source)은 확인 대상이
+                        아니므로 배지 없이 "—"만 보여준다. 90일 지나면 경고색으로 눈에 띄게. */}
+                    <TableCell className="tnum">
+                      {row.channel === null ? (
+                        "—"
+                      ) : (
+                        <Chip
+                          label={
+                            row.legal_verified_at
+                              ? new Date(row.legal_verified_at).toLocaleDateString("ko-KR")
+                              : "확인 이력 없음"
+                          }
+                          size="small"
+                          color={row.compliance_overdue ? "warning" : "default"}
+                          variant={row.compliance_overdue ? "filled" : "outlined"}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 );

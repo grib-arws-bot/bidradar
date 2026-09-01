@@ -50,7 +50,11 @@ def test_sources_list_shape_and_sorted_by_org(client: TestClient):
     assert len(rows) > 0
 
     row = rows[0]
-    assert {"id", "name", "org_name", "homepage_url", "adapter_type", "adapter_label", "stage", "status", "last_run_at"} <= row.keys()
+    assert {
+        "id", "name", "org_name", "homepage_url", "adapter_type", "adapter_label", "stage", "status", "last_run_at",
+        "legal_tier", "legal_verified_at", "compliance_overdue",
+    } <= row.keys()
+    assert row["legal_tier"] in {"A", "B", "C"}
 
     # 기관별로 묶여 있어야 한다 — DB 콜레이션이 파이썬 sorted()와 한글 정렬 기준이 다를 수 있어
     # 정확한 알파벳 순서 대신 "같은 기관명이 떨어져서 두 번 나타나지 않는지"만 확인한다
@@ -83,7 +87,10 @@ def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
     assert len(rows) > 0
 
     row = rows[0]
-    assert {"id", "name", "abbr", "category", "notice_url", "channel", "adapter_label", "status", "last_run_at"} <= row.keys()
+    assert {
+        "id", "name", "abbr", "category", "notice_url", "channel", "adapter_label", "status", "last_run_at",
+        "legal_tier", "legal_verified_at", "compliance_overdue",
+    } <= row.keys()
 
     # 조달청·IRIS(공고기관/채널이지 발주기관이 아님)는 이 목록에 나오면 안 된다
     names = [r["name"] for r in rows]

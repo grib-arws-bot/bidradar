@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from app.models import source, source_run
 
 ADAPTER_LABELS = {"openapi": "오픈API", "feed": "피드", "html": "HTML 크롤링"}
+# 마지막 준법 확인일로부터 이만큼 지나면 S5 화면에 경고 배지(advisory INBOX #6, 분기 재확인 주기)
+COMPLIANCE_WARNING_DAYS = 90
 
 
 def list_sources(conn: Connection) -> list[dict]:
@@ -30,6 +34,8 @@ def list_sources(conn: Connection) -> list[dict]:
             source.c.adapter_type,
             source.c.stage,
             source.c.active,
+            source.c.legal_tier,
+            source.c.legal_verified_at,
             source_run.c.status,
             source_run.c.run_at,
         )
@@ -39,11 +45,14 @@ def list_sources(conn: Connection) -> list[dict]:
         .order_by(source.c.org_name, source.c.name)
     ).mappings().all()
 
+    now = datetime.now(timezone.utc)
     result = []
     for row in rows:
         status = row["status"] if row["active"] else "inactive"
         if status is None:
             status = "no_run_yet"
+        verified_at = row["legal_verified_at"]
+        compliance_overdue = verified_at is None or (now - verified_at) > timedelta(days=COMPLIANCE_WARNING_DAYS)
         result.append(
             {
                 "id": row["id"],
@@ -55,6 +64,9 @@ def list_sources(conn: Connection) -> list[dict]:
                 "stage": row["stage"],
                 "status": status,
                 "last_run_at": row["run_at"].isoformat() if row["run_at"] else None,
+                "legal_tier": row["legal_tier"],
+                "legal_verified_at": verified_at.isoformat() if verified_at else None,
+                "compliance_overdue": compliance_overdue,
             }
         )
     return result

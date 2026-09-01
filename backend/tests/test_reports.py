@@ -55,6 +55,16 @@ def test_generate_report_creates_snapshot(client: TestClient, grib_customer_id: 
     assert body["summary"]["total"] == len(body["notices"])
 
 
+def test_generate_report_summary_includes_attributions_list(client: TestClient, grib_customer_id: int):
+    # advisory INBOX #7(2026-09-01) — 출처표시 문구는 사람이 붙이는 게 아니라 생성 시점에
+    # source.attribution_text에서 자동으로 모여야 한다(내용 자체는 시드 소스 배정에 따라
+    # 달라질 수 있어 타입/키 존재만 검증).
+    response = client.post(f"/api/customers/{grib_customer_id}/reports")
+    body = response.json()
+    assert isinstance(body["summary"]["attributions"], list)
+    assert all(isinstance(a, str) for a in body["summary"]["attributions"])
+
+
 def test_generate_report_404_for_unknown_customer(client: TestClient):
     response = client.post("/api/customers/999999/reports")
     assert response.status_code == 404

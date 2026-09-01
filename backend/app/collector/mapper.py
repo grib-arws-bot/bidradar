@@ -11,6 +11,30 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 REQUIRED_FIELDS = ("title", "org_name", "open_dt", "url")
 _DATE_FIELDS = {"open_dt", "close_dt"}
 
+# 담당자 개인정보는 notice로 매핑하는 것 자체를 막는다(advisory INBOX #8) — notice 테이블에
+# 애초에 이런 컬럼이 없어 지금은 우연히도 안전하지만, "우연히 안전"이 아니라 "코드가 막는다"로
+# 만들어야 한다는 게 INBOX의 요구라 field_map 등록 단계에서 명시적으로 거부한다.
+PII_BANNED_TARGET_FIELDS = frozenset(
+    {"manager_name", "manager_tel", "manager_email", "manager_phone",
+     "contact_name", "contact_tel", "contact_email", "contact_phone",
+     "ofcl_name", "ofcl_tel", "ofcl_email"}
+)
+# 법적 등급 B(조건부) 소스는 원문 전문을 저장할 수 없다(advisory INBOX #5) — 요약·핵심 필드만.
+TIER_B_BANNED_TARGET_FIELDS = frozenset({"body", "content", "description", "full_text", "detail_text", "spec_text"})
+
+
+def validate_field_maps(field_maps: list[dict], *, legal_tier: str | None = None) -> None:
+    """소스 수집 실행 전에 field_map 목록을 검사한다. 위반 시 수집 자체를 막는다(조용히 건너뛰지
+    않음 — CLAUDE.md "조용한 빈 결과 금지"와 같은 이유로, 설정 실수를 눈에 띄게 한다)."""
+    targets = {fm["target_field"] for fm in field_maps}
+    banned = targets & PII_BANNED_TARGET_FIELDS
+    if banned:
+        raise ValueError(f"담당자 개인정보 필드는 매핑할 수 없습니다(advisory INBOX #8): {sorted(banned)}")
+    if legal_tier == "B":
+        banned_b = targets & TIER_B_BANNED_TARGET_FIELDS
+        if banned_b:
+            raise ValueError(f"법적 등급 B 소스는 원문 전문 필드를 매핑할 수 없습니다(advisory INBOX #5): {sorted(banned_b)}")
+
 
 _CONST_PREFIX = "const:"
 _URLFMT_PREFIX = "urlfmt:"

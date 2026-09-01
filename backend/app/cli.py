@@ -92,6 +92,22 @@ def collect(source_id: int, service_key: str | None) -> None:
           f"skipped={result['skipped']} scored={result['scored']}")
 
 
+def check_compliance(source_id: int | None) -> None:
+    """분기별 준법 재확인(advisory INBOX #6) 수동 실행. 스케줄러 인프라가 아직 없어(설계안
+    스택 표에만 있음) 지금은 사람이나 cron으로 이 명령을 직접 돌린다."""
+    from app.collector.compliance import check_all_sources, check_source
+
+    with engine.begin() as conn:
+        results = [check_source(conn, source_id)] if source_id else check_all_sources(conn)
+
+    if not results:
+        print("재확인 대상 소스(법적등급 B·C)가 없습니다.")
+        return
+    for r in results:
+        status = "변경 감지 — 비활성화됨" if r["changed"] else ("확인 완료" if r["fetch_ok"] else f"확인 실패({r['error']})")
+        print(f"[{r['source_id']}] {r['name']}: {status}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -102,6 +118,9 @@ def main() -> None:
     collect_parser.add_argument("--source-id", type=int, required=True)
     collect_parser.add_argument("--service-key", default=None, help="공공데이터포털 인증키(발급받은 경우)")
 
+    compliance_parser = subparsers.add_parser("check-compliance")
+    compliance_parser.add_argument("--source-id", type=int, default=None, help="생략하면 B·C등급 전체 재확인")
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin()
@@ -109,6 +128,8 @@ def main() -> None:
         seed()
     elif args.command == "collect":
         collect(args.source_id, args.service_key)
+    elif args.command == "check-compliance":
+        check_compliance(args.source_id)
 
 
 if __name__ == "__main__":

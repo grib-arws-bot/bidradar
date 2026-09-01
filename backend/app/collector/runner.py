@@ -12,7 +12,8 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Connection
 
 from app.collector.adapters.openapi import fetch_openapi_items
-from app.collector.mapper import map_item
+from app.collector.mapper import map_item, validate_field_maps
+from app.collector.pii import mask_pii
 from app.collector.scorer import L2_PROMOTE_THRESHOLD, passes_l1, score_l2
 from app.collector.work_type import guess_work_type
 from app.models import notice, notice_score, org, raw_payload, source, source_config, source_credential, source_field_map, source_run
@@ -23,6 +24,12 @@ from app.models import notice, notice_score, org, raw_payload, source, source_co
 DEFAULT_MAX_LOOKBACK_DAYS = 60
 
 
+def _last_ok_run_at(conn: Connection, source_id: int) -> datetime | None:
+    return conn.execute(
+        select(func.max(source_run.c.run_at)).where(source_run.c.source_id == source_id, source_run.c.status == "ok")
+    ).scalar_one_or_none()
+
+
 def _collection_window(conn: Connection, source_id: int, *, max_lookback_days: int) -> tuple[datetime, datetime]:
     """직전 "성공" 수집 시각부터 지금까지. 성공 이력이 없거나 공백이 max_lookback_days를
     넘으면 그만큼만 거슬러 올라간다 — 스케줄러가 오래 멈췄다 재개돼도 무한정 과거까지
@@ -30,9 +37,7 @@ def _collection_window(conn: Connection, source_id: int, *, max_lookback_days: i
     """
     now = datetime.now(timezone.utc)
     floor = now - timedelta(days=max_lookback_days)
-    last_ok_run_at = conn.execute(
-        select(func.max(source_run.c.run_at)).where(source_run.c.source_id == source_id, source_run.c.status == "ok")
-    ).scalar_one_or_none()
+    last_ok_run_at = _last_ok_run_at(conn, source_id)
     if last_ok_run_at is None:
         return floor, now
     # API 응답 지연·시계 오차로 직전 조회 경계에 걸친 공고를 놓치지 않도록 1시간 겹쳐서 조회
@@ -64,13 +69,38 @@ def _record_run(source_id: int, *, status: str, items_fetched: int, error_messag
         )
 
 
-def run_source(conn: Connection, source_id: int, *, max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS) -> dict:
-    """소스 하나를 1회 수집한다. 반환값은 결과 요약(로그·테스트 검증용)."""
+def run_source(
+    conn: Connection,
+    source_id: int,
+    *,
+    max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS,
+    force: bool = False,
+) -> dict:
+    """소스 하나를 1회 수집한다. 반환값은 결과 요약(로그·테스트 검증용).
+
+    force=True는 관리자가 수동으로 즉시 재수집할 때만 쓴다 — B등급 최소 수집 간격을 우회한다
+    (advisory INBOX #5). 등급 C 차단은 force로도 못 뚫는다 — 활성화 자체가 금지된 소스라서.
+    """
     src = conn.execute(select(source).where(source.c.id == source_id)).mappings().first()
     if src is None:
         raise ValueError(f"소스를 찾을 수 없습니다: {source_id}")
     if src["adapter_type"] != "openapi":
         raise ValueError(f"U11 범위는 openapi 어댑터만 지원합니다(소스 타입: {src['adapter_type']})")
+    # 법적 등급 C(금지) — robots 차단 또는 약관상 명시적 금지 소스는 활성화 자체를 거부한다
+    # (advisory INBOX #5). 관리자 체크박스가 아니라 여기, 실제 수집이 실행되는 유일한 관문에서
+    # 막아야 "체크박스로 우회 못 하는" 강제가 된다.
+    if src["legal_tier"] == "C":
+        raise ValueError(
+            f"'{src['name']}' 소스는 법적 등급 C(수집 금지)입니다 — advisory INBOX #5에 따라 활성화할 수 없습니다."
+        )
+    if src["legal_tier"] == "B" and not force:
+        last_ok = _last_ok_run_at(conn, source_id)
+        min_interval = timedelta(minutes=src["frequency_minutes"])
+        if last_ok is not None and (datetime.now(timezone.utc) - last_ok) < min_interval:
+            raise ValueError(
+                f"'{src['name']}'은 법적 등급 B — 최소 수집 간격({src['frequency_minutes']}분) 전입니다 "
+                f"(advisory INBOX #5, 마지막 성공 수집: {last_ok.isoformat()})."
+            )
 
     cfg = conn.execute(
         select(source_config)
@@ -89,6 +119,7 @@ def run_source(conn: Connection, source_id: int, *, max_lookback_days: int = DEF
             )
         ).mappings()
     ]
+    validate_field_maps(field_maps, legal_tier=src["legal_tier"])
 
     service_key = conn.execute(
         select(source_credential.c.value).where(
@@ -104,6 +135,11 @@ def run_source(conn: Connection, source_id: int, *, max_lookback_days: int = DEF
     except Exception as exc:  # noqa: BLE001 — 실패도 source_run에 남겨야 "조용한 사망"이 안 됨(CLAUDE.md)
         _record_run(source_id, status="fail", items_fetched=0, error_message=str(exc))
         raise
+
+    # 담당자 개인정보 마스킹(advisory INBOX #8) — raw_payload는 "원본 보존"이 원칙이나 개인정보는
+    # 예외. field_maps가 이런 필드를 안 쓰더라도(현재 다 그렇다) 저장 자체를 막아야 안전하므로,
+    # 여기서 한 번 마스킹한 값을 raw_payload 저장과 매핑 양쪽에 그대로 쓴다.
+    raw_items = mask_pii(raw_items)
 
     conn.execute(
         insert(raw_payload).values(
