@@ -20,6 +20,7 @@ from app.collector.adapters.openapi import fetch_openapi_items
 from app.collector.mapper import map_item
 from app.collector.runner import _collection_window, _get_or_create_org, run_source
 from app.collector.scorer import score_l2
+from app.collector.work_type import guess_work_type
 from app.db import engine
 from app.models import notice, notice_score, org, raw_payload, source, source_run
 
@@ -134,6 +135,20 @@ def test_get_or_create_org_sets_source_id_for_new_org():
             assert saved_source_id == source_id
         finally:
             conn.execute(delete(org).where(org.c.name == unique_name))
+
+
+# ---- 사업유형 제목 기반 추정(근사치, 2026-09-01 요청) ----------------------------
+
+
+def test_guess_work_type_matches_common_titles():
+    assert guess_work_type("CCTV 임대 및 유지보수") == "유지보수"  # 겹쳐도 더 구체적인 신호 우선
+    assert guess_work_type("관제실 청소용역") == "운영"
+    assert guess_work_type("전자칠판 보급사업") == "구매"
+    assert guess_work_type("지능형 CCTV 통합관제시스템 구축") == "구축"
+
+
+def test_guess_work_type_returns_none_when_no_keyword_matches():
+    assert guess_work_type("아무 키워드도 없는 제목") is None
 
 
 # ---- 매퍼 --------------------------------------------------------------

@@ -54,6 +54,13 @@ notice = Table(
     Column("notice_no", String(100)),
     Column("ord", Integer, nullable=False, server_default="0"),  # 차수
     Column("stage", String(30), nullable=False),  # 사전규격/입찰공고/낙찰/계약
+    # 업무구분(물품/용역/공사/외자) — 나라장터 API는 이 값을 응답 필드가 아니라 "어느 오퍼레이션을
+    # 호출했는지"로 구분한다(설계안 03절). source_config.config의 정적 힌트에서 채운다.
+    Column("biz_type", String(20)),
+    # 사업유형(개발/운영/유지보수/구축/구매/공사 등) — 제목 키워드 기반 근사 추정(2026-09-01
+    # 요청). 첨부파일까지 봐야 정확해지는 건 S8 심층분석의 몫 — 여기는 전체 공고에 자동으로
+    # 도는 가벼운 1차 추정치일 뿐이라 오판 가능성을 인지하고 쓴다.
+    Column("work_type", String(20)),
     Column("title", Text, nullable=False),
     Column("org_id", Integer, ForeignKey("org.id")),
     Column("est_price", Numeric(16, 0)),

@@ -8,6 +8,8 @@ export interface NoticeItem {
   pipeline_stage: string;
   est_price: number | null;
   region: string | null;
+  biz_type: string | null;
+  work_type: string | null;
   open_dt: string | null;
   close_dt: string | null;
   url: string;
@@ -30,6 +32,8 @@ export interface FilterOptions {
   sources: { id: number; name: string }[];
   stages: string[];
   regions: string[];
+  biz_types: string[];
+  work_types: string[];
 }
 
 export type NoticeTab = "mine" | "all" | "untriaged" | "assigned";
@@ -72,6 +76,8 @@ export interface NoticeDetail {
   pipeline_stage: string;
   est_price: number | null;
   region: string | null;
+  biz_type: string | null;
+  work_type: string | null;
   open_dt: string | null;
   close_dt: string | null;
   url: string;

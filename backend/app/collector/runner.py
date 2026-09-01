@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from app.collector.adapters.openapi import fetch_openapi_items
 from app.collector.mapper import map_item
 from app.collector.scorer import L2_PROMOTE_THRESHOLD, passes_l1, score_l2
+from app.collector.work_type import guess_work_type
 from app.models import notice, notice_score, org, raw_payload, source, source_config, source_credential, source_field_map, source_run
 
 # 공고가 2개월(60일) 넘게 열려있는 경우를 본 적이 없다는 판단(2026-09-01 결정) — 수집 이력이
@@ -130,6 +131,8 @@ def run_source(conn: Connection, source_id: int, *, max_lookback_days: int = DEF
                     source_ver=cfg["ver"],
                     notice_no=mapped.get("notice_no"),
                     stage=src["stage"],
+                    biz_type=cfg["config"].get("biz_type"),
+                    work_type=guess_work_type(mapped["title"]),
                     title=mapped["title"],
                     org_id=org_id,
                     est_price=mapped.get("est_price"),

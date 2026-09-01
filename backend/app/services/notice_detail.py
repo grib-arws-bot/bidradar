@@ -27,6 +27,8 @@ def get_notice_detail(conn: Connection, notice_id: int) -> dict | None:
             notice.c.pipeline_stage,
             notice.c.est_price,
             notice.c.region,
+            notice.c.biz_type,
+            notice.c.work_type,
             notice.c.open_dt,
             notice.c.close_dt,
             notice.c.url,

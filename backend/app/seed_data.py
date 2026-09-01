@@ -127,12 +127,19 @@ REAL_OPENAPI_CONFIG = {
     }
 }
 
+# (제목 템플릿, 업무구분, 사업유형) — 사업유형은 app/collector/work_type.py의 실제 추정
+# 규칙과 일치하게 맞춰뒀다(데모 데이터도 같은 근거로 채워지도록).
 NOTICE_TITLE_TEMPLATES = [
-    "{org} 지능형 CCTV 통합관제시스템 구축", "{org} 스마트 안전관리시스템 고도화",
-    "{org} IoT 센서 기반 시설물 안전관제 용역", "{org} AI 영상분석 관제 플랫폼 도입",
-    "{org} 스마트교실 전자칠판 보급사업", "{org} AI 디지털교과서 단말 구매",
-    "{org} 순찰로봇 시범사업", "{org} 무인이동체(드론) 안전점검 용역",
-    "{org} 관제실 청소용역", "{org} CCTV 임대 및 유지보수",
+    ("{org} 지능형 CCTV 통합관제시스템 구축", "용역", "구축"),
+    ("{org} 스마트 안전관리시스템 고도화", "용역", "개발"),
+    ("{org} IoT 센서 기반 시설물 안전관제 용역", "용역", "운영"),
+    ("{org} AI 영상분석 관제 플랫폼 도입", "용역", "구축"),
+    ("{org} 스마트교실 전자칠판 보급사업", "물품", "구매"),
+    ("{org} AI 디지털교과서 단말 구매", "물품", "구매"),
+    ("{org} 순찰로봇 시범사업", "용역", "구축"),
+    ("{org} 무인이동체(드론) 안전점검 용역", "용역", "운영"),
+    ("{org} 관제실 청소용역", "용역", "운영"),
+    ("{org} CCTV 임대 및 유지보수", "용역", "유지보수"),
 ]
 
 STAGES = ["발주계획", "사전규격", "입찰공고", "낙찰", "계약"]
@@ -283,7 +290,8 @@ def _seed_notices(conn, source_ids: list[int], org_ids: list[int]) -> list[int]:
     ids: list[int] = []
     for i in range(120):
         org_name_pick = _RNG.choice([o[0] for o in ORG_SEED])
-        title = _RNG.choice(NOTICE_TITLE_TEMPLATES).format(org=org_name_pick)
+        title_template, biz_type, work_type = _RNG.choice(NOTICE_TITLE_TEMPLATES)
+        title = title_template.format(org=org_name_pick)
         open_dt = _now() - timedelta(days=_RNG.randint(0, 20))
         close_dt = _now() + timedelta(days=_RNG.randint(-1, 30))
         row = conn.execute(
@@ -293,6 +301,8 @@ def _seed_notices(conn, source_ids: list[int], org_ids: list[int]) -> list[int]:
                 notice_no=f"SEED-{i:04d}",
                 ord=0,
                 stage=_RNG.choice(STAGES),
+                biz_type=biz_type,
+                work_type=work_type,
                 title=title,
                 org_id=_RNG.choice(org_ids),
                 est_price=_RNG.randint(3_000, 500_000) * 10_000,

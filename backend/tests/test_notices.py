@@ -109,6 +109,24 @@ def test_stage_filter(client: TestClient):
         assert item["stage"] == "낙찰"
 
 
+def test_biz_type_filter(client: TestClient):
+    response = client.get("/api/notices", params={"tab": "all", "biz_type[]": ["물품"], "size": 50})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) > 0
+    for item in items:
+        assert item["biz_type"] == "물품"
+
+
+def test_work_type_filter(client: TestClient):
+    response = client.get("/api/notices", params={"tab": "all", "work_type[]": ["유지보수"], "size": 50})
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) > 0
+    for item in items:
+        assert item["work_type"] == "유지보수"
+
+
 @pytest.mark.parametrize("sort", SORT_OPTIONS)
 def test_every_sort_option_returns_200(client: TestClient, sort: str):
     response = client.get("/api/notices", params={"tab": "all", "sort": sort, "size": 20})
@@ -133,7 +151,7 @@ def test_filter_options_shape(client: TestClient):
     response = client.get("/api/notices/filter-options")
     assert response.status_code == 200
     body = response.json()
-    assert set(body.keys()) == {"topics", "orgs", "sources", "stages", "regions"}
+    assert set(body.keys()) == {"topics", "orgs", "sources", "stages", "regions", "biz_types", "work_types"}
     assert len(body["topics"]) > 0
     assert len(body["orgs"]) > 0
 

@@ -15,6 +15,8 @@ export interface NoticeFilterValues {
   source: number[];
   region: string[];
   stage: string[];
+  biz_type: string[];
+  work_type: string[];
   price_min: string;
   price_max: string;
   close_in: string;
@@ -28,6 +30,8 @@ export const EMPTY_FILTERS: NoticeFilterValues = {
   source: [],
   region: [],
   stage: [],
+  biz_type: [],
+  work_type: [],
   price_min: "",
   price_max: "",
   close_in: "",
@@ -99,6 +103,24 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
           value={values.stage}
           onChange={(_, selected) => set("stage", selected)}
           renderInput={(params) => <TextField {...params} label="단계" />}
+        />
+        <Autocomplete
+          multiple
+          size="small"
+          sx={{ minWidth: 160 }}
+          options={options?.biz_types ?? []}
+          value={values.biz_type}
+          onChange={(_, selected) => set("biz_type", selected)}
+          renderInput={(params) => <TextField {...params} label="업무구분" />}
+        />
+        <Autocomplete
+          multiple
+          size="small"
+          sx={{ minWidth: 180 }}
+          options={options?.work_types ?? []}
+          value={values.work_type}
+          onChange={(_, selected) => set("work_type", selected)}
+          renderInput={(params) => <TextField {...params} label="사업유형(추정)" />}
         />
       </Stack>
       <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
@@ -201,6 +223,20 @@ function AppliedChips({ options, values, onChange }: Props) {
       key: `stage-${s}`,
       label: `단계: ${s}`,
       onDelete: () => onChange({ ...values, stage: values.stage.filter((v) => v !== s) }),
+    }),
+  );
+  values.biz_type.forEach((b) =>
+    chips.push({
+      key: `biz_type-${b}`,
+      label: `업무구분: ${b}`,
+      onDelete: () => onChange({ ...values, biz_type: values.biz_type.filter((v) => v !== b) }),
+    }),
+  );
+  values.work_type.forEach((w) =>
+    chips.push({
+      key: `work_type-${w}`,
+      label: `사업유형: ${w}`,
+      onDelete: () => onChange({ ...values, work_type: values.work_type.filter((v) => v !== w) }),
     }),
   );
   if (values.price_min || values.price_max) {

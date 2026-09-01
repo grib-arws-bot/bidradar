@@ -30,6 +30,8 @@ class NoticeFilters:
     price_max: int | None = None
     regions: list[str] = field(default_factory=list)
     stages: list[str] = field(default_factory=list)
+    biz_types: list[str] = field(default_factory=list)  # 업무구분(물품/용역/공사/외자)
+    work_types: list[str] = field(default_factory=list)  # 사업유형(개발/운영/유지보수 등, 근사 추정)
     close_in: int | None = None  # 이 안(일)에 마감
     status: str | None = None  # open/closed
     qualified: bool | None = None
@@ -68,6 +70,8 @@ def _base_select(priority_sq) -> Select:
             notice.c.pipeline_stage,
             notice.c.est_price,
             notice.c.region,
+            notice.c.biz_type,
+            notice.c.work_type,
             notice.c.open_dt,
             notice.c.close_dt,
             notice.c.url,
@@ -132,6 +136,12 @@ def _apply_filters(stmt: Select, filters: NoticeFilters, grib_topic_ids: list[in
 
     if filters.stages:
         conditions.append(notice.c.stage.in_(filters.stages))
+
+    if filters.biz_types:
+        conditions.append(notice.c.biz_type.in_(filters.biz_types))
+
+    if filters.work_types:
+        conditions.append(notice.c.work_type.in_(filters.work_types))
 
     now = datetime.now(timezone.utc)
     if filters.close_in is not None:
@@ -241,6 +251,8 @@ def filter_options(conn: Connection) -> dict:
     sources = conn.execute(select(source.c.id, source.c.name).order_by(source.c.name)).mappings().all()
     stages = [row[0] for row in conn.execute(select(notice.c.stage).distinct())]
     regions = [row[0] for row in conn.execute(select(notice.c.region).distinct().where(notice.c.region.is_not(None)))]
+    biz_types = [row[0] for row in conn.execute(select(notice.c.biz_type).distinct().where(notice.c.biz_type.is_not(None)))]
+    work_types = [row[0] for row in conn.execute(select(notice.c.work_type).distinct().where(notice.c.work_type.is_not(None)))]
 
     return {
         "topics": [dict(row) for row in topics],
@@ -248,4 +260,6 @@ def filter_options(conn: Connection) -> dict:
         "sources": [dict(row) for row in sources],
         "stages": stages,
         "regions": regions,
+        "biz_types": biz_types,
+        "work_types": work_types,
     }

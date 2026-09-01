@@ -57,6 +57,8 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         <Box sx={{ minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
             <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
+            {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
+            {notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
             {notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
             {classifiedAs && <Chip label={CLASSIFIED_LABEL[classifiedAs]} size="small" color="success" />}
           </Stack>
