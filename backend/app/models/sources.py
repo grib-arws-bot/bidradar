@@ -25,6 +25,9 @@ source = Table(
     Column("name", String(200), nullable=False),
     Column("org_name", String(200)),  # 이 소스를 운영하는 기관
     Column("base_url", Text, nullable=False),
+    # base_url은 실제 호출 엔드포인트라 사람이 보기엔 불친절함(예: API 베이스 URL) — 관리자 페이지
+    # "소스 관리" 표에서 기관/서비스를 확인하러 갈 수 있는 사람용 링크(data.go.kr 데이터셋 페이지 등)
+    Column("homepage_url", Text),
     Column("stage", String(30), nullable=False),  # 사전규격/입찰공고/낙찰 등 (설계안 04-2)
     Column("adapter_type", String(10), nullable=False),  # openapi/feed/html (설계안 04-1)
     Column("frequency_minutes", Integer, nullable=False, server_default="60"),

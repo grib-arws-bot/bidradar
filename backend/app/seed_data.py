@@ -72,13 +72,21 @@ ORG_NAMES = [
 ]
 
 SOURCE_SEED = [
-    ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService", "발주계획", "openapi", True, True),
-    ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService", "사전규격", "openapi", True, False),
-    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/BidPublicInfoService", "입찰공고", "openapi", True, False),
-    ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService", "낙찰", "openapi", True, False),
-    ("K-water 입찰공고", "한국수자원공사", "https://apis.data.go.kr/B500001/kwaterBidInfo", "입찰공고", "openapi", False, False),
-    ("IRIS 사업공고", "과학기술정보통신부 등", "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do", "사업공고", "html", False, True),
-    ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices", "입찰공고", "feed", False, True),
+    # (이름, 기관, base_url, 홈페이지, 단계, 어댑터, is_system, skip_l1)
+    ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService",
+     "https://www.data.go.kr/data/15129462/openapi.do", "발주계획", "openapi", True, True),
+    ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService",
+     "https://www.data.go.kr/data/15129437/openapi.do", "사전규격", "openapi", True, False),
+    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/BidPublicInfoService",
+     "https://www.data.go.kr/data/15129394/openapi.do", "입찰공고", "openapi", True, False),
+    ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService",
+     "https://www.data.go.kr/data/15129397/openapi.do", "낙찰", "openapi", True, False),
+    ("K-water 입찰공고", "한국수자원공사", "https://apis.data.go.kr/B500001/kwaterBidInfo",
+     "https://www.data.go.kr/data/15101635/openapi.do", "입찰공고", "openapi", False, False),
+    ("IRIS 사업공고", "과학기술정보통신부 등", "https://www.iris.go.kr/contents/retrieveBsnsAncmListView.do",
+     "https://www.iris.go.kr", "사업공고", "html", False, True),
+    ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices",
+     None, "입찰공고", "feed", False, True),
 ]
 
 # U11 collector가 실제로 소비하는 정확한 config/필드매핑 — "나라장터 입찰공고정보서비스" 하나만
@@ -184,10 +192,11 @@ def _seed_orgs(conn) -> list[int]:
 def _seed_sources(conn) -> tuple[list[int], list[int]]:
     source_ids: list[int] = []
     config_ids: list[int] = []
-    for name, org_name, url, stage, adapter, is_system, skip_l1 in SOURCE_SEED:
+    for name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1 in SOURCE_SEED:
         row = conn.execute(
             insert(source).values(
-                name=name, org_name=org_name, base_url=url, stage=stage, adapter_type=adapter,
+                name=name, org_name=org_name, base_url=url, homepage_url=homepage_url,
+                stage=stage, adapter_type=adapter,
                 frequency_minutes=60, is_system=is_system, skip_l1=skip_l1, active=True,
             ).returning(source.c.id)
         ).one()

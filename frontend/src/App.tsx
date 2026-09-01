@@ -11,6 +11,7 @@ import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { PublicReportPage } from "@/pages/PublicReportPage";
+import { SourcesPage } from "@/pages/SourcesPage";
 import { useSession } from "@/hooks/useSession";
 import { theme } from "@/theme";
 
@@ -55,7 +56,7 @@ function AppRoutes() {
         <Route path="/orgs" element={<ComingSoonPage title="기관 프로파일" />} />
         <Route path="/analytics" element={<ComingSoonPage title="시장 분석" />} />
         <Route path="/customers/interests" element={<CustomerInterestsPage />} />
-        <Route path="/admin/sources" element={<ComingSoonPage title="소스 관리" />} />
+        <Route path="/admin/sources" element={<SourcesPage />} />
         <Route path="/admin/keywords" element={<ComingSoonPage title="키워드 사전" />} />
         <Route path="/admin/products" element={<ComingSoonPage title="제품 카탈로그" />} />
         <Route path="/admin/audit" element={<ComingSoonPage title="감사 로그" />} />

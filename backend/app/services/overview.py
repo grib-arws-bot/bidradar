@@ -9,33 +9,21 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import desc, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import customer, customer_interest, newsletter_report, notice, source, source_run
+from app.models import customer, customer_interest, newsletter_report, notice
+from app.services.source_registry import list_sources
 
 
 def _source_health(conn: Connection) -> dict:
-    """소스별 가장 최근 source_run 상태를 센다(S5 상태 배지 4종과 같은 기준)."""
-    latest_run_sq = (
-        select(source_run.c.source_id, func.max(source_run.c.id).label("latest_id"))
-        .group_by(source_run.c.source_id)
-        .subquery()
-    )
-    rows = conn.execute(
-        select(source.c.id, source.c.name, source.c.active, source_run.c.status, source_run.c.run_at)
-        .select_from(source)
-        .join(latest_run_sq, latest_run_sq.c.source_id == source.c.id, isouter=True)
-        .join(source_run, source_run.c.id == latest_run_sq.c.latest_id, isouter=True)
-    ).mappings().all()
+    """소스별 가장 최근 source_run 상태를 센다(S5 상태 배지 4종과 같은 기준).
 
+    전체 상세 목록은 source_registry.list_sources — 여기선 그걸 재사용해 카드용으로 축약한다.
+    """
+    all_sources = list_sources(conn)
     counts = {"ok": 0, "warn": 0, "fail": 0, "inactive": 0, "no_run_yet": 0}
     sources = []
-    for row in rows:
-        status = row["status"] if row["active"] else "inactive"
-        if status is None:
-            status = "no_run_yet"
-        counts[status] = counts.get(status, 0) + 1
-        sources.append(
-            {"id": row["id"], "name": row["name"], "status": status, "last_run_at": row["run_at"].isoformat() if row["run_at"] else None}
-        )
+    for s in all_sources:
+        counts[s["status"]] = counts.get(s["status"], 0) + 1
+        sources.append({"id": s["id"], "name": s["name"], "status": s["status"], "last_run_at": s["last_run_at"]})
     return {"counts": counts, "sources": sources}
 
 
