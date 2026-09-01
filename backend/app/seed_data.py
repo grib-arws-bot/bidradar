@@ -80,6 +80,30 @@ SOURCE_SEED = [
     ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices", "입찰공고", "feed", False, True),
 ]
 
+# U11 collector가 실제로 소비하는 정확한 config/필드매핑 — "나라장터 입찰공고정보서비스" 하나만
+# 진짜 값으로 채워둔다(설계안 03절 호출 예시 그대로). 나머지 소스는 U13(등록마법사) 전까지
+# 구조만 있으면 되는 자리표시자라 건드리지 않는다. DATA_GO_KR_SERVICE_KEY 환경변수가 실제로
+# 설정되면 이 소스로 바로 `python -m app.cli collect --source-id <id>` 라이브 검증이 가능하다.
+REAL_OPENAPI_CONFIG = {
+    "나라장터 입찰공고정보서비스": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoServc",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+        },
+        "field_maps": [
+            ("notice_no", "$.bidNtceNo", None),
+            ("title", "$.bidNtceNm", None),
+            ("org_name", "$.ntceInsttNm", None),
+            ("open_dt", "$.bidNtceDt", "%Y%m%d%H%M"),
+            ("close_dt", "$.bidClseDt", "%Y%m%d%H%M"),
+            ("est_price", "$.presmptPrce", None),
+            ("url", "$.bidNtceDtlUrl", None),
+        ],
+    }
+}
+
 NOTICE_TITLE_TEMPLATES = [
     "{org} 지능형 CCTV 통합관제시스템 구축", "{org} 스마트 안전관리시스템 고도화",
     "{org} IoT 센서 기반 시설물 안전관제 용역", "{org} AI 영상분석 관제 플랫폼 도입",
@@ -168,21 +192,30 @@ def _seed_sources(conn) -> tuple[list[int], list[int]]:
         ).one()
         source_ids.append(row.id)
 
+        real = REAL_OPENAPI_CONFIG.get(name)
+        config = real["config"] if real else {"adapter": adapter, "endpoint": url}
+
         cfg_row = conn.execute(
             insert(source_config).values(
-                source_id=row.id, ver=1,
-                config={"adapter": adapter, "endpoint": url},
-                created_by="report@grib.co.kr",
+                source_id=row.id, ver=1, config=config, created_by="report@grib.co.kr",
             ).returning(source_config.c.id)
         ).one()
         config_ids.append(cfg_row.id)
 
-        for target_field, path in (
-            ("title", "$.title"), ("org_name", "$.org"), ("open_dt", "$.openDate"), ("url", "$.url"),
-        ):
-            conn.execute(insert(source_field_map).values(source_config_id=cfg_row.id, target_field=target_field, source_path=path))
+        field_maps = real["field_maps"] if real else [
+            ("title", "$.title", None), ("org_name", "$.org", None),
+            ("open_dt", "$.openDate", None), ("url", "$.url", None),
+        ]
+        for target_field, path, format_hint in field_maps:
+            conn.execute(
+                insert(source_field_map).values(
+                    source_config_id=cfg_row.id, target_field=target_field, source_path=path, format_hint=format_hint,
+                )
+            )
 
-        conn.execute(insert(source_credential).values(source_id=row.id, kind="service_key", value="dummy-seed-key"))
+        # 실제 인증키는 infra/.env의 DATA_GO_KR_SERVICE_KEY를 통해 별도로 넣는다(U13에서 관리자
+        # 화면으로 대체 예정) — 시드는 자리표시자만 넣어 "인증키 없음" 상태를 명시적으로 남긴다.
+        conn.execute(insert(source_credential).values(source_id=row.id, kind="service_key", value="__NOT_SET__"))
 
     return source_ids, config_ids
 

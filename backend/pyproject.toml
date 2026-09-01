@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.5,<2.6",
     "argon2-cffi>=23.1,<23.2",
     "requests>=2.32,<2.33",
+    "jsonpath-ng>=1.6,<1.7",
 ]
 
 [project.optional-dependencies]
