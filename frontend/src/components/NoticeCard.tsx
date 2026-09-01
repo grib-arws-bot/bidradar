@@ -52,7 +52,7 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
   });
 
   return (
-    <Card variant="outlined" sx={{ p: 2.5, opacity: classifiedAs ? 0.7 : 1 }}>
+    <Card sx={{ p: 2.5, opacity: classifiedAs ? 0.7 : 1 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
         <Box sx={{ minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
@@ -88,7 +88,7 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         </Stack>
       </Stack>
 
-      <Divider sx={{ my: 1.5, borderStyle: "dashed" }} />
+      <Divider sx={{ my: 1.5 }} />
 
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
         <Button

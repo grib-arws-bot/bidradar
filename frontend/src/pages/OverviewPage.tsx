@@ -14,7 +14,7 @@ const STATUS_LABEL: Record<string, { label: string; color: "success" | "warning"
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <Card variant="outlined" sx={{ p: 2.5, flex: 1, minWidth: 160 }}>
+    <Card sx={{ p: 2.5, flex: 1, minWidth: 160 }}>
       <Typography variant="body2" color="text.secondary">
         {label}
       </Typography>
@@ -58,7 +58,7 @@ export function OverviewPage() {
         />
       </Stack>
 
-      <Card variant="outlined" sx={{ p: 3 }}>
+      <Card sx={{ p: 3 }}>
         <Typography variant="h3" sx={{ mb: 1.5 }}>
           소스 상태
         </Typography>
@@ -80,7 +80,7 @@ export function OverviewPage() {
         </Stack>
       </Card>
 
-      <Card variant="outlined" sx={{ p: 3 }}>
+      <Card sx={{ p: 3 }}>
         <Typography variant="h3" sx={{ mb: 1.5 }}>
           최근 생성된 리포트
         </Typography>

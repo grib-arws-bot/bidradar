@@ -169,7 +169,7 @@ export function CustomerInterestsPage() {
         <CircularProgress />
       ) : (
         <Stack direction={{ xs: "column", md: "row" }} spacing={3}>
-          <Card variant="outlined" sx={{ p: 3, flex: 1.4 }}>
+          <Card sx={{ p: 3, flex: 1.4 }}>
             <Stack spacing={3}>
               <Box>
                 <Typography variant="h3" sx={{ mb: 1 }}>
@@ -291,7 +291,7 @@ export function CustomerInterestsPage() {
             </Stack>
           </Card>
 
-          <Card variant="outlined" sx={{ p: 3, flex: 1 }}>
+          <Card sx={{ p: 3, flex: 1 }}>
             <Typography variant="h3" sx={{ mb: 1 }}>
               미리보기 (저장 전)
             </Typography>
@@ -322,7 +322,7 @@ export function CustomerInterestsPage() {
               </>
             )}
 
-            <Divider sx={{ my: 2, borderStyle: "dashed" }} />
+            <Divider sx={{ my: 2 }} />
 
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
               <Typography variant="h3">관심분야 리포트</Typography>
@@ -360,7 +360,7 @@ export function CustomerInterestsPage() {
               )}
             </List>
 
-            <Divider sx={{ my: 2, borderStyle: "dashed" }} />
+            <Divider sx={{ my: 2 }} />
 
             <Typography variant="h3" sx={{ mb: 1 }}>
               저장한 검색

@@ -92,7 +92,7 @@ export function NoticeDetailPage() {
         </Stack>
       </Stack>
 
-      <Card variant="outlined" sx={{ p: 3 }}>
+      <Card sx={{ p: 3 }}>
         <Stack spacing={2}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap>
             <Box>
@@ -135,7 +135,7 @@ export function NoticeDetailPage() {
       </Card>
 
       {notice.requirements.length > 0 && (
-        <Card variant="outlined" sx={{ p: 3 }}>
+        <Card sx={{ p: 3 }}>
           <Typography variant="h3" sx={{ mb: 1.5 }}>
             참여 자격 요건
           </Typography>
@@ -165,7 +165,7 @@ export function NoticeDetailPage() {
         </Card>
       )}
 
-      <Divider sx={{ borderStyle: "dashed" }} />
+      <Divider />
 
       <Tooltip title="심층 분석은 다음 작업 단위(U9)에서 제공됩니다">
         <span>

@@ -57,7 +57,7 @@ export function PublicReportPage() {
           <Chip label={data.customer_name} size="small" sx={{ ml: "auto" }} />
         </Stack>
 
-        <Card variant="outlined" sx={{ p: 3 }}>
+        <Card sx={{ p: 3 }}>
           <Typography variant="h2">이번 주 관심 공고</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {new Date(data.generated_at).toLocaleDateString("ko-KR")} 기준 · 총 {data.summary.total}건
@@ -96,7 +96,7 @@ export function PublicReportPage() {
           </Stack>
         </Card>
 
-        <Divider sx={{ borderStyle: "dashed" }} />
+        <Divider />
         <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
           본 리포트는 조달청 나라장터/공공데이터포털 오픈API를 활용하여 작성되었습니다. 문의:{" "}
           <Link href="mailto:report@grib.co.kr">report@grib.co.kr</Link>

@@ -1,7 +1,9 @@
-import { createTheme } from "@mui/material/styles";
+import { alpha, createTheme } from "@mui/material/styles";
 
 // 출처: prototype/bidradar-prototype.html :root (구현스펙 05절 디자인 토큰). 값을 그대로 옮김 —
 // 프로토타입이 바뀌면 여기도 같이 바꿔야 "테마가 프로토타입과 일치"가 계속 성립한다.
+// 카드 그림자·칩 모양·보더 색은 2026-09-01 요청으로 ARWS(admin-page-v2) 스타일에 맞춤 —
+// primary(주황 #DE5B21)만 유지하고, 점선 보더 대신 옅은 그림자 카드로 통일.
 export const theme = createTheme({
   palette: {
     primary: {
@@ -53,13 +55,21 @@ export const theme = createTheme({
   },
   components: {
     MuiCard: {
+      defaultProps: { variant: "elevation", elevation: 0 },
       styleOverrides: {
-        root: { borderRadius: 16 },
+        root: ({ theme }) => ({
+          borderRadius: 16,
+          border: "none",
+          boxShadow: `0 0 2px 0 ${alpha(theme.palette.grey[500], 0.2)}, 0 12px 24px -4px ${alpha(theme.palette.grey[500], 0.12)}`,
+        }),
       },
     },
-    MuiChip: {
+    MuiPaper: {
       styleOverrides: {
-        root: { borderRadius: 6 },
+        root: ({ theme }) => ({
+          backgroundImage: "none",
+          "&.MuiPaper-outlined": { borderColor: alpha(theme.palette.grey[500], 0.16) },
+        }),
       },
     },
   },

@@ -21,13 +21,14 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import type { ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { logout } from "@/api/auth";
 import { useSession } from "@/hooks/useSession";
 
-const NAV_WIDTH = 252;
+const NAV_WIDTH = 300;
 
 interface NavItem {
   label: string;
@@ -91,8 +92,8 @@ export function DashboardLayout() {
           width: NAV_WIDTH,
           flex: `0 0 ${NAV_WIDTH}px`,
           bgcolor: "background.paper",
-          borderRight: "1px dashed",
-          borderColor: "grey.300",
+          borderRight: "1px solid",
+          borderColor: (theme) => alpha(theme.palette.grey[500], 0.12),
           p: 2,
           position: "sticky",
           top: 0,
@@ -146,8 +147,8 @@ export function DashboardLayout() {
                     borderRadius: 1,
                     mb: 0.25,
                     "&.active": {
-                      bgcolor: "primary.lighter",
-                      color: "primary.dark",
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                      color: "primary.main",
                       fontWeight: 600,
                     },
                   }}
@@ -161,7 +162,7 @@ export function DashboardLayout() {
         ))}
 
         <Box sx={{ mt: "auto" }}>
-          <Divider sx={{ borderStyle: "dashed", mb: 1.5 }} />
+          <Divider sx={{ mb: 1.5 }} />
           <Stack direction="row" spacing={1.25} alignItems="center" sx={{ px: 1 }}>
             <Avatar sx={{ width: 34, height: 34, bgcolor: "secondary.main", fontSize: 13 }}>
               {session?.email?.[0]?.toUpperCase() ?? "?"}

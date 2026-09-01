@@ -50,7 +50,7 @@ export function LoginPage() {
         bgcolor: "background.default",
       }}
     >
-      <Paper elevation={0} sx={{ p: 5, width: 380, border: "1px dashed", borderColor: "grey.300" }}>
+      <Paper elevation={3} sx={{ p: 5, width: 380 }}>
         <Stack spacing={0.5} sx={{ mb: 4 }}>
           <Typography variant="h2">BidRadar</Typography>
           <Typography variant="body2" color="text.secondary">
