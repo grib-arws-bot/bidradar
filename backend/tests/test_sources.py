@@ -66,3 +66,50 @@ def test_sources_status_is_one_of_known_values(client: TestClient):
     rows = client.get("/api/admin/sources").json()
     for row in rows:
         assert row["status"] in {"ok", "warn", "fail", "inactive", "no_run_yet"}
+
+
+# ---- 발주기관(agency) 중심 목록 — 2026-09-01 요청 ---------------------------------
+
+
+def test_agencies_requires_auth():
+    response = TestClient(app).get("/api/admin/sources/agencies")
+    assert response.status_code == 401
+
+
+def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
+    response = client.get("/api/admin/sources/agencies")
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) > 0
+
+    row = rows[0]
+    assert {"id", "name", "abbr", "category", "notice_url", "channel", "adapter_label", "status", "last_run_at"} <= row.keys()
+
+    # 조달청·IRIS(공고기관/채널이지 발주기관이 아님)는 이 목록에 나오면 안 된다
+    names = [r["name"] for r in rows]
+    assert "조달청" not in names
+    assert "IRIS" not in names
+
+    # 한글 이름이 영어 이름보다 먼저 나와야 한다(2026-09-01 요청)
+    is_hangul = [bool(r["name"]) and "가" <= r["name"][0] <= "힣" for r in rows]
+    first_non_hangul = next((i for i, v in enumerate(is_hangul) if not v), len(is_hangul))
+    assert all(is_hangul[:first_non_hangul])
+    assert not any(is_hangul[first_non_hangul:])
+
+
+def test_agencies_search_by_abbr(client: TestClient):
+    rows = client.get("/api/admin/sources/agencies", params={"q": "NIPA"}).json()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "정보통신산업진흥원"
+
+
+def test_agencies_filter_by_status_no_source(client: TestClient):
+    # KOCCA는 아직 소속 소스가 없는 시드 데이터(2026-09-01 seed) — "no_source" 상태여야 함
+    rows = client.get("/api/admin/sources/agencies", params={"q": "KOCCA"}).json()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "no_source"
+    assert rows[0]["channel"] is None
+
+    filtered = client.get("/api/admin/sources/agencies", params={"status": "no_source"}).json()
+    assert any(r["abbr"] == "KOCCA" for r in filtered)
+    assert all(r["status"] == "no_source" for r in filtered)

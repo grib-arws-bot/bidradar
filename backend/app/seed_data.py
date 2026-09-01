@@ -65,10 +65,24 @@ KEYWORD_SEED = {
     ],
 }
 
-ORG_NAMES = [
-    "조달청", "한국수자원공사", "한국도로공사", "방위사업청", "한국토지주택공사",
-    "한국철도공사", "국가철도공단", "서울특별시교육청", "부산광역시교육청",
-    "한국콘텐츠진흥원", "한국에너지기술평가원", "인천국제공항공사",
+# 발주기관 시드 — (기관명(한글), 기관약자(영어), 분류, 소속 SOURCE_SEED 이름 또는 None, 공고 URL 또는 None).
+# "조달청"·"IRIS"는 발주기관이 아니라 공고기관(수집 채널)이라 여기 넣지 않는다(2026-09-01 지적) —
+# 채널 자체는 source 테이블에서 관리하고, org.source_id로 어느 채널을 통해 수집되는지만 연결한다.
+# 기관명은 가급적 한글로, 기관약자는 영어로 통일(2026-09-01 요청).
+ORG_SEED = [
+    ("한국수자원공사", None, "공기업(자체조달)", "K-water 입찰공고", "https://ebid.kwater.or.kr/"),
+    ("한국도로공사", None, "공기업(자체조달)", None, "https://ebid.ex.co.kr/"),
+    ("방위사업청", "DAPA", "중앙행정기관(자체조달)", None, "https://www.d2b.go.kr/"),
+    ("한국토지주택공사", "LH", "공기업(자체조달)", None, "https://ebid.lh.or.kr/"),
+    ("한국철도공사", "KORAIL", "공기업(자체조달)", None, "https://ebid.korail.com/"),
+    ("국가철도공단", "KR", "공기업(자체조달)", None, "https://ebid.kr.or.kr/"),
+    ("서울특별시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
+    ("부산광역시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
+    ("강원도교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
+    ("정보통신산업진흥원", "NIPA", "R&D 지원기관", "나라장터 입찰공고정보서비스", None),
+    ("한국콘텐츠진흥원", "KOCCA", "R&D 지원기관", None, None),
+    ("한국에너지기술평가원", "KETEP", "R&D 지원기관", None, "https://www.ketep.re.kr/"),
+    ("인천국제공항공사", "IIAC", "공기업(자체조달)", None, None),
 ]
 
 SOURCE_SEED = [
@@ -133,8 +147,11 @@ def run_seed(engine: Engine) -> None:
     with engine.begin() as conn:
         topic_ids = _seed_topics(conn)
         customer_ids = _seed_customers(conn, topic_ids)
-        org_ids = _seed_orgs(conn)
+        # 소스를 발주기관보다 먼저 시드해야 한다 — org.source_id가 어느 채널로 수집되는지
+        # 가리키므로(관리자 페이지 "소스 관리" 발주기관 목록용), 참조 대상이 먼저 있어야 함.
         source_ids, source_config_ids = _seed_sources(conn)
+        source_id_by_name = dict(zip((s[0] for s in SOURCE_SEED), source_ids))
+        org_ids = _seed_orgs(conn, source_id_by_name)
         _seed_source_runs(conn, source_ids)
         _seed_raw_payloads(conn, source_ids)
         notice_ids = _seed_notices(conn, source_ids, org_ids)
@@ -181,10 +198,15 @@ def _seed_customers(conn, topic_ids: dict[str, int]) -> dict[str, int]:
     return ids
 
 
-def _seed_orgs(conn) -> list[int]:
+def _seed_orgs(conn, source_id_by_name: dict[str, int]) -> list[int]:
     ids = []
-    for i, name in enumerate(ORG_NAMES):
-        row = conn.execute(insert(org).values(name=name, code=f"ORG{i:03d}", category="공공기관").returning(org.c.id)).one()
+    for i, (name, abbr, category, source_name, notice_url) in enumerate(ORG_SEED):
+        row = conn.execute(
+            insert(org).values(
+                name=name, code=f"ORG{i:03d}", category=category, abbr=abbr, notice_url=notice_url,
+                source_id=source_id_by_name.get(source_name) if source_name else None,
+            ).returning(org.c.id)
+        ).one()
         ids.append(row.id)
     return ids
 
@@ -260,7 +282,7 @@ def _seed_raw_payloads(conn, source_ids: list[int]) -> None:
 def _seed_notices(conn, source_ids: list[int], org_ids: list[int]) -> list[int]:
     ids: list[int] = []
     for i in range(120):
-        org_name_pick = _RNG.choice(ORG_NAMES)
+        org_name_pick = _RNG.choice([o[0] for o in ORG_SEED])
         title = _RNG.choice(NOTICE_TITLE_TEMPLATES).format(org=org_name_pick)
         open_dt = _now() - timedelta(days=_RNG.randint(0, 20))
         close_dt = _now() + timedelta(days=_RNG.randint(-1, 30))

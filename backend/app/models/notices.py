@@ -27,6 +27,11 @@ org = Table(
     Column("name", String(200), nullable=False),
     Column("code", String(50)),  # 나라장터 등 발주기관 코드
     Column("category", String(100)),  # 교육청/공기업/중앙부처 등
+    Column("abbr", String(30)),  # 기관약자(NIPA 등) — 관리자 페이지 "소스 관리" 발주기관 목록용
+    Column("notice_url", Text),  # 기관별 공고 페이지 링크. 없으면 프론트가 source.homepage_url로 대체
+    # 이 기관 공고를 어느 소스(공고기관/채널)로 수집하는지. 나라장터처럼 여러 기관을 한 소스가
+    # 커버하는 경우가 대부분이라 nullable — 아직 채널이 정해지지 않은 기관도 있을 수 있다
+    Column("source_id", ForeignKey("source.id", ondelete="SET NULL")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

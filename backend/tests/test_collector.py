@@ -18,10 +18,10 @@ from sqlalchemy import delete, insert, select
 
 from app.collector.adapters.openapi import fetch_openapi_items
 from app.collector.mapper import map_item
-from app.collector.runner import _collection_window, run_source
+from app.collector.runner import _collection_window, _get_or_create_org, run_source
 from app.collector.scorer import score_l2
 from app.db import engine
-from app.models import notice, notice_score, raw_payload, source, source_run
+from app.models import notice, notice_score, org, raw_payload, source, source_run
 
 SAMPLE_ITEMS = [
     {
@@ -118,6 +118,22 @@ def test_collection_window_caps_at_max_lookback_when_no_success_history():
     with engine.connect() as conn:
         begin, end = _collection_window(conn, source_id=-1, max_lookback_days=60)
     assert end - begin == timedelta(days=60)
+
+
+# ---- 발주기관 자동 등록 시 채널(source_id) 연결 — 2026-09-01 요청 ---------------------
+
+
+def test_get_or_create_org_sets_source_id_for_new_org():
+    source_id = _bid_service_source_id()
+    unique_name = "테스트전용발주기관_agency_link"
+    with engine.begin() as conn:
+        conn.execute(delete(org).where(org.c.name == unique_name))  # 혹시 이전 실행 잔여물 정리
+        try:
+            org_id = _get_or_create_org(conn, unique_name, source_id)
+            saved_source_id = conn.execute(select(org.c.source_id).where(org.c.id == org_id)).scalar_one()
+            assert saved_source_id == source_id
+        finally:
+            conn.execute(delete(org).where(org.c.name == unique_name))
 
 
 # ---- 매퍼 --------------------------------------------------------------

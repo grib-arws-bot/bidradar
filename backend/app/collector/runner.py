@@ -39,11 +39,13 @@ def _collection_window(conn: Connection, source_id: int, *, max_lookback_days: i
     return max(begin, floor), now
 
 
-def _get_or_create_org(conn: Connection, name: str) -> int:
+def _get_or_create_org(conn: Connection, name: str, source_id: int) -> int:
     row = conn.execute(select(org.c.id).where(org.c.name == name)).first()
     if row:
         return row[0]
-    result = conn.execute(insert(org).values(name=name).returning(org.c.id)).one()
+    # 새로 발견되는 발주기관은 지금 수집 중인 소스(공고기관/채널)를 그대로 연결해둔다 —
+    # 관리자 페이지 "소스 관리"(발주기관 중심 목록)가 별도 수작업 없이 채워지도록.
+    result = conn.execute(insert(org).values(name=name, source_id=source_id).returning(org.c.id)).one()
     return result.id
 
 
@@ -117,7 +119,7 @@ def run_source(conn: Connection, source_id: int, *, max_lookback_days: int = DEF
             skipped += 1
             continue
 
-        org_id = _get_or_create_org(conn, mapped["org_name"]) if mapped.get("org_name") else None
+        org_id = _get_or_create_org(conn, mapped["org_name"], source_id) if mapped.get("org_name") else None
         existing = conn.execute(select(notice.c.id).where(notice.c.url == mapped["url"])).first()
         if existing:
             notice_id = existing[0]
