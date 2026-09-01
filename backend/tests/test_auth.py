@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
+from app.config import settings
 from app.db import engine
 from app.main import app
 from app.models import auth_session, login_attempt
@@ -69,3 +70,26 @@ def test_lockout_after_five_failures(client: TestClient):
     # 6번째는 자격증명이 맞아도 잠겨서 429
     locked = client.post("/api/auth/login", json={"email": EMAIL, "password": CORRECT_PASSWORD})
     assert locked.status_code == 429
+
+
+def test_dev_autologin_succeeds_in_dev(client: TestClient):
+    assert settings.environment != "production"  # 테스트 기본값(개발) 확인 — 아래 production 테스트가 원복 확인용
+    response = client.post("/api/auth/dev-autologin")
+    assert response.status_code == 200
+    assert response.json()["email"] == EMAIL
+    assert "bidradar_session" in response.cookies
+
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["email"] == EMAIL
+
+
+def test_dev_autologin_404_in_production(client: TestClient):
+    original = settings.environment
+    settings.environment = "production"
+    try:
+        response = client.post("/api/auth/dev-autologin")
+        assert response.status_code == 404
+        assert "bidradar_session" not in response.cookies
+    finally:
+        settings.environment = original
