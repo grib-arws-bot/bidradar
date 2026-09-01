@@ -49,8 +49,8 @@ def create_admin() -> None:
     if password != confirm:
         print("비밀번호가 일치하지 않습니다.", file=sys.stderr)
         raise SystemExit(1)
-    if len(password) < 12:
-        print("비밀번호는 12자 이상이어야 합니다.", file=sys.stderr)
+    if len(password) < 8:
+        print("비밀번호는 8자 이상이어야 합니다.", file=sys.stderr)
         raise SystemExit(1)
 
     new_hash = hash_password(password)
