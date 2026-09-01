@@ -2,6 +2,7 @@ import ApartmentIcon from "@mui/icons-material/ApartmentOutlined";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import BookmarkIcon from "@mui/icons-material/BookmarkBorderOutlined";
 import DictionaryIcon from "@mui/icons-material/MenuBookOutlined";
+import HomeIcon from "@mui/icons-material/HomeOutlined";
 import InsightsIcon from "@mui/icons-material/InsightsOutlined";
 import InventoryIcon from "@mui/icons-material/Inventory2Outlined";
 import LogoutIcon from "@mui/icons-material/LogoutOutlined";
@@ -42,6 +43,10 @@ interface NavSection {
 // 구현스펙 02절 pages/ 목록 + 오늘 결정사항(S7→고객 관심주제 관리, S9 카탈로그 신설) 반영.
 // 실제 화면은 U4 이후에 채워지고, 지금은 셸+라우팅만(U3 범위).
 const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "홈",
+    items: [{ label: "전체 현황", to: "/", icon: <HomeIcon fontSize="small" /> }],
+  },
   {
     label: "공고",
     items: [
@@ -136,6 +141,7 @@ export function DashboardLayout() {
                   key={item.to}
                   component={NavLink}
                   to={item.to}
+                  end={item.to === "/"}
                   sx={{
                     borderRadius: 1,
                     mb: 0.25,

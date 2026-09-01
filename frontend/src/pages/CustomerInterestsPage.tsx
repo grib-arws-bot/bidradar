@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 
 import {
   deleteSavedSearch,
@@ -29,6 +30,7 @@ import {
   type InterestDraft,
 } from "@/api/customerInterests";
 import { fetchFilterOptions } from "@/api/notices";
+import { fetchReports, generateReport } from "@/api/reports";
 
 const EMPTY_DRAFT: InterestDraft = {
   topic_ids: [],
@@ -106,6 +108,22 @@ export function CustomerInterestsPage() {
   const deleteSearchMutation = useMutation({
     mutationFn: (searchId: number) => deleteSavedSearch(customerId!, searchId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["saved-searches", customerId] }),
+  });
+
+  const reportsQuery = useQuery({
+    queryKey: ["reports", customerId],
+    queryFn: () => fetchReports(customerId!),
+    enabled: customerId !== null,
+  });
+
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const generateReportMutation = useMutation({
+    mutationFn: () => generateReport(customerId!),
+    onSuccess: (report) => {
+      queryClient.invalidateQueries({ queryKey: ["reports", customerId] });
+      void navigator.clipboard?.writeText(`${window.location.origin}/r/${report.token}`);
+      setCopiedToken(report.token);
+    },
   });
 
   function update(patch: Partial<InterestDraft>) {
@@ -303,6 +321,44 @@ export function CustomerInterestsPage() {
                 </Stack>
               </>
             )}
+
+            <Divider sx={{ my: 2, borderStyle: "dashed" }} />
+
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+              <Typography variant="h3">관심분야 리포트</Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={generateReportMutation.isPending}
+                onClick={() => generateReportMutation.mutate()}
+              >
+                지금 생성
+              </Button>
+            </Stack>
+            {copiedToken && (
+              <Typography variant="caption" color="success.main" sx={{ display: "block", mb: 1 }}>
+                링크가 클립보드에 복사됐습니다: /r/{copiedToken}
+              </Typography>
+            )}
+            <List dense disablePadding sx={{ mb: 2 }}>
+              {(reportsQuery.data ?? []).map((r) => (
+                <ListItem key={r.id} disableGutters>
+                  <ListItemText
+                    primary={`${new Date(r.generated_at).toLocaleDateString("ko-KR")} · ${r.summary.total}건`}
+                    secondary={
+                      <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
+                        /r/{r.token} (조회 {r.view_count}회)
+                      </RouterLink>
+                    }
+                  />
+                </ListItem>
+              ))}
+              {(reportsQuery.data ?? []).length === 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  아직 생성한 리포트가 없습니다.
+                </Typography>
+              )}
+            </List>
 
             <Divider sx={{ my: 2, borderStyle: "dashed" }} />
 

@@ -9,6 +9,8 @@ import { CustomerInterestsPage } from "@/pages/CustomerInterestsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
+import { OverviewPage } from "@/pages/OverviewPage";
+import { PublicReportPage } from "@/pages/PublicReportPage";
 import { useSession } from "@/hooks/useSession";
 import { theme } from "@/theme";
 
@@ -36,6 +38,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* 로그인 없는 외부 고객용 — 절대 RequireAuth/DashboardLayout 안에 넣지 말 것 */}
+      <Route path="/r/:token" element={<PublicReportPage />} />
       <Route
         element={
           <RequireAuth>
@@ -43,7 +47,7 @@ function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/notices" replace />} />
+        <Route path="/" element={<OverviewPage />} />
         <Route path="/notices" element={<NoticeExplorePage />} />
         <Route path="/notices/:id" element={<NoticeDetailPage />} />
         <Route path="/analyses" element={<ComingSoonPage title="심층 분석" />} />

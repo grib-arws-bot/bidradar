@@ -14,6 +14,7 @@ from app.services.customer_interest import (
     list_customers,
     save_interest_profile,
 )
+from app.services.interest_report import generate_report, list_reports
 from app.services.saved_search import create_saved_search, delete_saved_search, list_saved_searches
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
@@ -93,3 +94,18 @@ def delete_search(customer_id: int, search_id: int, _email: str = Depends(requir
         found = delete_saved_search(conn, customer_id, search_id)
     if not found:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="저장한 검색을 찾을 수 없습니다.")
+
+
+@router.post("/{customer_id}/reports", status_code=status.HTTP_201_CREATED)
+def post_report(customer_id: int, _email: str = Depends(require_auth)) -> dict:
+    with engine.begin() as conn:
+        report = generate_report(conn, customer_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+    return report
+
+
+@router.get("/{customer_id}/reports")
+def get_reports(customer_id: int, _email: str = Depends(require_auth)) -> list[dict]:
+    with engine.connect() as conn:
+        return list_reports(conn, customer_id)

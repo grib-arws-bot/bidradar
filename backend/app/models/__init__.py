@@ -32,6 +32,7 @@ from app.models.analysis import (
     analysis_requirement,
 )
 from app.models.catalog import product, product_cert, product_reference, product_spec
+from app.models.reports import newsletter_report
 from app.models.sources import (
     audit_log,
     source,
@@ -74,6 +75,8 @@ __all__ = [
     "product_spec",
     "product_cert",
     "product_reference",
+    # reports
+    "newsletter_report",
     # sources
     "source",
     "source_config",

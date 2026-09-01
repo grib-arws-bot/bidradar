@@ -142,23 +142,15 @@ def _serialize(n: dict, score: int) -> dict:
     }
 
 
-def compute_matches(conn: Connection, draft: InterestDraft, *, min_score: int = MIN_SCORE) -> dict:
-    """관심도 공식(설계안 08절)을 조회 시점에 그대로 계산 — 저장 전 미리보기와 저장 후 실제
-    목록이 정확히 같은 함수를 거치므로 U5b 인수조건("미리보기=실제 건수")이 구조적으로 성립한다."""
+def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> list[tuple[dict, int]]:
+    """관심도 공식(설계안 08절)을 조회 시점에 그대로 계산해 전체 매칭 목록을 점수 내림차순으로
+    반환한다. compute_matches(미리보기)와 리포트 생성(interest_report.py) 둘 다 이 함수 하나를
+    거치므로, "미리보기=실제"·"리포트=실제 매칭"이 항상 같은 계산 결과를 보장한다."""
     notices = _candidate_notices(conn)
     topic_map = _notice_topic_ids(conn)
     topic_id_set = set(draft.topic_ids)
     terms = [t.strip() for t in draft.terms if t.strip()]
     org_id_set = set(draft.followed_org_ids)
-
-    since = datetime.now(timezone.utc) - timedelta(days=30)
-    term_counts = {t: 0 for t in terms}
-    for n in notices:
-        if not n["open_dt"] or n["open_dt"] < since:
-            continue
-        for t in terms:
-            if t.lower() in n["title"].lower():
-                term_counts[t] += 1
 
     scored: list[tuple[dict, int]] = []
     for n in notices:
@@ -187,11 +179,35 @@ def compute_matches(conn: Connection, draft: InterestDraft, *, min_score: int = 
         scored.append((n, score))
 
     scored.sort(key=lambda pair: pair[1], reverse=True)
+    return scored
+
+
+def compute_matches(conn: Connection, draft: InterestDraft, *, min_score: int = MIN_SCORE) -> dict:
+    """S7 미리보기용 — 건수 + 샘플 5건 + 키워드별 최근 30일 매칭 건수."""
+    notices = _candidate_notices(conn)
+    terms = [t.strip() for t in draft.terms if t.strip()]
+
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    term_counts = {t: 0 for t in terms}
+    for n in notices:
+        if not n["open_dt"] or n["open_dt"] < since:
+            continue
+        for t in terms:
+            if t.lower() in n["title"].lower():
+                term_counts[t] += 1
+
+    scored = _score_all(conn, draft, min_score=min_score)
     return {
         "count": len(scored),
         "samples": [_serialize(n, score) for n, score in scored[:5]],
         "term_counts": term_counts,
     }
+
+
+def top_matches(conn: Connection, draft: InterestDraft, *, limit: int = 20, min_score: int = MIN_SCORE) -> list[dict]:
+    """리포트(뉴스레터) 생성용 — 상위 N건. interest_report.py가 스냅샷을 만들 때 쓴다."""
+    scored = _score_all(conn, draft, min_score=min_score)
+    return [_serialize(n, score) for n, score in scored[:limit]]
 
 
 def draft_from_profile(profile: dict) -> InterestDraft:
