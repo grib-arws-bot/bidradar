@@ -1,0 +1,64 @@
+# ── 시크릿 ────────────────────────────────────────────────────────────
+# 실제 값이 든 .env는 절대 커밋 금지. 구조는 infra/.env.example로만 공유한다.
+# (ARWS에서 self-hosted 러너에 복사한 .env가 남아 있던 사고가 있었음 — 배포
+#  워크플로우 마지막에 if: always()로 삭제하는 스텝이 필요하다)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── 로그 ──────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Node / 프론트 ─────────────────────────────────────────────────────
+# 각 하위 프로젝트에도 .gitignore가 있지만, 저장소 루트 바로 아래 node_modules는
+# 안 막혀서 `git add -A` 한 번에 통째로 딸려 들어가는 사고가 날 수 있음.
+node_modules/
+frontend/dist/
+frontend/.vite/
+.eslintcache
+
+# ── 인프라 / 운영 데이터 ──────────────────────────────────────────────
+# DB 덤프는 실데이터라 git에 어울리지 않고 용량도 큼
+infra/backups/
+infra/*.tar.gz
+infra/*.sql
+# 자체 서명 TLS 인증서·개인키 — 환경마다 직접 생성
+infra/tls-proxy/certs/
+
+# ── 심층 분석 업로드 / 산출물 ─────────────────────────────────────────
+# 사용자가 올린 규격서(HWP/PDF)와 생성된 리포트는 실데이터. 볼륨에만 둔다.
+backend/uploads/
+backend/exports/
+backend/tmp/
+
+# ── 진단·감사 리포트 HTML 차단 ────────────────────────────────────────
+# [ARWS 교훈] nginx가 /api 외 정적 파일을 인증 없이 그대로 서빙하므로,
+# 내부 정보가 담긴 리포트를 public/에 두면 URL만 알면 누구나 열람 가능해짐.
+# ARWS에서 실제로 발생한 사고라 패턴 자체를 차단한다.
+frontend/public/*audit*.html
+frontend/public/*-report.html
+frontend/public/*white*paper*
+
+# ── 도구 / OS ─────────────────────────────────────────────────────────
+# settings.json(팀 공용 가능)은 남기고 local은 개인용이라 제외
+.claude/settings.local.json
+.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
