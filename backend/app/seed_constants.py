@@ -200,6 +200,17 @@ SOURCE_SEED = [
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(2026-09-01 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
      "https://www.iris.go.kr/robots.txt"),
+    # 2026-09-02(의사결정_로그 24번) — IRIS 사업정보 메뉴 4개 화면 전수조사 중 발견. "접수예정"
+    # (위 소스)보다도 이른 단계 — 접수예정/접수중/마감 탭과는 별개의 화면(retrieveAncmPrntc*)이라
+    # 별도 소스로 등록. 목록 응답 자체에 사업내용·목적·지원분야 요약(35~230자, 원문 아님)과
+    # 지원금액범위·지원기간까지 있어 상세페이지 없이도 정보가 풍부함(사업담당자 개인정보는
+    # 상세페이지에만 있고 이 목록엔 없음, 3건 표본 확인). stage="공모예고" 재사용 — 둘 다
+    # 공식 공고 전 단계라 같은 탭(사전규격/발주계획/공모예고)에 묶이는 게 맞음.
+    ("IRIS 공모예고", "과학기술정보통신부 등(범부처, 42개 전문기관)",
+     "https://www.iris.go.kr/contents/retrieveAncmPrntcList.do",
+     "https://www.iris.go.kr/contents/retrieveAncmPrntcListView.do", "공모예고", "openapi", False, True, 1440,
+     "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(IRIS 접수예정과 동일 사이트·동일 근거, 2026-09-02 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
+     "https://www.iris.go.kr/robots.txt"),
     # advisory INBOX #2(2026-09-01) — 과기정통부 "자체" 공고만 다룬다(범부처 아님). 이름에
     # 명시해 IRIS(범부처)와 혼동하지 않게 함. close_dt 항목 자체가 없는 소스 — INBOX #1 참고.
     # 법적등급 A(자유) — data.go.kr 이용허락범위 '제한 없음'.
@@ -224,6 +235,7 @@ ATTRIBUTION_TEXT = {
     "나라장터 낙찰정보서비스": "출처: 조달청 나라장터 낙찰정보서비스(공공데이터포털)",
     "K-water 입찰공고": "출처: 한국수자원공사 입찰공고(공공데이터포털)",
     "IRIS 접수예정": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
+    "IRIS 공모예고": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": "출처: 과학기술정보통신부 사업공고(공공데이터포털)",
 }
 
@@ -311,6 +323,44 @@ REAL_OPENAPI_CONFIG = {
             ("extra:budJuriGovdSe", "$.budJuriGovdSe", None),
             ("extra:pbofrTpSeLst", "$.pbofrTpSeLst", None),
             ("extra:pbofrTpSeNmLst", "$.pbofrTpSeNmLst", None),
+        ],
+    },
+    # 2026-09-02(의사결정_로그 24번) — 실제 POST 호출로 직접 확인(서비스키 불필요). 591건인데
+    # **정렬 기준이 날짜순이 아니라 bsnsPrntcNo(등록순서) 내림차순**임을 라이브 검증으로 확인
+    # (실측: 300건만 받았을 때 regDt가 2024-10-02~2026-08-28로 뒤섞여 있고 단조감소가 아니었음
+    # — 최근 60일 이내 건이 뒤쪽 페이지에 더 있을 수 있어 max_pages를 전체(591/10≈60페이지)를
+    # 커버하도록 65로 올림. B등급 최소 수집 간격(1일)상 하루 한 번이라 페이지 수가 늘어도 부담
+    # 크지 않음). url은 상세페이지가 POST 폼 전용이라 advisory 원안처럼 GET querystring이 안
+    # 먹힐 줄 알았으나, 실측 결과 같은 파라미터를 GET으로 보내도 200 정상 응답(직접 확인) —
+    # urlfmt로 조립 가능. regMbrNm(등록회원명)은 응답에 있지만 실명이 아니라 회원코드값이라도
+    # mapper의 PII 패턴("mbr")이 자동으로 막아준다 — 매핑 시도 자체를 안 함.
+    "IRIS 공모예고": {
+        "config": {
+            "endpoint": "https://www.iris.go.kr/contents/retrieveAncmPrntcList.do",
+            "method": "POST",
+            "params": {"pageIndex": "1", "prgmId": ""},
+            "items_path": "$.listAncmPrntc[*]",
+            "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 65},
+        },
+        "field_maps": [
+            ("notice_no", "$.bsnsPrntcNo", None),
+            ("title", "$.ancmPrntcTl", None),
+            ("org_name", "$.sorgnNm", None),
+            ("open_dt", "$.regDt", "%Y-%m-%d"),
+            (
+                "url",
+                "urlfmt:https://www.iris.go.kr/contents/retrieveAncmPrntcView.do?ancmId=&bsnsYy={bsnsYy}&sorgnBsnsCd={sorgnBsnsCd}&ancmPrntcSn=&ancmTurn=&seq={seq}&hirkSorgnBsnsCd={hirkSorgnBsnsCd}&sorgnId={sorgnId}",
+                None,
+            ),
+            ("extra:blngGovdSeNm", "$.blngGovdSeNm", None),
+            ("extra:bsnsYy", "$.bsnsYy", None),
+            ("extra:bsnsCn", "$.bsnsCn", None),
+            ("extra:bsnsPursCn", "$.bsnsPursCn", None),
+            ("extra:sprtFildCn", "$.sprtFildCn", None),
+            ("extra:sprtMinRsctAm", "$.sprtMinRsctAm", None),
+            ("extra:sprtMxRsctAm", "$.sprtMxRsctAm", None),
+            ("extra:sprtPridSe", "$.sprtPridSe", None),
+            ("extra:bsnsSpchClSeNm", "$.bsnsSpchClSeNm", None),
         ],
     },
 }

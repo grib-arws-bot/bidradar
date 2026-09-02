@@ -111,6 +111,20 @@ def test_validate_field_maps_accepts_clean_extra_fields():
     validate_field_maps(field_maps)  # 예외 없이 통과해야 함
 
 
+def test_all_real_source_field_maps_pass_validation():
+    # 2026-09-02 — 실제로 등록된 모든 소스의 REAL_OPENAPI_CONFIG field_maps가 자기 소스의
+    # legal_tier 기준으로 통과하는지 한 번에 검증. 새 소스(IRIS 공모예고 등) 추가 시 PII·
+    # 원문필드 실수를 회귀로 잡아준다.
+    from app.seed_constants import REAL_OPENAPI_CONFIG, SOURCE_SEED
+
+    legal_tier_by_name = {row[0]: row[9] for row in SOURCE_SEED}
+    for name, real in REAL_OPENAPI_CONFIG.items():
+        field_maps = [
+            {"target_field": t, "source_path": p, "format_hint": h} for t, p, h in real["field_maps"]
+        ]
+        validate_field_maps(field_maps, legal_tier=legal_tier_by_name.get(name))
+
+
 def test_banned_field_sets_are_disjoint_from_required_notice_columns():
     # REQUIRED_FIELDS(title/org_name/open_dt/url)를 실수로 금지 목록에 넣지 않았는지 확인
     from app.collector.mapper import REQUIRED_FIELDS
