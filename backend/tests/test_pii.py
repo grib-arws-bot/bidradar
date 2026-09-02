@@ -35,6 +35,24 @@ def test_mask_pii_redacts_bizinfo_style_reference_contact_field():
     assert masked["refrncNm"] != "홍길동"
 
 
+def test_mask_pii_redacts_iris_bulletin_style_contact_fields():
+    # 2026-09-02 IRIS 사업진행안내·사업설명회(게시판형) 엔드포인트 조사 중 발견 — 목록 응답에
+    # telNo/celNo/wrtrMbrNm/wrtrMbrWholNm이 그대로 노출되는 실제 사례.
+    item = {
+        "blltTl": "2026년도 사업설명회 안내",
+        "telNo": "042-869-0114",
+        "celNo": "010-1234-5678",
+        "wrtrMbrNm": "홍길동",
+        "wrtrMbrWholNm": "홍길동",
+    }
+    masked = mask_pii(item)
+    assert masked["blltTl"] == item["blltTl"]
+    assert masked["telNo"] != item["telNo"]
+    assert masked["celNo"] != item["celNo"]
+    assert masked["wrtrMbrNm"] != "홍길동"
+    assert masked["wrtrMbrWholNm"] != "홍길동"
+
+
 def test_mask_pii_recurses_into_nested_dicts_and_lists():
     payload = {"items": [{"managerName": "홍길동"}, {"managerName": "김철수"}]}
     masked = mask_pii(payload)

@@ -15,8 +15,13 @@ import re
 # 과기정통부 API의 managerName/managerTel을(INBOX #2 원문) 접미사 상관없이 잡는다.
 # "refrnc"는 기업마당(bizinfo.go.kr) API의 refrncNm(문의처 담당자명)을 잡으려고 추가함
 # (2026-09-02 기업마당 기술검토 중 발견 — 이 패턴 없이는 안 걸리는 실제 사례였음).
+# "telno"/"celno"/"mbr"는 IRIS 사업진행안내·사업설명회(게시판형) 엔드포인트 조사 중 발견
+# (2026-09-02) — telNo/celNo(전화·휴대폰)·wrtrMbrNm/wrtrMbrWholNm(작성자명)·frstRegMbrIdNm
+# 등이 목록 응답에 그대로 노출됨. "mbr"는 광범위해 보이지만 이 도메인(정부 API 필드명)에서
+# "회원(멤버) 관련 식별자"는 전부 개인 식별과 엮여 있어 통째로 막는 쪽이 안전(과다 마스킹이
+# 과소 마스킹보다 싸다).
 _PII_KEY_PATTERN = re.compile(
-    r"(ofcl|manager|charger|picnm|pic_?tel|refrnc|담당자|연락처|휴대폰|이메일|e-?mail)",
+    r"(ofcl|manager|charger|picnm|pic_?tel|refrnc|telno|celno|mbr|담당자|연락처|휴대폰|이메일|e-?mail)",
     re.IGNORECASE,
 )
 # 패턴에 우연히 걸리지만 개인정보가 아닌 키(발주기관명 등)는 여기서 빼준다.
