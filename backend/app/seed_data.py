@@ -82,7 +82,9 @@ def run_seed(engine: Engine) -> None:
 
 def _seed_topics(conn) -> dict[str, int]:
     ids: dict[str, int] = {}
-    for i, name in enumerate(INTEREST_TOPICS):
+    # 번호는 1부터 시작(2026-09-02 요청) — 관리자 화면에 "0번"이 보이면 사람이 세는 방식과
+    # 어긋나 혼란스럽다는 지적.
+    for i, name in enumerate(INTEREST_TOPICS, start=1):
         row = conn.execute(
             insert(interest_topic).values(name=name, sort_order=i, active=True).returning(interest_topic.c.id)
         ).one()

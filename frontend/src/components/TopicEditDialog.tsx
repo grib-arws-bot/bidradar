@@ -42,11 +42,11 @@ export function TopicEditDialog({ open, topic, submitting, onClose, onSubmit }: 
             fullWidth
           />
           <TextField
-            label="정렬 순서"
+            label="번호"
             type="number"
             value={sortOrder}
             onChange={(e) => setSortOrder(Number(e.target.value))}
-            helperText="목록에서 낮은 숫자가 먼저 나옵니다"
+            helperText="목록에서 낮은 숫자가 먼저 나옵니다(1부터 시작)"
             fullWidth
           />
         </Stack>

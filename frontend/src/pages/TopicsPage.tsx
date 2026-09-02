@@ -92,7 +92,7 @@ export function TopicsPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>정렬</TableCell>
+              <TableCell>번호</TableCell>
               <TableCell>이름</TableCell>
               <TableCell>설명</TableCell>
               <TableCell>상태</TableCell>
