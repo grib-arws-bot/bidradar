@@ -25,7 +25,9 @@ _PII_KEY_ALLOWLIST = {"deptnm", "deptname", "orgnm", "orgname", "sorgnnm", "ntce
 MASKED_VALUE = "[개인정보 마스킹됨]"
 
 
-def _is_pii_key(key: str) -> bool:
+def is_pii_like_key(key: str) -> bool:
+    """공개 함수 — app/collector/mapper.py가 "extra:" 필드 매핑을 검사할 때도 재사용한다
+    (2026-09-02, notice.extra 도입)."""
     lowered = key.lower()
     if lowered in _PII_KEY_ALLOWLIST:
         return False
@@ -37,7 +39,7 @@ def mask_pii(value):
     raw_payload 저장 직전, 그리고 map_item에 넘기기 전(이중 방어) 양쪽에서 호출한다.
     """
     if isinstance(value, dict):
-        return {key: (MASKED_VALUE if _is_pii_key(key) else mask_pii(val)) for key, val in value.items()}
+        return {key: (MASKED_VALUE if is_pii_like_key(key) else mask_pii(val)) for key, val in value.items()}
     if isinstance(value, list):
         return [mask_pii(item) for item in value]
     return value

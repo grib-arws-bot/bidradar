@@ -6,10 +6,15 @@ from datetime import datetime, timezone
 
 from jsonpath_ng.ext import parse as jsonpath_parse
 
+from app.collector.pii import is_pii_like_key
+
 # 필수 4개 필드가 매핑 안 되면 이 건은 버린다(설계안 04-2 "필수 4개 필드가 매핑되지 않으면
 # 다음 단계로 못 넘어갑니다" — 수집 시점에도 동일 원칙 적용).
 REQUIRED_FIELDS = ("title", "org_name", "open_dt", "url")
 _DATE_FIELDS = {"open_dt", "close_dt"}
+# 명명 컬럼에 안 들어가는 소스별 부가 필드(2026-09-02, notice.extra 도입) — target_field를
+# "extra:원본키"로 적으면 notice.extra JSONB에 {원본키: 값}으로 들어간다.
+_EXTRA_PREFIX = "extra:"
 
 # 담당자 개인정보는 notice로 매핑하는 것 자체를 막는다(advisory INBOX #8) — notice 테이블에
 # 애초에 이런 컬럼이 없어 지금은 우연히도 안전하지만, "우연히 안전"이 아니라 "코드가 막는다"로
@@ -30,6 +35,13 @@ def validate_field_maps(field_maps: list[dict], *, legal_tier: str | None = None
     banned = targets & PII_BANNED_TARGET_FIELDS
     if banned:
         raise ValueError(f"담당자 개인정보 필드는 매핑할 수 없습니다(advisory INBOX #8): {sorted(banned)}")
+    # "extra:원본키" 형태(notice.extra JSONB로 들어가는 부가 필드)도 원본키 자체가 담당자
+    # 개인정보 패턴이면 막는다 — 명명 컬럼이 아니라고 검사를 피해가면 안 됨(2026-09-02).
+    extra_pii = sorted(
+        t for t in targets if t.startswith(_EXTRA_PREFIX) and is_pii_like_key(t[len(_EXTRA_PREFIX):])
+    )
+    if extra_pii:
+        raise ValueError(f"담당자 개인정보로 보이는 extra 필드는 매핑할 수 없습니다(advisory INBOX #8): {extra_pii}")
     if legal_tier == "B":
         banned_b = targets & TIER_B_BANNED_TARGET_FIELDS
         if banned_b:
@@ -86,7 +98,10 @@ def map_item(item: dict, field_maps: list[dict]) -> dict | None:
     for fm in field_maps:
         target = fm["target_field"]
         raw = _resolve(item, fm["source_path"])
-        if target in _DATE_FIELDS:
+        if target.startswith(_EXTRA_PREFIX):
+            key = target[len(_EXTRA_PREFIX):]
+            result.setdefault("extra", {})[key] = raw
+        elif target in _DATE_FIELDS:
             result[target] = _parse_date(raw, fm.get("format_hint"))
         elif target == "est_price":
             result[target] = _parse_price(raw)

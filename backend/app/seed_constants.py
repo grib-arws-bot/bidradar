@@ -237,6 +237,11 @@ REAL_OPENAPI_CONFIG = {
             "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",
+            # 업무구분(물품/용역/공사/외자)은 나라장터 응답 필드가 아니라 "어느 오퍼레이션을
+            # 불렀는지"로 정해진다(2026-09-02 확인) — 이 엔드포인트(getBidPblancListInfoServc)는
+            # 4종 중 "용역" 전용. 물품(getBidPblancListInfoThing)·공사(getBidPblancListInfoCnstwk)·
+            # 외자(getBidPblancListInfoFrgcpt)는 별도 소스로 등록해야 함(아직 미등록).
+            "biz_type": "용역",
         },
         "field_maps": [
             ("notice_no", "$.bidNtceNo", None),
@@ -292,6 +297,20 @@ REAL_OPENAPI_CONFIG = {
             ("open_dt", "$.ancmDe", "%Y-%m-%d"),
             ("close_dt", "$.rcveEndDe", "%Y.%m.%d"),
             ("url", "urlfmt:https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId={ancmId}", None),
+            # 2026-09-02 — 명명 컬럼에 안 들어가는 나머지 필드(공모유형·소관부처·접수상태·D-day
+            # 등)를 notice.extra에 담아 화면 카드에 보여준다(전부 목록 응답에 이미 있던 값 —
+            # 사업담당자·연락처 같은 개인정보는 상세페이지에만 있고 목록 응답엔 없음을 직접
+            # 확인함, 그래도 mapper.validate_field_maps가 재차 걸러줌).
+            ("extra:dDay", "$.dDay", None),
+            ("extra:rcveStt", "$.rcveStt", None),
+            ("extra:rcveSttSeNmLst", "$.rcveSttSeNmLst", None),
+            ("extra:rcveStrDe", "$.rcveStrDe", None),
+            ("extra:sorgnId", "$.sorgnId", None),
+            ("extra:blngGovdSe", "$.blngGovdSe", None),
+            ("extra:blngGovdSeNm", "$.blngGovdSeNm", None),
+            ("extra:budJuriGovdSe", "$.budJuriGovdSe", None),
+            ("extra:pbofrTpSeLst", "$.pbofrTpSeLst", None),
+            ("extra:pbofrTpSeNmLst", "$.pbofrTpSeNmLst", None),
         ],
     },
 }

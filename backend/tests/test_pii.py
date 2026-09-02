@@ -73,6 +73,26 @@ def test_validate_field_maps_rejects_full_text_target_for_tier_b():
         validate_field_maps(field_maps, legal_tier="B")
 
 
+def test_validate_field_maps_rejects_pii_like_extra_field():
+    # 2026-09-02 notice.extra 도입 — "extra:원본키" 형태도 원본키가 PII 패턴이면 막혀야 한다.
+    field_maps = [
+        {"target_field": "title", "source_path": "$.title", "format_hint": None},
+        {"target_field": "extra:sorgnNm", "source_path": "$.sorgnNm", "format_hint": None},
+        {"target_field": "extra:refrncNm", "source_path": "$.refrncNm", "format_hint": None},
+    ]
+    with pytest.raises(ValueError, match="extra 필드"):
+        validate_field_maps(field_maps)
+
+
+def test_validate_field_maps_accepts_clean_extra_fields():
+    field_maps = [
+        {"target_field": "title", "source_path": "$.title", "format_hint": None},
+        {"target_field": "extra:dDay", "source_path": "$.dDay", "format_hint": None},
+        {"target_field": "extra:blngGovdSeNm", "source_path": "$.blngGovdSeNm", "format_hint": None},
+    ]
+    validate_field_maps(field_maps)  # 예외 없이 통과해야 함
+
+
 def test_banned_field_sets_are_disjoint_from_required_notice_columns():
     # REQUIRED_FIELDS(title/org_name/open_dt/url)를 실수로 금지 목록에 넣지 않았는지 확인
     from app.collector.mapper import REQUIRED_FIELDS

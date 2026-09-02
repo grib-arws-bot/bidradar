@@ -134,9 +134,6 @@ export function NoticeExplorePage() {
     <Stack spacing={3}>
       <Box>
         <Typography variant="h2">공고 탐색</Typography>
-        <Typography variant="body2" color="text.secondary">
-          사전규격 단계부터 — 이미 늦기 전에 봅니다.
-        </Typography>
       </Box>
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" useFlexGap>

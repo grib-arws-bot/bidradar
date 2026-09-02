@@ -14,6 +14,9 @@ export interface NoticeItem {
   close_dt: string | null;
   url: string;
   assignee_name: string | null;
+  // 소스별 부가 필드(2026-09-02) — IRIS 접수예정의 공모유형·소관부처·접수상태·D-day 등.
+  // 명명 컬럼에 없는 소스 고유 필드만 여기 들어간다. 다른 소스는 null.
+  extra: Record<string, string | number | null> | null;
   org_name: string | null;
   priority: number | null;
 }
@@ -82,6 +85,7 @@ export interface NoticeDetail {
   close_dt: string | null;
   url: string;
   assignee_name: string | null;
+  extra: Record<string, string | number | null> | null;
   org_id: number | null;
   org_name: string | null;
   scores: NoticeScore[];

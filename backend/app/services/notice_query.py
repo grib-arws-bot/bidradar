@@ -81,6 +81,7 @@ def _base_select(priority_sq) -> Select:
             notice.c.close_dt,
             notice.c.url,
             notice.c.assignee_name,
+            notice.c.extra,
             org.c.name.label("org_name"),
             priority_sq.c.priority,
         )

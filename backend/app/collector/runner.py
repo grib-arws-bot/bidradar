@@ -182,6 +182,7 @@ def run_source(
                     open_dt=mapped["open_dt"],
                     close_dt=mapped.get("close_dt"),
                     url=mapped["url"],
+                    extra=mapped.get("extra"),
                 ).returning(notice.c.id)
             ).one()
             notice_id = result.id

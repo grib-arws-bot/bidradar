@@ -70,6 +70,11 @@ notice = Table(
     Column("url", Text, nullable=False),
     Column("pipeline_stage", String(30), nullable=False, server_default="collected"),  # S2 칸반 단계
     Column("assignee_name", String(100)),  # 자유텍스트 담당자명(개별 계정 없음, 03절 v0.3)
+    # 소스별 부가 메타데이터(2026-09-02) — IRIS 공모유형·소관부처·접수상태·D-day처럼 명명 컬럼에
+    # 안 들어가는 나머지 필드. 소스마다 필드가 달라 전용 컬럼을 늘리지 않고 JSONB로 받는다
+    # (설계안 04-1 "범용 매퍼" 원칙). PII는 여기에도 절대 들어가면 안 됨 — mapper.py의
+    # PII_BANNED_TARGET_FIELDS가 "extra:"로 시작하는 target_field에도 동일하게 적용됨.
+    Column("extra", JSONB),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

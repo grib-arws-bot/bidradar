@@ -254,6 +254,20 @@ def test_map_item_const_prefix_sets_fixed_value_regardless_of_item():
     assert mapped.get("close_dt") is None  # 매핑 자체가 없으므로 항상 None — 필수 필드가 아니라 통과됨
 
 
+def test_map_item_extra_prefix_collects_into_nested_dict():
+    # 2026-09-02 — IRIS 목록 응답 중 명명 컬럼에 안 들어가는 나머지를 notice.extra로 보여주는
+    # 기능. "extra:원본키" 여러 개가 하나의 extra 딕셔너리로 모여야 한다.
+    field_maps = FIELD_MAPS + [
+        {"target_field": "extra:dDay", "source_path": "$.dDay", "format_hint": None},
+        {"target_field": "extra:sorgnNm", "source_path": "$.ntceInsttNm", "format_hint": None},
+    ]
+    item = {**SAMPLE_ITEMS[0], "dDay": 35}
+    mapped = map_item(item, field_maps)
+    assert mapped is not None
+    assert mapped["extra"] == {"dDay": 35, "sorgnNm": "테스트발주기관"}
+    assert "extra:dDay" not in mapped  # 원본 target_field 그대로는 안 남아야 함
+
+
 # ---- 스코어러(L2) --------------------------------------------------------
 
 

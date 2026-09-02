@@ -33,6 +33,7 @@ def get_notice_detail(conn: Connection, notice_id: int) -> dict | None:
             notice.c.close_dt,
             notice.c.url,
             notice.c.assignee_name,
+            notice.c.extra,
             notice.c.org_id,
             org.c.name.label("org_name"),
         )
