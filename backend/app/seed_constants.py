@@ -167,6 +167,11 @@ REAL_OPENAPI_CONFIG = {
                 "blngGovdSeArr": "", "sorgnIdArr": "", "qualCndtArr": "", "techFildArr": "",
             },
             "items_path": "$.listBsnsAncmBtinSitu[*]",
+            # 2026-09-02 — IRIS는 날짜범위 파라미터를 안 받는다(공고일 기준 요청 필터 자체가
+            # 없음, techFildArr 등은 분야 필터일 뿐). 대신 pageIndex로만 넘어가고 응답의
+            # paginationInfo.totalPageCount로 전체 페이지 수를 알 수 있어, 전 페이지를 받은 뒤
+            # runner._collection_window()가 계산한 begin(2개월 캡)으로 클라이언트측에서 자른다.
+            "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 20},
         },
         "field_maps": [
             ("notice_no", "$.ancmNo", None),

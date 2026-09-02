@@ -147,13 +147,19 @@ def run_source(
         )
     )
 
-    inserted = skipped = scored = 0
+    inserted = skipped = scored = out_of_window = 0
     l1_ok = passes_l1(conn, source_id)
 
     for raw_item in raw_items:
         mapped = map_item(raw_item, field_maps)
         if mapped is None:
             skipped += 1
+            continue
+        # 날짜범위 파라미터를 안 받는 API(IRIS 등, pagination만 있고 date_range_params가 없는
+        # 소스)는 서버가 기간을 안 걸러주므로 여기서 직접 자른다 — begin은 이미
+        # _collection_window()가 계산해둔 값(2026-09-02, IRIS 2개월치 재수집 정확도 개선).
+        if mapped["open_dt"] < begin:
+            out_of_window += 1
             continue
 
         org_id = _get_or_create_org(conn, mapped["org_name"], source_id) if mapped.get("org_name") else None
@@ -200,4 +206,10 @@ def run_source(
 
     _record_run(source_id, status="ok", items_fetched=len(raw_items))
 
-    return {"fetched": len(raw_items), "inserted": inserted, "skipped": skipped, "scored": scored}
+    return {
+        "fetched": len(raw_items),
+        "inserted": inserted,
+        "skipped": skipped,
+        "scored": scored,
+        "out_of_window": out_of_window,
+    }

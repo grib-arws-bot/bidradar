@@ -71,9 +71,11 @@ def seed() -> None:
     print("시드 완료.")
 
 
-def collect(source_id: int, service_key: str | None) -> None:
+def collect(source_id: int, service_key: str | None, force: bool) -> None:
     """수동 1회 수집(U11). 공공데이터포털 인증키가 아직 없으면 --service-key 없이 호출해도
-    되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도)."""
+    되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도).
+
+    --force는 B등급 소스의 최소 수집 간격을 관리자가 의도적으로 우회할 때만 쓴다(INBOX #5)."""
     from sqlalchemy import update
 
     from app.collector.runner import run_source
@@ -86,10 +88,10 @@ def collect(source_id: int, service_key: str | None) -> None:
                 .where(source_credential.c.source_id == source_id, source_credential.c.kind == "service_key")
                 .values(value=service_key)
             )
-        result = run_source(conn, source_id)
+        result = run_source(conn, source_id, force=force)
 
     print(f"수집 완료: fetched={result['fetched']} inserted={result['inserted']} "
-          f"skipped={result['skipped']} scored={result['scored']}")
+          f"skipped={result['skipped']} scored={result['scored']} out_of_window={result['out_of_window']}")
 
 
 def check_compliance(source_id: int | None) -> None:
@@ -117,6 +119,7 @@ def main() -> None:
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--source-id", type=int, required=True)
     collect_parser.add_argument("--service-key", default=None, help="공공데이터포털 인증키(발급받은 경우)")
+    collect_parser.add_argument("--force", action="store_true", help="B등급 최소 수집 간격 무시(관리자 수동 재수집)")
 
     compliance_parser = subparsers.add_parser("check-compliance")
     compliance_parser.add_argument("--source-id", type=int, default=None, help="생략하면 B·C등급 전체 재확인")
@@ -127,7 +130,7 @@ def main() -> None:
     elif args.command == "seed":
         seed()
     elif args.command == "collect":
-        collect(args.source_id, args.service_key)
+        collect(args.source_id, args.service_key, args.force)
     elif args.command == "check-compliance":
         check_compliance(args.source_id)
 

@@ -115,6 +115,55 @@ def test_fetch_openapi_items_post_method_sends_form_body(monkeypatch):
     assert "params" not in call_args.kwargs
 
 
+def test_fetch_openapi_items_paginates_until_total_pages_reached(monkeypatch):
+    # 2026-09-02 — IRIS처럼 date_range_params 없이 페이지만 넘기는 API용. 첫 응답의
+    # paginationInfo.totalPageCount를 읽어 그 페이지까지만 돈다(무한루프 방지).
+    page1 = mock.Mock()
+    page1.json.return_value = {
+        "listBsnsAncmBtinSitu": [{"ancmId": "1"}, {"ancmId": "2"}],
+        "paginationInfo": {"totalPageCount": 2},
+    }
+    page2 = mock.Mock()
+    page2.json.return_value = {"listBsnsAncmBtinSitu": [{"ancmId": "3"}], "paginationInfo": {"totalPageCount": 2}}
+    mock_fetch = mock.Mock(side_effect=[page1, page2])
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    config = {
+        "endpoint": "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
+        "method": "POST",
+        "params": {"pageIndex": "1"},
+        "items_path": "$.listBsnsAncmBtinSitu[*]",
+        "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 20},
+    }
+    now = datetime.now(timezone.utc)
+    items = fetch_openapi_items(config, None, begin=now, end=now)
+
+    assert [i["ancmId"] for i in items] == ["1", "2", "3"]
+    assert mock_fetch.call_count == 2
+    assert mock_fetch.call_args_list[0].kwargs["data"]["pageIndex"] == "1"
+    assert mock_fetch.call_args_list[1].kwargs["data"]["pageIndex"] == "2"
+
+
+def test_fetch_openapi_items_pagination_stops_on_empty_page(monkeypatch):
+    # total_path가 없거나 응답이 이상해도 빈 페이지가 나오면 멈춘다(안전장치).
+    page1 = mock.Mock()
+    page1.json.return_value = {"listBsnsAncmBtinSitu": [{"ancmId": "1"}]}
+    page2 = mock.Mock()
+    page2.json.return_value = {"listBsnsAncmBtinSitu": []}
+    mock_fetch = mock.Mock(side_effect=[page1, page2])
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    config = {
+        "endpoint": "https://example.grib-test.kr",
+        "items_path": "$.listBsnsAncmBtinSitu[*]",
+        "pagination": {"page_param": "pageIndex", "max_pages": 20},
+    }
+    now = datetime.now(timezone.utc)
+    items = fetch_openapi_items(config, None, begin=now, end=now)
+    assert [i["ancmId"] for i in items] == ["1"]
+    assert mock_fetch.call_count == 2
+
+
 # ---- 수집 기간(직전 성공 이후~지금, 없으면 2개월 캡, 2026-09-01 결정) ------------------
 
 
@@ -259,7 +308,7 @@ def test_run_source_end_to_end(monkeypatch):
     with engine.begin() as conn:
         result = run_source(conn, source_id)
 
-    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1}
+    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0}
 
     with engine.connect() as conn:
         cctv_notice = conn.execute(select(notice.c.id, notice.c.title).where(notice.c.notice_no == "R26TEST0001")).first()
@@ -311,7 +360,12 @@ def test_run_source_second_call_narrows_window_to_last_success(monkeypatch):
 # ---- 법적 등급 강제(advisory INBOX #5, 2026-09-01) ------------------------------------
 
 
-def _make_temp_source(conn, *, legal_tier: str, frequency_minutes: int = 1440) -> int:
+_TITLE_ONLY_FIELD_MAP = [("title", "$.title", None)]
+
+
+def _make_temp_source(
+    conn, *, legal_tier: str, frequency_minutes: int = 1440, field_maps: list[tuple] = _TITLE_ONLY_FIELD_MAP
+) -> int:
     """C/B등급 강제를 검증하려고 만드는 테스트 전용 소스 — 시드 데이터(IRIS 등)를 건드리지
     않고 격리해서 확인한다."""
     src_id = conn.execute(
@@ -328,11 +382,12 @@ def _make_temp_source(conn, *, legal_tier: str, frequency_minutes: int = 1440) -
         .values(source_id=src_id, ver=1, config={"endpoint": "https://example.grib-test.kr/api", "items_path": "$.items[*]"})
         .returning(source_config.c.id)
     ).scalar_one()
-    conn.execute(
-        insert(source_field_map).values(
-            source_config_id=cfg_id, target_field="title", source_path="$.title", format_hint=None
+    for target_field, path, format_hint in field_maps:
+        conn.execute(
+            insert(source_field_map).values(
+                source_config_id=cfg_id, target_field=target_field, source_path=path, format_hint=format_hint
+            )
         )
-    )
     return src_id
 
 
@@ -376,6 +431,42 @@ def test_run_source_enforces_tier_b_minimum_interval(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
+
+
+# ---- 날짜범위 파라미터 없는 API의 클라이언트측 기간 필터(2026-09-02, IRIS 재수집 정확도) --
+
+
+def test_run_source_filters_items_older_than_collection_window(monkeypatch):
+    old_dt = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y%m%d%H%M")
+    recent_dt = (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y%m%d%H%M")
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {
+        "items": [
+            {"title": "오래된 공고", "org": "테스트발주기관_기간필터", "openDate": old_dt, "url": "https://x/old"},
+            {"title": "최근 공고", "org": "테스트발주기관_기간필터", "openDate": recent_dt, "url": "https://x/recent"},
+        ]
+    }
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    field_maps = [
+        ("title", "$.title", None), ("org_name", "$.org", None),
+        ("open_dt", "$.openDate", "%Y%m%d%H%M"), ("url", "$.url", None),
+    ]
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="A", field_maps=field_maps)
+    try:
+        with engine.begin() as conn:
+            # 이력이 없어 기본 60일 캡이 적용됨 — 90일 전 공고는 제외, 10일 전 공고만 남아야 함
+            result = run_source(conn, source_id, max_lookback_days=60)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.source_id == source_id))
+            conn.execute(delete(org).where(org.c.name == "테스트발주기관_기간필터"))
+            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
+            conn.execute(delete(source).where(source.c.id == source_id))
+
+    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1}
 
 
 def test_run_source_records_failure_and_reraises(monkeypatch):
