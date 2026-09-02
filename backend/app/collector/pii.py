@@ -13,8 +13,10 @@ import re
 # 정부 오픈API에서 담당자(개인) 필드에 흔히 쓰이는 키 이름 패턴 — 대소문자 무시.
 # "ofcl"은 나라장터 계열의 ntceInsttOfclNm/OfclTelNo/OfclEmailAdrs를, "manager"는
 # 과기정통부 API의 managerName/managerTel을(INBOX #2 원문) 접미사 상관없이 잡는다.
+# "refrnc"는 기업마당(bizinfo.go.kr) API의 refrncNm(문의처 담당자명)을 잡으려고 추가함
+# (2026-09-02 기업마당 기술검토 중 발견 — 이 패턴 없이는 안 걸리는 실제 사례였음).
 _PII_KEY_PATTERN = re.compile(
-    r"(ofcl|manager|charger|picnm|pic_?tel|담당자|연락처|휴대폰|이메일|e-?mail)",
+    r"(ofcl|manager|charger|picnm|pic_?tel|refrnc|담당자|연락처|휴대폰|이메일|e-?mail)",
     re.IGNORECASE,
 )
 # 패턴에 우연히 걸리지만 개인정보가 아닌 키(발주기관명 등)는 여기서 빼준다.

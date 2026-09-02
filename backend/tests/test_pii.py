@@ -26,6 +26,15 @@ def test_mask_pii_redacts_known_official_contact_fields():
     assert masked["ntceInsttOfclEmailAdrs"] != "hong@example.go.kr"
 
 
+def test_mask_pii_redacts_bizinfo_style_reference_contact_field():
+    # 2026-09-02 기업마당(bizinfo.go.kr) 기술검토 중 발견 — refrncNm(문의처 담당자명)은
+    # ofcl/manager 패턴엔 안 걸려서 별도로 추가해야 했던 실제 사례.
+    item = {"title": "2026년 창업지원사업 공고", "refrncNm": "홍길동"}
+    masked = mask_pii(item)
+    assert masked["title"] == item["title"]
+    assert masked["refrncNm"] != "홍길동"
+
+
 def test_mask_pii_recurses_into_nested_dicts_and_lists():
     payload = {"items": [{"managerName": "홍길동"}, {"managerName": "김철수"}]}
     masked = mask_pii(payload)
