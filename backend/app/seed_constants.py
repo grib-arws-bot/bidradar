@@ -199,7 +199,11 @@ SOURCE_SEED = [
     # 들어가야 의미가 맞는다. 법적등급 B(조건부) — INBOX #5: robots 허용·명시적 금지 없음이라
     # 수집 자체는 되지만, 원문 미저장(요약 필드만 매핑돼 있음)·출처링크 필수·최소 수집 간격을
     # 코드가 강제한다(app/collector/runner.py run_source).
-    ("IRIS 접수예정", "과학기술정보통신부 등(범부처, 42개 전문기관)",
+    # org_name="IRIS"(2026-09-03) — "과학기술정보통신부 등(범부처, 42개 전문기관)"이라는 설명문을
+    # 그대로 넣었더니 관리자 "데이터 소스" 화면의 채널 열에 그 긴 문장이 그대로 노출됐다. 이
+    # 소스가 대표하는 기관 목록에 대한 설명은 안내 텍스트지 채널 이름이 아니다 — 실제 채널
+    # 이름(IRIS)을 넣는다.
+    ("IRIS 접수예정", "IRIS",
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(2026-09-01 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
@@ -210,7 +214,7 @@ SOURCE_SEED = [
     # 지원금액범위·지원기간까지 있어 상세페이지 없이도 정보가 풍부함(사업담당자 개인정보는
     # 상세페이지에만 있고 이 목록엔 없음, 3건 표본 확인). stage="공모예고" 재사용 — 둘 다
     # 공식 공고 전 단계라 같은 탭(사전규격/발주계획/공모예고)에 묶이는 게 맞음.
-    ("IRIS 공모예고", "과학기술정보통신부 등(범부처, 42개 전문기관)",
+    ("IRIS 공모예고", "IRIS",
      "https://www.iris.go.kr/contents/retrieveAncmPrntcList.do",
      "https://www.iris.go.kr/contents/retrieveAncmPrntcListView.do", "공모예고", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(IRIS 접수예정과 동일 사이트·동일 근거, 2026-09-02 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
