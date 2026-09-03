@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword@127.0.0.1:15432/bidradar")
 os.environ.setdefault("ADMIN_EMAIL", "report@grib.co.kr")
@@ -21,7 +22,7 @@ from sqlalchemy import delete
 from app.db import engine
 from app.main import app
 from app.models import auth_session, login_attempt
-from app.services.notice_query import SORT_OPTIONS, TABS
+from app.services.notice_query import SORT_OPTIONS, TABS, compute_bid_status
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -258,3 +259,46 @@ def test_follow_org(client: TestClient):
     assert response.status_code == 204
     detail = client.get(f"/api/notices/{notice_id}").json()
     assert detail["org_followed"] is True
+
+
+# ---- 공고 생명주기 상태(2026-09-03, 사용자 설계) --------------------------------
+
+
+def test_bid_status_unscheduled_when_no_open_dt():
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(None, None, now) == "unscheduled"
+
+
+def test_bid_status_upcoming_when_open_dt_in_future():
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(now + timedelta(days=3), None, now) == "upcoming"
+
+
+def test_bid_status_in_progress_when_open_dt_passed_and_no_close_dt():
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(now - timedelta(days=1), None, now) == "in_progress"
+
+
+def test_bid_status_in_progress_when_between_open_and_close():
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(now - timedelta(days=1), now + timedelta(days=1), now) == "in_progress"
+
+
+def test_bid_status_closed_when_close_dt_passed():
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(now - timedelta(days=10), now - timedelta(days=1), now) == "closed"
+
+
+def test_bid_status_closed_takes_priority_even_without_open_dt():
+    # 방어적 케이스 — 마감일만 있고 시작일이 없는 비정상 데이터도 "마감"을 우선한다.
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(None, now - timedelta(days=1), now) == "closed"
+
+
+def test_notice_list_and_detail_include_bid_status(client: TestClient):
+    notice_id = _any_notice_id(client)
+    listing = client.get("/api/notices", params={"tab": "all", "size": 1}).json()["items"]
+    assert listing[0]["bid_status"] in ("unscheduled", "upcoming", "in_progress", "closed")
+
+    detail = client.get(f"/api/notices/{notice_id}").json()
+    assert detail["bid_status"] in ("unscheduled", "upcoming", "in_progress", "closed")

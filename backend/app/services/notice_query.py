@@ -25,6 +25,30 @@ TABS = ("all", "pre_stage", "bid_stage")
 DEFAULT_TAB = "bid_stage"
 _PRE_STAGE_VALUES = ("사전규격", "발주계획", "공모예고")
 _BID_STAGE_VALUES = ("입찰공고", "사업공고")
+
+# notice.stage는 "어느 수집 단계(소스)에서 왔는가"만 나타낸다 — 사전규격/발주계획/공모예고로
+# 들어온 공고도 시간이 지나면 접수가 시작되고 마감되지만, stage 자체는 안 바뀐다(수집 시점에
+# 한 번 고정). IRIS 접수예정 공고를 실사이트와 대조하다가(2026-09-03) 발견 — 우리 DB엔
+# "접수예정" 소스로 들어왔지만 실제로는 이미 "접수중"인 공고가 있었다. open_dt/close_dt와
+# 현재 시각만으로 매 조회 시점에 다시 계산하는 생명주기 상태를 별도로 둔다(사용자 설계):
+#   1) unscheduled — 시작일 자체가 아직 미확정
+#   2) upcoming    — 시작일은 있으나 아직 도래 안 함
+#   3) in_progress — 시작일이 지났고(또는 애초에 없고) 마감 전
+#   4) closed      — 마감일이 지남
+# stage(수집 단계 분류)와는 독립된 축이라 나라장터·IRIS·K-water 등 소스에 상관없이 동일하게
+# 적용된다. DB 컬럼으로 저장하지 않는다 — "지금 몇 시인가"에 따라 매번 다시 계산되는 값을
+# 저장하면 시간이 지나며 값이 실제와 어긋나는(stale) 문제가 반복될 뿐이다.
+BID_STATUSES = ("unscheduled", "upcoming", "in_progress", "closed")
+
+
+def compute_bid_status(open_dt: datetime | None, close_dt: datetime | None, now: datetime) -> str:
+    if close_dt is not None and close_dt <= now:
+        return "closed"
+    if open_dt is None:
+        return "unscheduled"
+    if open_dt > now:
+        return "upcoming"
+    return "in_progress"
 PAGE_SIZE = 20
 
 
@@ -193,6 +217,7 @@ def _normalize_row(row: dict) -> dict:
         row["est_price"] = int(row["est_price"])
     if row.get("priority") is not None:
         row["priority"] = float(row["priority"])
+    row["bid_status"] = compute_bid_status(row.get("open_dt"), row.get("close_dt"), datetime.now(timezone.utc))
     return row
 
 

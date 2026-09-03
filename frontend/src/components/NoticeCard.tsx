@@ -8,7 +8,13 @@ import { useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 
 import { submitClassification, type ClassificationAction } from "@/api/classification";
-import { EXTRA_FIELD_LABELS, formatExtraValue, type FilterOptions, type NoticeItem } from "@/api/notices";
+import {
+  BID_STATUS_LABELS,
+  EXTRA_FIELD_LABELS,
+  formatExtraValue,
+  type FilterOptions,
+  type NoticeItem,
+} from "@/api/notices";
 import { ClassificationDialog } from "@/components/ClassificationDialog";
 
 function formatPrice(value: number | null): string {
@@ -17,12 +23,16 @@ function formatPrice(value: number | null): string {
   return eok >= 1 ? `${eok.toFixed(1)}억원` : `${(value / 10_000).toFixed(0)}만원`;
 }
 
-function formatDday(closeDt: string | null): { label: string; urgent: boolean } | null {
-  if (!closeDt) return null;
-  const diffMs = new Date(closeDt).getTime() - Date.now();
-  const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  if (days < 0) return { label: "마감", urgent: false };
-  return { label: days === 0 ? "D-Day" : `D-${days}`, urgent: days <= 3 };
+// 공고 생명주기 상태(2026-09-03, 입찰미정→입찰예정→입찰접수→입찰마감) 칩 — "입찰접수"이면서
+// 마감일이 있으면 D-day까지 같이 보여준다(예: "입찰접수 · D-3"), 그 외엔 상태 라벨만.
+function formatBidStatus(notice: NoticeItem): { label: string; urgent: boolean } {
+  if (notice.bid_status === "in_progress" && notice.close_dt) {
+    const diffMs = new Date(notice.close_dt).getTime() - Date.now();
+    const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    const dday = days === 0 ? "D-Day" : `D-${days}`;
+    return { label: `입찰접수 · ${dday}`, urgent: days <= 3 };
+  }
+  return { label: BID_STATUS_LABELS[notice.bid_status], urgent: false };
 }
 
 interface Props {
@@ -36,7 +46,7 @@ interface Props {
 // U5 인수조건: "카드만 갱신(목록 리로드 없음)" — 분류검수 액션은 목록을 다시 안 부르고
 // 이 카드의 로컬 상태(classifiedAs, 부모가 들고 있음)만 바꾼다.
 export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassified }: Props) {
-  const dday = formatDday(notice.close_dt);
+  const bidStatus = formatBidStatus(notice);
   const [searchParams] = useSearchParams();
   const [dialogAction, setDialogAction] = useState<Extract<ClassificationAction, "recategorize" | "irrelevant"> | null>(
     null,
@@ -79,18 +89,12 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
           <Typography variant="body2" className="tnum" fontWeight={600}>
             {formatPrice(notice.est_price)}
           </Typography>
-          {dday ? (
-            <Chip
-              label={dday.label}
-              size="small"
-              color={dday.urgent ? "error" : "default"}
-              variant={dday.urgent ? "filled" : "outlined"}
-            />
-          ) : (
-            // 마감일 항목 자체가 없는 소스(예: 과기정통부 사업공고)도 있다 — advisory INBOX #1
-            // 권고: 자리 자체를 비우지 말고 명시적으로 "마감일 미공개"를 보여준다.
-            <Chip label="마감일 미공개" size="small" variant="outlined" />
-          )}
+          <Chip
+            label={bidStatus.label}
+            size="small"
+            color={bidStatus.urgent ? "error" : "default"}
+            variant={bidStatus.urgent ? "filled" : "outlined"}
+          />
         </Stack>
       </Stack>
 

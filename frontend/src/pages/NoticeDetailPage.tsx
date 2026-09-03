@@ -21,7 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { followOrg } from "@/api/classification";
-import { EXTRA_FIELD_LABELS, fetchNeighbors, fetchNoticeDetail, formatExtraValue } from "@/api/notices";
+import { BID_STATUS_LABELS, EXTRA_FIELD_LABELS, fetchNeighbors, fetchNoticeDetail, formatExtraValue } from "@/api/notices";
 
 export function NoticeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -100,6 +100,12 @@ export function NoticeDetailPage() {
             <Box>
               <Stack direction="row" spacing={0.75} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
                 <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
+                <Chip
+                  label={BID_STATUS_LABELS[notice.bid_status]}
+                  size="small"
+                  color={notice.bid_status === "in_progress" ? "success" : "default"}
+                  variant="outlined"
+                />
                 {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
                 {notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
               </Stack>

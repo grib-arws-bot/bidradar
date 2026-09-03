@@ -44,12 +44,25 @@ export function formatExtraValue(key: string, value: string | number | null): st
   return String(value);
 }
 
+// 공고 생명주기 상태(2026-09-03, 사용자 설계) — notice.stage(어느 수집 단계에서 왔는가)와는
+// 독립된 축. open_dt/close_dt와 "지금"만으로 조회 시점마다 백엔드가 다시 계산한다
+// (app/services/notice_query.py compute_bid_status) — 저장된 값이 아니라 stale해지지 않는다.
+export type BidStatus = "unscheduled" | "upcoming" | "in_progress" | "closed";
+
+export const BID_STATUS_LABELS: Record<BidStatus, string> = {
+  unscheduled: "입찰미정",
+  upcoming: "입찰예정",
+  in_progress: "입찰접수",
+  closed: "입찰마감",
+};
+
 export interface NoticeItem {
   id: number;
   notice_no: string | null;
   title: string;
   stage: string;
   pipeline_stage: string;
+  bid_status: BidStatus;
   est_price: number | null;
   region: string | null;
   biz_type: string | null;
@@ -121,6 +134,7 @@ export interface NoticeDetail {
   title: string;
   stage: string;
   pipeline_stage: string;
+  bid_status: BidStatus;
   est_price: number | null;
   region: string | null;
   biz_type: string | null;
