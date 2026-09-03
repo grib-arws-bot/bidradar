@@ -9,8 +9,8 @@ export async function fetchMe(): Promise<Me> {
   return data;
 }
 
-export async function login(email: string, password: string): Promise<Me> {
-  const { data } = await apiClient.post<Me>("/auth/login", { email, password });
+export async function login(email: string, password: string, remember: boolean): Promise<Me> {
+  const { data } = await apiClient.post<Me>("/auth/login", { email, password, remember });
   return data;
 }
 

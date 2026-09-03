@@ -15,6 +15,9 @@ from app.models import auth_session, login_attempt
 from app.security.passwords import verify_password
 
 SESSION_TTL = timedelta(hours=12)
+# "로그인 상태 유지" 체크 시 세션 수명 — ARWS와 동일하게 30일(admin-page-v2/sign-in-view.tsx,
+# backend/server.js). 비밀번호 검증은 그대로 거치고, 세션만 오래 유지한다.
+REMEMBER_SESSION_TTL = timedelta(days=30)
 LOCKOUT_WINDOW = timedelta(minutes=5)
 LOCKOUT_THRESHOLD = 5
 
@@ -41,7 +44,7 @@ def _is_locked(conn: Connection, identifier: str) -> bool:
     return conn.execute(stmt).scalar_one() >= LOCKOUT_THRESHOLD
 
 
-def authenticate(conn: Connection, email: str, password: str, client_ip: str) -> str:
+def authenticate(conn: Connection, email: str, password: str, client_ip: str, remember: bool = False) -> str:
     """성공하면 세션 토큰을 반환한다. 실패하면 LoginError.
 
     계정(email) 기준과 IP 기준을 각각 잠근다 — 단일 공유 계정이라 계정 기준만으로는
@@ -62,11 +65,10 @@ def authenticate(conn: Connection, email: str, password: str, client_ip: str) ->
     if not ok:
         raise LoginError("이메일 또는 비밀번호가 올바르지 않습니다.")
 
+    ttl = REMEMBER_SESSION_TTL if remember else SESSION_TTL
     token = secrets.token_urlsafe(32)
     conn.execute(
-        insert(auth_session).values(
-            token=token, email=email, expires_at=datetime.now(timezone.utc) + SESSION_TTL
-        )
+        insert(auth_session).values(token=token, email=email, expires_at=datetime.now(timezone.utc) + ttl)
     )
     return token
 

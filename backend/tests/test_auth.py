@@ -12,9 +12,11 @@ os.environ.setdefault(
     "$argon2id$v=19$m=65536,t=3,p=4$9/7/Wg+VSkOsVCeiQiCz7w$bdDzJi9bKuERjBb6NHN0Ztk+X6uwxugL7kViHVRiqnY",
 )
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.db import engine
@@ -60,6 +62,28 @@ def test_login_wrong_password_rejected(client: TestClient):
 def test_me_without_cookie_is_401(client: TestClient):
     response = client.get("/api/auth/me")
     assert response.status_code == 401
+
+
+def test_login_default_session_is_12h(client: TestClient):
+    response = client.post("/api/auth/login", json={"email": EMAIL, "password": CORRECT_PASSWORD})
+    assert response.status_code == 200
+    assert response.cookies["bidradar_session"]
+    # httpx TestClient는 쿠키의 max-age를 노출 안 하므로 DB에 저장된 만료시각으로 검증한다.
+    with engine.begin() as conn:
+        expires_at = conn.execute(select(auth_session.c.expires_at)).scalar_one()
+    remaining = expires_at - datetime.now(timezone.utc)
+    assert timedelta(hours=11) < remaining <= timedelta(hours=12)
+
+
+def test_login_remember_extends_session_to_30d(client: TestClient):
+    response = client.post(
+        "/api/auth/login", json={"email": EMAIL, "password": CORRECT_PASSWORD, "remember": True}
+    )
+    assert response.status_code == 200
+    with engine.begin() as conn:
+        expires_at = conn.execute(select(auth_session.c.expires_at)).scalar_one()
+    remaining = expires_at - datetime.now(timezone.utc)
+    assert timedelta(days=29) < remaining <= timedelta(days=30)
 
 
 def test_lockout_after_five_failures(client: TestClient):

@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Box,
   Button,
+  Checkbox,
   CircularProgress,
   Divider,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   Paper,
@@ -64,6 +66,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
   const {
     register,
     handleSubmit,
@@ -82,7 +85,7 @@ export function LoginPage() {
   const { enabled: autologinEnabled, active: autologinActive, retry: retryAutologin } = useDevAutologin(goToNotices);
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) => login(values.email, values.password),
+    mutationFn: (values: FormValues) => login(values.email, values.password, remember),
     onSuccess: goToNotices,
     onError: (error: unknown) => {
       const detail =
@@ -157,6 +160,11 @@ export function LoginPage() {
                       ),
                     },
                   }}
+                />
+                <FormControlLabel
+                  control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />}
+                  label="로그인 상태 유지"
+                  sx={{ alignSelf: "flex-start", ml: -1 }}
                 />
                 <Button type="submit" variant="contained" size="large" disabled={mutation.isPending} fullWidth>
                   로그인

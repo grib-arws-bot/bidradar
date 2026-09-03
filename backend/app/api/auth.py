@@ -3,7 +3,15 @@
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
-from app.auth import LockedOutError, LoginError, authenticate, create_dev_session, revoke_session
+from app.auth import (
+    REMEMBER_SESSION_TTL,
+    SESSION_TTL,
+    LockedOutError,
+    LoginError,
+    authenticate,
+    create_dev_session,
+    revoke_session,
+)
 from app.config import settings
 from app.db import engine
 from app.deps import SESSION_COOKIE_NAME, require_auth
@@ -14,6 +22,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     email: str
     password: str
+    remember: bool = False
 
 
 class MeResponse(BaseModel):
@@ -24,7 +33,8 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _set_session_cookie(response: Response, token: str, remember: bool = False) -> None:
+    ttl = REMEMBER_SESSION_TTL if remember else SESSION_TTL
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -32,7 +42,10 @@ def _set_session_cookie(response: Response, token: str) -> None:
         samesite="lax",
         # X-Forwarded-Proto로 판단하지 않고 환경변수로 고정 — ARWS에서 겪은 Secure 플래그 사고 재현 방지
         secure=not settings.is_dev,
-        max_age=12 * 3600,
+        # 쿠키 수명은 서버 세션(auth_session.expires_at) 수명과 항상 같이 움직여야 한다 — 둘이
+        # 어긋나면 쿠키만 남고 세션은 만료된 채 401이 나거나, 그 반대로 세션은 살아있는데
+        # 쿠키가 먼저 지워지는 불일치가 생긴다.
+        max_age=int(ttl.total_seconds()),
         path="/",
     )
 
@@ -46,7 +59,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> MeResp
     login_error: LoginError | None = None
     with engine.begin() as conn:
         try:
-            token = authenticate(conn, payload.email, payload.password, _client_ip(request))
+            token = authenticate(conn, payload.email, payload.password, _client_ip(request), payload.remember)
         except LoginError as exc:
             login_error = exc
 
@@ -59,7 +72,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> MeResp
         raise HTTPException(status_code=status_code, detail=login_error.message)
 
     assert token is not None
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, payload.remember)
     return MeResponse(email=payload.email)
 
 
