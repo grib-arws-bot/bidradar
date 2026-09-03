@@ -72,12 +72,14 @@ def _resolve(item: dict, path: str) -> str | None:
     return matches[0] if matches else None
 
 
-def _parse_date(value: str | None, format_hint: str | None) -> datetime | None:
+def _parse_date(value: object, format_hint: str | None) -> datetime | None:
     if not value:
         return None
     fmt = format_hint or "%Y%m%d%H%M"
     try:
-        return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+        # 일부 API는 날짜를 따옴표 없는 JSON 숫자로 준다(예: 20260903) — K-water 3종,
+        # 2026-09-03 실측. strptime은 str만 받으므로 여기서 항상 str로 맞춘다.
+        return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 

@@ -316,6 +316,21 @@ def test_map_item_const_prefix_sets_fixed_value_regardless_of_item():
     assert mapped.get("close_dt") is None  # 매핑 자체가 없으므로 항상 None — 필수 필드가 아니라 통과됨
 
 
+def test_map_item_handles_unquoted_json_integer_date():
+    # K-water 3종(2026-09-03 실측) — 날짜가 따옴표 없는 JSON 숫자로 온다(예: 20260903).
+    # strptime은 str만 받으므로 이전엔 TypeError로 죽었다.
+    field_maps = [
+        {"target_field": "title", "source_path": "$.tndrPblancNm", "format_hint": None},
+        {"target_field": "org_name", "source_path": "const:한국수자원공사", "format_hint": None},
+        {"target_field": "open_dt", "source_path": "$.tndrPblancDe", "format_hint": "%Y%m%d"},
+        {"target_field": "url", "source_path": "$.url", "format_hint": None},
+    ]
+    item = {"tndrPblancNm": "대청댐 노후관 개량사업", "tndrPblancDe": 20260903, "url": "https://ebid.kwater.or.kr/fz?bidno=B1"}
+    mapped = map_item(item, field_maps)
+    assert mapped is not None
+    assert mapped["open_dt"].year == 2026 and mapped["open_dt"].month == 9 and mapped["open_dt"].day == 3
+
+
 def test_map_item_extra_prefix_collects_into_nested_dict():
     # 2026-09-02 — IRIS 목록 응답 중 명명 컬럼에 안 들어가는 나머지를 notice.extra로 보여주는
     # 기능. "extra:원본키" 여러 개가 하나의 extra 딕셔너리로 모여야 한다.

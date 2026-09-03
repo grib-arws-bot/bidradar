@@ -26,6 +26,10 @@ export const EXTRA_FIELD_LABELS: Record<string, string> = {
   bsnsSpchClSeNm: "사업특성구분",
   // 과학기술정보통신부 사업공고
   deptName: "소관부서",
+  // K-water 입찰공고
+  cntrctDeptNm: "담당부서",
+  ctrmthdCdNm: "계약방법",
+  tndrStat: "진행상태",
 };
 
 // 원 단위 정수로 오는 금액성 extra 필드는 est_price와 같은 방식(억원/만원)으로 보여준다.

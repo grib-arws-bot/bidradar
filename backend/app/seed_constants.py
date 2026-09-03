@@ -180,7 +180,11 @@ SOURCE_SEED = [
      "https://www.data.go.kr/data/15129397/openapi.do", "낙찰", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129397/openapi.do"),
-    ("K-water 입찰공고", "한국수자원공사", "https://apis.data.go.kr/B500001/kwaterBidInfo",
+    # 2026-09-03 발견: xlsx가 준 "apis.data.go.kr/B500001/..." 주소는 처음부터 완전히 틀린
+    # 호스트였다(26번 항목에서 "서비스 폐기"로 오판했던 원인) — data.go.kr 상세페이지에 숨어있는
+    # Swagger 스펙(JSON)을 직접 찾아 확인한 결과 실제로는 한국수자원공사 자체 서버
+    # (opendata.kwater.or.kr)에서 서비스된다.
+    ("K-water 입찰공고", "한국수자원공사", "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
      "https://www.data.go.kr/data/15101635/openapi.do", "입찰공고", "openapi", False, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15101635/openapi.do"),
@@ -292,6 +296,34 @@ REAL_OPENAPI_CONFIG = {
             ("open_dt", "$.pressDt", "%Y-%m-%d"),
             ("url", "$.viewUrl", None),
             ("extra:deptName", "$.deptName", None),  # 소관부서명(조직 단위) — 개인정보 아님
+        ],
+    },
+    # 2026-09-03 실측(위 K-water base_url 주석 참고). 3개 오퍼레이션(입찰공고/사전규격공개/
+    # 발주계획) 중 상세페이지 URL을 확인한 건 "내자 입찰공고 정보 조회"(dmscptList) 하나뿐이라
+    # 이것만 등록한다 — 나머지 둘(사전규격공개·발주계획)은 응답에 URL 필드가 없어 상세URL 패턴을
+    # 못 찾으면 notice.url(NOT NULL)을 못 채운다, 조사 후 별도 소스로 추가 예정.
+    # 상세URL은 웹검색으로 발견한 단축 링크 패턴(`ebid.kwater.or.kr/fz?bidno=`)으로 조립 —
+    # 구글에 색인된 실제 사례(제목이 "입찰공고상세 [공고번호]"로 정확히 매칭됨)로 검증함.
+    "K-water 입찰공고": {
+        "config": {
+            "endpoint": "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
+            "params": {"_type": "json", "numOfRows": "100", "pageNo": "1"},
+            "month_param": "searchDt",  # begin/end 쌍이 아니라 검색년월(YYYYMM) 하나만 받음
+            "items_path": "$.response.body.items.item[*]",
+        },
+        "field_maps": [
+            ("notice_no", "$.tndrPbanno", None),
+            ("title", "$.tndrPblancNm", None),
+            ("org_name", "const:한국수자원공사", None),
+            ("open_dt", "$.tndrPblancDe", "%Y%m%d"),
+            ("close_dt", "$.tndrPblancEnddt", "%Y%m%d"),  # 값 없으면 "-" — 마감일 미공개로 처리됨
+            ("est_price", "$.tndrPlnprc", None),
+            ("url", "urlfmt:https://ebid.kwater.or.kr/fz?bidno={tndrPbanno}", None),
+            ("extra:cntrctDeptNm", "$.cntrctDeptNm", None),  # 부서명 — 개인정보 아님
+            ("extra:ctrmthdCdNm", "$.ctrmthdCdNm", None),  # 계약방법
+            ("extra:tndrStat", "$.tndrStat", None),  # 진행상태
+            # intnChargerNm(담당자 실명)은 의도적으로 매핑하지 않음 — PII, _PII_KEY_PATTERN의
+            # "charger"가 애초에 매핑 시도해도 validate_field_maps가 거부함.
         ],
     },
     # advisory INBOX #3(2026-09-01) — 필드명·엔드포인트는 실제 POST 호출로 직접 확인함(서비스키
