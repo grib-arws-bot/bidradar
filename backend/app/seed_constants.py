@@ -265,21 +265,27 @@ REAL_OPENAPI_CONFIG = {
             ("url", "$.bidNtceDtlUrl", None),
         ],
     },
-    # advisory INBOX #2(2026-09-01) — 필드명(subject/viewUrl/pressDt 등)은 data.go.kr 문서
-    # 기재값(advisory 조사 4절), 실호출로 검증된 건 아님(서비스키 발급 후 재확인 필요) ⚠️.
-    # items_path는 나라장터 계열과 같은 관례(response.body.items)를 잠정 적용한 것 — 확정 아님.
+    # advisory INBOX #2(2026-09-01) 필드명 추정을 2026-09-02 실제 서비스키로 라이브 검증·정정함
+    # (`advisory/공공데이타/공공데이터_인증_key_260902_*.xlsx`의 실키 사용) — ⚠️ **`type=json`을
+    # 보내도 실제로는 XML만 응답**(어댑터에 XML 지원 추가, format:"xml"). items_path는
+    # `response.body.items.item[*]`가 맞고(items 태그 밑에 item 반복 + numOfRows/pageNo/
+    # totalCount가 형제로 같이 옴), pressDt는 대시 포함 `YYYY-MM-DD` 형식(원안은 `%Y%m%d`로
+    # 틀렸었음). 응답에 실제로 `managerName`·`managerTel`(담당자 실명·전화번호)이 있음을
+    # 확인 — field_maps에서 매핑하지 않아 제외됨(설계 의도대로 동작 확인, INBOX #8).
     # close_dt 매핑이 없다 — 이 소스엔 마감일 항목 자체가 없음(INBOX #1, 의도적으로 비움).
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": {
         "config": {
             "endpoint": "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList",
+            "format": "xml",
             "params": {"type": "json", "numOfRows": "100", "pageNo": "1"},
-            "items_path": "$.response.body.items[*]",
+            "items_path": "$.response.body.items.item[*]",
         },
         "field_maps": [
             ("title", "$.subject", None),
             ("org_name", "const:과학기술정보통신부", None),
-            ("open_dt", "$.pressDt", "%Y%m%d"),
+            ("open_dt", "$.pressDt", "%Y-%m-%d"),
             ("url", "$.viewUrl", None),
+            ("extra:deptName", "$.deptName", None),  # 소관부서명(조직 단위) — 개인정보 아님
         ],
     },
     # advisory INBOX #3(2026-09-01) — 필드명·엔드포인트는 실제 POST 호출로 직접 확인함(서비스키

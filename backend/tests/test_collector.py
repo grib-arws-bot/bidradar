@@ -161,6 +161,43 @@ def test_fetch_openapi_items_pagination_stops_on_empty_page(monkeypatch):
     assert mock_fetch.call_count == 2
 
 
+def test_fetch_openapi_items_parses_xml_response(monkeypatch):
+    # 2026-09-02 — 과기정통부 사업공고 API가 type=json을 보내도 실제로는 XML만 돌려줌을
+    # 실측으로 확인(라이브 서비스키로 직접 호출). item이 1건이어도 리스트로 나와야 한다.
+    xml_body = """<?xml version="1.0" encoding="UTF-8"?>
+    <response>
+        <header><resultCode>00</resultCode><resultMsg>NORMAL_CODE</resultMsg></header>
+        <body>
+            <items>
+                <item>
+                    <subject>2026년 사업 공고</subject>
+                    <viewUrl>https://msit.example/1</viewUrl>
+                    <managerName>홍길동</managerName>
+                </item>
+                <numOfRows>10</numOfRows>
+                <pageNo>1</pageNo>
+                <totalCount>1</totalCount>
+            </items>
+        </body>
+    </response>"""
+    mock_response = mock.Mock()
+    mock_response.content = xml_body.encode("utf-8")
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    config = {
+        "endpoint": "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList",
+        "format": "xml",
+        "params": {"type": "json"},
+        "items_path": "$.response.body.items.item[*]",
+    }
+    now = datetime.now(timezone.utc)
+    items = fetch_openapi_items(config, None, begin=now, end=now)
+
+    assert len(items) == 1
+    assert items[0]["subject"] == "2026년 사업 공고"
+    assert items[0]["managerName"] == "홍길동"  # 어댑터는 원문 그대로 반환 — 마스킹은 runner의 몫
+
+
 # ---- 수집 기간(직전 성공 이후~지금, 없으면 2개월 캡, 2026-09-01 결정) ------------------
 
 

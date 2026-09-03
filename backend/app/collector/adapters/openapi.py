@@ -9,10 +9,39 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from xml.etree import ElementTree
 
 from jsonpath_ng.ext import parse as jsonpath_parse
 
 from app.security.url_guard import fetch
+
+
+def _xml_element_to_dict(elem: ElementTree.Element):
+    """XML 엘리먼트를 JSONPath로 훑을 수 있는 dict/list 구조로 변환한다(2026-09-02 —
+    과기정통부·방위사업청·발전공기업 등 다수의 data.go.kr API가 `type=json`을 보내도 실제로는
+    XML만 돌려주는 걸 실측으로 확인, JSON 전용이던 어댑터에 XML 지원을 추가함).
+
+    같은 태그가 반복되면 리스트로 모은다(예: <items><item/><item/></items> → {"item": [...]}).
+    "item"은 data.go.kr 계열 관례상 거의 항상 반복 컨테이너라 **1건이어도 리스트로 강제**한다 —
+    안 그러면 결과가 1건일 때 items_path의 `[*]`가 아이템을 못 찾는다.
+    """
+    children = list(elem)
+    if not children:
+        return elem.text
+    result: dict[str, Any] = {}
+    for child in children:
+        value = _xml_element_to_dict(child)
+        if child.tag == "item" or child.tag in result:
+            existing = result.get(child.tag)
+            if existing is None:
+                result[child.tag] = [value]
+            elif isinstance(existing, list):
+                existing.append(value)
+            else:
+                result[child.tag] = [existing, value]
+        else:
+            result[child.tag] = value
+    return result
 
 
 def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict) -> Any:
@@ -20,6 +49,9 @@ def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict
         response = fetch(endpoint, method="POST", data=params)
     else:
         response = fetch(endpoint, params=params)
+    if config.get("format") == "xml":
+        root = ElementTree.fromstring(response.content)
+        return {root.tag: _xml_element_to_dict(root)}
     return response.json()
 
 
@@ -31,6 +63,9 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
                         # 아니라 IRIS처럼 서비스키 없는 내부 JSON 엔드포인트를 그대로 호출할 때 씀 —
                         # advisory INBOX #3, 2026-09-01 직접 확인
       "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+      "format": "xml",  # 생략 시 json. data.go.kr API 다수가 type=json을 보내도 XML만 주는
+                        # 경우가 있어(2026-09-02 실측) 필요할 때만 명시 — items_path는 XML도
+                        # 동일하게 JSONPath 문법으로 쓴다(변환된 dict/list 구조에 대해 평가됨).
       "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
       "items_path": "$.response.body.items[*]",
       "pagination": {  # 선택 — API가 날짜범위 파라미터를 안 받고(IRIS처럼) 페이지만 넘기는 경우.
