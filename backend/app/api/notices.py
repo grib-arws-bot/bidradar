@@ -7,6 +7,12 @@ from pydantic import BaseModel
 
 from app.db import engine
 from app.deps import require_auth
+from app.services.analysis_pilot import (
+    AnalysisInProgressError,
+    UnsupportedSourceError,
+    get_latest_extraction,
+    run_extraction_pilot,
+)
 from app.services.classification import ClassificationError, record_classification
 from app.services.notice_detail import follow_org, get_neighbors, get_notice_detail
 from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
@@ -117,3 +123,24 @@ def post_follow_org(notice_id: int, _email: str = Depends(require_auth)) -> None
         if detail is None or detail["org_id"] is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공고 또는 발주기관을 찾을 수 없습니다.")
         follow_org(conn, detail["org_id"])
+
+
+@router.post("/{notice_id}/extract")
+def post_extract(notice_id: int, _email: str = Depends(require_auth)) -> dict:
+    """S8 파일럿(A0+A1만) — 실제 사이트에서 첨부문서를 받아 텍스트만 추출한다. LLM 분석(A2
+    이후)은 이번 범위 밖. 지금은 IRIS 공고만 지원(app/services/analysis_pilot.py 참고)."""
+    with engine.begin() as conn:
+        try:
+            return run_extraction_pilot(conn, notice_id)
+        except AnalysisInProgressError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except UnsupportedSourceError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{notice_id}/extract")
+def get_extract(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
+    with engine.connect() as conn:
+        return get_latest_extraction(conn, notice_id)

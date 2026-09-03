@@ -49,6 +49,9 @@ analysis_doc = Table(
     Column("extract_method", String(30)),  # 폴백 사슬 중 성공한 단계 — 조용한 빈 결과 금지
     Column("extract_ok", Boolean, nullable=False, server_default="false"),
     Column("error", Text),
+    # 원본 파일은 저장하지 않는다(2026-09-03 결정) — notice.url이 항상 있어 필요하면 재다운로드
+    # 가능하고, 저장공간이 무한정 느는 것도 피한다. 추출된 텍스트만 여기 남긴다.
+    Column("text", Text),
 )
 
 analysis_requirement = Table(

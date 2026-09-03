@@ -13,6 +13,7 @@ dependencies = [
     "requests>=2.32,<2.33",
     "jsonpath-ng>=1.6,<1.7",
     "pypdf>=5.0,<5.1",
+    "olefile>=0.47,<0.48",
 ]
 
 [project.optional-dependencies]
