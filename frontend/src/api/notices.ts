@@ -96,7 +96,9 @@ export interface FilterOptions {
   work_types: string[];
 }
 
-export type NoticeTab = "all" | "pre_stage" | "bid_stage";
+// 2026-09-03 재구성 — stage(어느 소스에서 왔는가) 기준 2분류 대신 bid_status(생명주기) 기준
+// 4단계로. "all"만 그대로 유지.
+export type NoticeTab = "all" | BidStatus;
 export type NoticeSort = "priority" | "close_asc" | "open_desc" | "price_desc" | "price_asc";
 
 export async function fetchNotices(params: URLSearchParams): Promise<NoticeListResponse> {

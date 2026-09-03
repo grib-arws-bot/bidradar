@@ -1,10 +1,12 @@
 """S1 공고 탐색(U4) 목록 조회 로직. 라우터(app/api/notices.py)는 얇게, 여기가 본체.
 
-탭 3종(2026-09-01 재구성) — "내 관심"(그립 고객 프로필 기반) · "미처리" · "내 담당" 탭은
-빠졌다. 대신 이 화면의 실제 쓰임(수집된 데이터를 단계별로 훑어보기)에 맞춰 공고 단계로
-묶었다. 관심주제·발주기관은 탭이 아니라 여전히 다중선택 필터로 존재한다(_apply_filters).
-"미처리"(classification_correction 미존재)·"내 담당"(assignee_name) 자체는 데이터로는
-남아 있다 — 탭에서만 뺐고, 나중에 필요하면 필터로 되살리면 된다.
+탭(2026-09-03 재구성, 2번째) — "내 관심"·"미처리"·"내 담당"은 애초에 빠졌고(2026-09-01),
+처음엔 stage(어느 소스에서 왔는가) 기준 2분류(사전규격·발주계획·공모예고 / 입찰공고·사업공고)
+였다가, 공고 생명주기 상태(bid_status) 기준으로 다시 바꿨다. IRIS 접수예정 공고를 실사이트와
+대조하다가 "소스명은 접수예정인데 실제로는 접수중"인 경우를 발견한 게 계기 — 탭도 그 생명주기
+(입찰미정→입찰예정→입찰접수→입찰마감)를 그대로 반영해야 사용자가 보는 탭 이름과 실제 공고
+상태가 어긋나지 않는다. 관심주제·발주기관·stage 자체는 탭이 아니라 여전히 다중선택 필터로
+존재한다(_apply_filters).
 """
 
 from __future__ import annotations
@@ -19,18 +21,10 @@ from app.models import customer, notice, notice_score, org, requirement
 
 SORT_OPTIONS = ("priority", "close_asc", "open_desc", "price_desc", "price_asc")
 
-# "전체"는 조건 없음. 나머지 둘은 notice.stage 값을 묶은 것 — 사전규격/발주계획(나라장터)·
-# 공모예고(IRIS 접수예정)는 아직 공식 공고 전 단계, 입찰공고/사업공고는 이미 공식 공고된 단계.
-TABS = ("all", "pre_stage", "bid_stage")
-DEFAULT_TAB = "bid_stage"
-_PRE_STAGE_VALUES = ("사전규격", "발주계획", "공모예고")
-_BID_STAGE_VALUES = ("입찰공고", "사업공고")
-
 # notice.stage는 "어느 수집 단계(소스)에서 왔는가"만 나타낸다 — 사전규격/발주계획/공모예고로
 # 들어온 공고도 시간이 지나면 접수가 시작되고 마감되지만, stage 자체는 안 바뀐다(수집 시점에
-# 한 번 고정). IRIS 접수예정 공고를 실사이트와 대조하다가(2026-09-03) 발견 — 우리 DB엔
-# "접수예정" 소스로 들어왔지만 실제로는 이미 "접수중"인 공고가 있었다. open_dt/close_dt와
-# 현재 시각만으로 매 조회 시점에 다시 계산하는 생명주기 상태를 별도로 둔다(사용자 설계):
+# 한 번 고정). open_dt/close_dt와 현재 시각만으로 매 조회 시점에 다시 계산하는 생명주기
+# 상태를 별도로 둔다(사용자 설계):
 #   1) unscheduled — 시작일 자체가 아직 미확정
 #   2) upcoming    — 시작일은 있으나 아직 도래 안 함
 #   3) in_progress — 시작일이 지났고(또는 애초에 없고) 마감 전
@@ -39,6 +33,12 @@ _BID_STAGE_VALUES = ("입찰공고", "사업공고")
 # 적용된다. DB 컬럼으로 저장하지 않는다 — "지금 몇 시인가"에 따라 매번 다시 계산되는 값을
 # 저장하면 시간이 지나며 값이 실제와 어긋나는(stale) 문제가 반복될 뿐이다.
 BID_STATUSES = ("unscheduled", "upcoming", "in_progress", "closed")
+
+# "전체"는 조건 없음. 나머지 4개는 아래 bid_status 정의와 반드시 같은 우선순위로 판정해야
+# 한다 — compute_bid_status()(단건, Python)와 _bid_status_condition()(목록 필터링, SQL)가
+# 서로 어긋나면 탭에서 걸러진 공고와 카드에 찍히는 상태 라벨이 달라지는 사고가 난다.
+TABS = ("all",) + BID_STATUSES
+DEFAULT_TAB = "in_progress"
 
 
 def compute_bid_status(open_dt: datetime | None, close_dt: datetime | None, now: datetime) -> str:
@@ -49,6 +49,20 @@ def compute_bid_status(open_dt: datetime | None, close_dt: datetime | None, now:
     if open_dt > now:
         return "upcoming"
     return "in_progress"
+
+
+def _bid_status_condition(bid_status: str, now: datetime):
+    """compute_bid_status()와 동일한 우선순위를 SQL WHERE 조건으로 옮긴 것 — 탭 필터링에 쓴다."""
+    not_closed = notice.c.close_dt.is_(None) | (notice.c.close_dt > now)
+    if bid_status == "closed":
+        return notice.c.close_dt.is_not(None) & (notice.c.close_dt <= now)
+    if bid_status == "unscheduled":
+        return not_closed & notice.c.open_dt.is_(None)
+    if bid_status == "upcoming":
+        return not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt > now)
+    if bid_status == "in_progress":
+        return not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt <= now)
+    raise ValueError(f"알 수 없는 bid_status: {bid_status}")
 PAGE_SIZE = 20
 
 
@@ -117,11 +131,10 @@ def _base_select(priority_sq) -> Select:
 
 def _apply_filters(stmt: Select, filters: NoticeFilters):
     conditions = []
+    now = datetime.now(timezone.utc)
 
-    if filters.tab == "pre_stage":
-        conditions.append(notice.c.stage.in_(_PRE_STAGE_VALUES))
-    elif filters.tab == "bid_stage":
-        conditions.append(notice.c.stage.in_(_BID_STAGE_VALUES))
+    if filters.tab in BID_STATUSES:
+        conditions.append(_bid_status_condition(filters.tab, now))
     # tab == "all" → 조건 없음
 
     if filters.q:
@@ -158,7 +171,6 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
     if filters.work_types:
         conditions.append(notice.c.work_type.in_(filters.work_types))
 
-    now = datetime.now(timezone.utc)
     if filters.close_in is not None:
         conditions.append(notice.c.close_dt.is_not(None))
         conditions.append(notice.c.close_dt >= now)

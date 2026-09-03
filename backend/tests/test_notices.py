@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -59,32 +60,38 @@ def test_notices_list_shape(client: TestClient):
     assert body["total"] >= len(body["items"])
     if body["items"]:
         item = body["items"][0]
-        assert {"id", "title", "org_name", "stage", "est_price", "close_dt"} <= item.keys()
+        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt"} <= item.keys()
 
 
-def test_all_three_tabs_respond(client: TestClient):
+def test_all_five_tabs_respond(client: TestClient):
     for tab in TABS:
         response = client.get("/api/notices", params={"tab": tab, "size": 1})
         assert response.status_code == 200, tab
 
 
-def test_default_tab_is_bid_stage(client: TestClient):
-    # tab 파라미터를 안 주면 백엔드가 DEFAULT_TAB("bid_stage")을 쓴다(2026-09-01 재구성).
+def test_default_tab_is_in_progress(client: TestClient):
+    # tab 파라미터를 안 주면 백엔드가 DEFAULT_TAB("in_progress")을 쓴다(2026-09-03 재구성 —
+    # 생명주기 기준 탭으로 바뀌면서 "입찰접수중"이 기본값).
     response = client.get("/api/notices", params={"size": 1})
     assert response.status_code == 200
-    assert response.json()["tab"] == "bid_stage"
+    assert response.json()["tab"] == "in_progress"
 
 
-def test_pre_and_bid_stage_are_subsets_of_all_and_do_not_overlap(client: TestClient):
+def test_bid_status_tabs_are_subsets_of_all_and_do_not_overlap(client: TestClient):
+    # 2026-09-03 재구성 — 탭이 notice.stage가 아니라 bid_status(생명주기) 기준으로 바뀜.
+    # 4개 탭이 서로 안 겹치고, 각 탭에 담긴 공고의 실제 bid_status가 탭 이름과 일치해야 한다.
     all_total = client.get("/api/notices", params={"tab": "all", "size": 1}).json()["total"]
-    pre_items = client.get("/api/notices", params={"tab": "pre_stage", "size": 50}).json()["items"]
-    bid_items = client.get("/api/notices", params={"tab": "bid_stage", "size": 50}).json()["items"]
+    ids_by_tab: dict[str, set[int]] = {}
+    for tab in ("unscheduled", "upcoming", "in_progress", "closed"):
+        items = client.get("/api/notices", params={"tab": tab, "size": 50}).json()["items"]
+        assert len(items) <= all_total
+        assert {i["bid_status"] for i in items} <= {tab}
+        ids_by_tab[tab] = {i["id"] for i in items}
 
-    assert len(pre_items) <= all_total
-    assert len(bid_items) <= all_total
-    assert {i["stage"] for i in pre_items} <= {"사전규격", "발주계획", "공모예고"}
-    assert {i["stage"] for i in bid_items} <= {"입찰공고", "사업공고"}
-    assert {i["id"] for i in pre_items}.isdisjoint({i["id"] for i in bid_items})
+    all_ids = ids_by_tab["unscheduled"] | ids_by_tab["upcoming"] | ids_by_tab["in_progress"] | ids_by_tab["closed"]
+    for a, b in itertools.combinations(ids_by_tab.values(), 2):
+        assert a.isdisjoint(b)
+    assert len(all_ids) <= all_total
 
 
 def test_pagination_pages_do_not_overlap(client: TestClient):

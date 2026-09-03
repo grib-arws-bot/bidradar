@@ -1,11 +1,11 @@
+import ArrowForwardIcon from "@mui/icons-material/ArrowForwardOutlined";
 import {
   Box,
+  Chip,
   CircularProgress,
   MenuItem,
   Pagination,
   Stack,
-  Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
@@ -19,14 +19,17 @@ import { EmptyState } from "@/components/EmptyState";
 import { NoticeCard } from "@/components/NoticeCard";
 import { EMPTY_FILTERS, NoticeFilterBar, type NoticeFilterValues } from "@/components/NoticeFilterBar";
 
-// 탭 3종(2026-09-01 재구성) — "내 관심"·"미처리"·"내 담당"은 빠지고, 공고 단계로 묶었다.
-// 기본값은 3번(입찰공고/사업공고) — 관심주제·발주기관은 탭이 아니라 필터바의 다중선택으로.
-const TABS: { value: NoticeTab; label: string }[] = [
-  { value: "all", label: "전체" },
-  { value: "pre_stage", label: "사전규격·발주계획·공모예고" },
-  { value: "bid_stage", label: "입찰공고·사업공고" },
+// 탭(2026-09-03 재구성, 2번째) — stage(어느 소스에서 왔는가) 기준 2분류 대신 공고 생명주기
+// (입찰미정→입찰예정→입찰접수→입찰마감) 기준으로 바꿨다. "전체"는 그대로 두고, 나머지 4개는
+// 화살표로 흐름이 보이게 렌더링한다(아래 STATUS_TABS, JSX). 기본값은 "입찰접수"(지금 바로
+// 참여 가능한 것) — 관심주제·발주기관·수집단계는 탭이 아니라 필터바의 다중선택으로.
+const STATUS_TABS: { value: NoticeTab; label: string }[] = [
+  { value: "unscheduled", label: "입찰미정" },
+  { value: "upcoming", label: "입찰예정" },
+  { value: "in_progress", label: "입찰접수" },
+  { value: "closed", label: "입찰마감" },
 ];
-const DEFAULT_TAB: NoticeTab = "bid_stage";
+const DEFAULT_TAB: NoticeTab = "in_progress";
 
 const SORTS = [
   { value: "priority", label: "관심도순" },
@@ -136,16 +139,27 @@ export function NoticeExplorePage() {
         <Typography variant="h2">공고 탐색</Typography>
       </Box>
 
-      <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" useFlexGap>
-        <Tabs value={tab} onChange={(_, value) => updateParams({ tab: value, page: null })}>
-          {TABS.map((t) => (
-            <Tab
-              key={t.value}
-              value={t.value}
-              label={countsQuery.data ? `${t.label} (${countsQuery.data[t.value]})` : t.label}
-            />
+      <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" useFlexGap spacing={2}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Chip
+            label={countsQuery.data ? `전체 (${countsQuery.data.all})` : "전체"}
+            onClick={() => updateParams({ tab: "all", page: null })}
+            color={tab === "all" ? "primary" : "default"}
+            variant={tab === "all" ? "filled" : "outlined"}
+          />
+          <Box sx={{ width: "1px", height: 20, bgcolor: "divider", mx: 0.5 }} />
+          {STATUS_TABS.map((t, i) => (
+            <Stack key={t.value} direction="row" alignItems="center" spacing={1}>
+              {i > 0 && <ArrowForwardIcon sx={{ fontSize: 16, color: "text.disabled" }} />}
+              <Chip
+                label={countsQuery.data ? `${t.label} (${countsQuery.data[t.value]})` : t.label}
+                onClick={() => updateParams({ tab: t.value, page: null })}
+                color={tab === t.value ? "primary" : "default"}
+                variant={tab === t.value ? "filled" : "outlined"}
+              />
+            </Stack>
           ))}
-        </Tabs>
+        </Stack>
         <TextField
           select
           size="small"
