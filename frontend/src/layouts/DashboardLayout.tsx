@@ -69,7 +69,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "관리",
     items: [
-      { label: "소스 관리", to: "/admin/sources", icon: <SourceIcon fontSize="small" /> },
+      { label: "데이터 소스", to: "/admin/sources", icon: <SourceIcon fontSize="small" /> },
       { label: "관심주제 분류", to: "/admin/topics", icon: <CategoryIcon fontSize="small" /> },
       { label: "키워드 사전", to: "/admin/keywords", icon: <DictionaryIcon fontSize="small" /> },
       { label: "제품 카탈로그", to: "/admin/products", icon: <InventoryIcon fontSize="small" /> },

@@ -55,11 +55,12 @@ export function SourcesPage() {
   return (
     <Box>
       <Typography variant="h2" sx={{ mb: 0.5 }}>
-        소스 관리
+        데이터 소스
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        추적 중인 발주기관 목록입니다. 조달청·IRIS 같은 이름은 발주기관이 아니라 공고기관(수집
-        채널)이라 "공고기관" 열에만 나타납니다.
+        실제로 데이터가 수집되고 있는 발주기관 목록입니다(2026-09-03, 가짜/미연결 항목 정리).
+        조달청·IRIS 같은 이름은 발주기관이 아니라 공고기관(수집 채널)이라 "공고기관" 열에만
+        나타납니다.
       </Typography>
 
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mb: 2 }}>
