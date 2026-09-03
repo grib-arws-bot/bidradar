@@ -18,12 +18,13 @@ export async function logout(): Promise<void> {
   await apiClient.post("/auth/logout");
 }
 
-export async function checkIsDev(): Promise<boolean> {
-  const { data } = await apiClient.get<{ status: string; is_dev: boolean }>("/health");
-  return data.is_dev;
+export async function checkDevAutologinEnabled(): Promise<boolean> {
+  const { data } = await apiClient.get<{ status: string; dev_autologin_enabled: boolean }>("/health");
+  return data.dev_autologin_enabled;
 }
 
-// 로컬 개발 전용 — 백엔드가 is_dev(ENVIRONMENT != "production")일 때만 응답한다(404 아니면 성공).
+// 로컬 개발 전용 — 백엔드가 ENABLE_DEV_AUTOLOGIN=true일 때만 응답한다(404 아니면 성공).
+// stg(docker-compose 로컬 기동)는 기본 꺼져 있어 prod와 동일하게 로그인 절차를 거친다.
 export async function devAutologin(): Promise<Me> {
   const { data } = await apiClient.post<Me>("/auth/dev-autologin");
   return data;

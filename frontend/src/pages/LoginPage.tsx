@@ -19,7 +19,7 @@ import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { checkIsDev, devAutologin, login } from "@/api/auth";
+import { checkDevAutologinEnabled, devAutologin, login } from "@/api/auth";
 
 const schema = z.object({
   email: z.string().min(1, "이메일을 입력하세요"),
@@ -28,17 +28,23 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// 로컬 개발 전용 자동로그인(2026-09-01 요청) — is_dev일 때만 백엔드가 /auth/dev-autologin에
-// 응답한다(그 외엔 404). 실패하면 조용히 일반 로그인 폼으로 넘어간다.
+// 로컬 개발 전용 자동로그인(2026-09-01 요청) — ENABLE_DEV_AUTOLOGIN=true일 때만 백엔드가
+// /auth/dev-autologin에 응답한다(그 외엔 404). 기본값은 꺼져 있어 stg(docker-compose 로컬
+// 기동)도 prod와 동일하게 실제 로그인 절차를 거친다(2026-09-03) — 필요한 경우에만 로컬
+// .env에 직접 켠다. 실패하면 조용히 일반 로그인 폼으로 넘어간다.
 //
 // 2026-09-03 — /api/health 조회가 retry:false라 컨테이너 재기동 직후처럼 한 번이라도
-// 실패하면 isDev가 영영 undefined로 남아 자동로그인이 아예 시도조차 안 되는 채로 일반
-// 폼만 보이는 문제가 있었다(사용자가 "자동로그인이 안 된다"고 보고한 원인으로 추정).
-// retry를 2회로 늘리고, 자동 실행이 실패하거나 안 붙어도 눌러서 재시도할 수 있는 버튼을
-// 폼에 항상 남겨둔다(isDev인 동안).
+// 실패하면 enabled가 영영 undefined로 남아 자동로그인이 아예 시도조차 안 되는 채로 일반
+// 폼만 보이는 문제가 있었다. retry를 2회로 늘리고, 자동 실행이 실패하거나 안 붙어도 눌러서
+// 재시도할 수 있는 버튼을 폼에 항상 남겨둔다(켜져 있는 동안).
 function useDevAutologin(onDone: () => void) {
   const [skipped, setSkipped] = useState(false);
-  const { data: isDev } = useQuery({ queryKey: ["health-is-dev"], queryFn: checkIsDev, retry: 2, retryDelay: 500 });
+  const { data: enabled } = useQuery({
+    queryKey: ["health-dev-autologin"],
+    queryFn: checkDevAutologinEnabled,
+    retry: 2,
+    retryDelay: 500,
+  });
   const mutation = useMutation({
     mutationFn: devAutologin,
     onSuccess: onDone,
@@ -47,11 +53,11 @@ function useDevAutologin(onDone: () => void) {
   const { mutate } = mutation;
 
   useEffect(() => {
-    if (isDev) mutate();
+    if (enabled) mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDev]);
+  }, [enabled]);
 
-  return { isDev: isDev === true, active: isDev === true && !skipped, retry: () => mutate() };
+  return { enabled: enabled === true, active: enabled === true && !skipped, retry: () => mutate() };
 }
 
 export function LoginPage() {
@@ -73,7 +79,7 @@ export function LoginPage() {
     navigate("/notices", { replace: true });
   };
 
-  const { isDev, active: autologinActive, retry: retryAutologin } = useDevAutologin(goToNotices);
+  const { enabled: autologinEnabled, active: autologinActive, retry: retryAutologin } = useDevAutologin(goToNotices);
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) => login(values.email, values.password),
@@ -111,7 +117,7 @@ export function LoginPage() {
           </Stack>
         ) : (
           <Stack spacing={2}>
-            {isDev && (
+            {autologinEnabled && (
               <>
                 <Button variant="outlined" size="large" onClick={retryAutologin} fullWidth>
                   개발 환경 자동 로그인

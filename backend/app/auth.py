@@ -74,7 +74,7 @@ def authenticate(conn: Connection, email: str, password: str, client_ip: str) ->
 def create_dev_session(conn: Connection) -> str:
     """비밀번호 검증 없이 관리자 세션을 발급한다 — 로컬 개발 편의용 자동로그인 전용.
 
-    호출부(app/api/auth.py)에서 settings.is_dev가 아니면 라우트 자체를 404로 막는다.
+    호출부(app/api/auth.py)에서 settings.enable_dev_autologin이 아니면 라우트 자체를 404로 막는다.
     login_attempt에 기록하지 않는다 — 실제 로그인 시도가 아니라 잠금 카운터를 오염시키면
     안 되기 때문.
     """

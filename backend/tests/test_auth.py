@@ -72,24 +72,26 @@ def test_lockout_after_five_failures(client: TestClient):
     assert locked.status_code == 429
 
 
-def test_dev_autologin_succeeds_in_dev(client: TestClient):
-    assert settings.environment != "production"  # 테스트 기본값(개발) 확인 — 아래 production 테스트가 원복 확인용
-    response = client.post("/api/auth/dev-autologin")
-    assert response.status_code == 200
-    assert response.json()["email"] == EMAIL
-    assert "bidradar_session" in response.cookies
-
-    me = client.get("/api/auth/me")
-    assert me.status_code == 200
-    assert me.json()["email"] == EMAIL
-
-
-def test_dev_autologin_404_in_production(client: TestClient):
-    original = settings.environment
-    settings.environment = "production"
+def test_dev_autologin_succeeds_when_enabled(client: TestClient):
+    original = settings.enable_dev_autologin
+    settings.enable_dev_autologin = True
     try:
         response = client.post("/api/auth/dev-autologin")
-        assert response.status_code == 404
-        assert "bidradar_session" not in response.cookies
+        assert response.status_code == 200
+        assert response.json()["email"] == EMAIL
+        assert "bidradar_session" in response.cookies
+
+        me = client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["email"] == EMAIL
     finally:
-        settings.environment = original
+        settings.enable_dev_autologin = original
+
+
+def test_dev_autologin_404_by_default(client: TestClient):
+    # stg(docker-compose 로컬 기동)도 prod와 동일하게 로그인 절차를 거쳐야 하므로 기본값은
+    # 항상 꺼져 있어야 한다(2026-09-03) — environment(is_dev)와 무관.
+    assert settings.enable_dev_autologin is False
+    response = client.post("/api/auth/dev-autologin")
+    assert response.status_code == 404
+    assert "bidradar_session" not in response.cookies

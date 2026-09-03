@@ -67,11 +67,12 @@ def login(payload: LoginRequest, request: Request, response: Response) -> MeResp
 def dev_autologin(response: Response) -> MeResponse:
     """로컬 개발 전용 자동로그인 — 비밀번호를 매번 입력하지 않아도 되도록.
 
-    settings.is_dev(=ENVIRONMENT != "production")가 아니면 404 — 실서버 배포 시
-    .env의 ENVIRONMENT=production 하나만 지키면 이 경로 자체가 존재하지 않게 된다.
+    settings.enable_dev_autologin(기본 False)가 아니면 404 — is_dev(ENVIRONMENT)와는
+    별개 스위치다. stg(docker-compose 로컬 기동)도 prod와 동일하게 로그인 절차를 거쳐야
+    로그인 화면 버그를 육안 확인 단계에서 잡을 수 있다(2026-09-03, 의사결정_로그).
     프론트 어디에도 실제 비밀번호를 심지 않고, 여기서 비밀번호 검증 자체를 건너뛴다.
     """
-    if not settings.is_dev:
+    if not settings.enable_dev_autologin:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
     with engine.begin() as conn:
