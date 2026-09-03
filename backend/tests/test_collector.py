@@ -87,6 +87,31 @@ def test_fetch_openapi_items_parses_response_and_builds_params(monkeypatch):
     assert "inqryBgnDt" in sent_params and "inqryEndDt" in sent_params
 
 
+def test_fetch_openapi_items_month_param_uses_end_yyyymm(monkeypatch):
+    # K-water 3종(2026-09-03 실측) — begin/end 쌍이 아니라 "검색년월(YYYYMM)" 파라미터
+    # 하나만 받는다. end 기준 월로 채워야 한다.
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"response": {"body": {"items": SAMPLE_ITEMS}}}
+    mock_fetch = mock.Mock(return_value=mock_response)
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    config = {
+        "endpoint": "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
+        "params": {"_type": "json"},
+        "month_param": "searchDt",
+        "items_path": "$.response.body.items[*]",
+    }
+
+    end = datetime(2026, 9, 3, tzinfo=timezone.utc)
+    begin = end - timedelta(days=20)
+    items = fetch_openapi_items(config, "test-service-key", begin=begin, end=end)
+
+    assert items == SAMPLE_ITEMS
+    sent_params = mock_fetch.call_args.kwargs["params"]
+    assert sent_params["searchDt"] == "202609"
+    assert "inqryBgnDt" not in sent_params
+
+
 def test_fetch_openapi_items_post_method_sends_form_body(monkeypatch):
     # advisory INBOX #3(2026-09-01) — IRIS 접수예정은 서비스키 없는 내부 JSON 엔드포인트를
     # POST 폼바디로 호출해야 실제 데이터가 나온다(GET으로 페이지 자체를 열면 빈 템플릿만 옴).

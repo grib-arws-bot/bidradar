@@ -245,7 +245,13 @@ ATTRIBUTION_TEXT = {
 REAL_OPENAPI_CONFIG = {
     "나라장터 입찰공고정보서비스": {
         "config": {
-            "endpoint": "https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoServc",
+            # 2026-09-03 발견: 원안(advisory INBOX)엔 "/ad/" 세그먼트가 빠져 있었다 — 그 상태로
+            # 호출하면 NO_OPENAPI_SERVICE_ERROR("서비스가 없거나 폐기됨")가 나서 한동안 이 API
+            # 자체가 폐기된 줄 알았는데, 조달청 공식 참고문서(advisory/공공데이타/조달청_OpenAPI
+            # 참고자료_나라장터_입찰공고정보서비스_1.2.docx, "서비스 URL" 절)의 정확한 경로를
+            # 넣으니 에러가 SERVICE_KEY_IS_NOT_REGISTERED_ERROR로 바뀜 — 즉 API 자체는 살아있고,
+            # 이 서비스키가 이 데이터셋에 아직 승인이 안 된 것뿐이었다.
+            "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
             "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",

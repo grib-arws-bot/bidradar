@@ -67,6 +67,9 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
                         # 경우가 있어(2026-09-02 실측) 필요할 때만 명시 — items_path는 XML도
                         # 동일하게 JSONPath 문법으로 쓴다(변환된 dict/list 구조에 대해 평가됨).
       "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+      "month_param": "searchDt",  # 선택 — begin/end 쌍이 아니라 "검색년월" 하나만 받는 API용
+                        # (예: K-water 3종, 2026-09-03 실측). end 기준 YYYYMM으로 채운다 — 월
+                        # 경계를 걸친 수집 공백은 짧은 수집 주기(하루 1회)로는 실질적 영향이 적다.
       "items_path": "$.response.body.items[*]",
       "pagination": {  # 선택 — API가 날짜범위 파라미터를 안 받고(IRIS처럼) 페이지만 넘기는 경우.
         "page_param": "pageIndex",       # 요청 파라미터 중 페이지 번호로 쓸 키
@@ -93,6 +96,10 @@ def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begi
         fmt = date_range.get("format", "%Y%m%d%H%M")
         base_params[date_range["begin"]] = begin.strftime(fmt)
         base_params[date_range["end"]] = end.strftime(fmt)
+
+    month_param = config.get("month_param")
+    if month_param:
+        base_params[month_param] = end.strftime("%Y%m")
 
     items_path = config.get("items_path", "$.response.body.items[*]")
     items_expr = jsonpath_parse(items_path)
