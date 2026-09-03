@@ -88,7 +88,7 @@ def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
 
     row = rows[0]
     assert {
-        "id", "name", "abbr", "category", "notice_url", "channel", "adapter_label", "status", "last_run_at",
+        "id", "name", "abbr", "category", "channel_url", "channel", "adapter_label", "status", "last_run_at",
         "legal_tier", "legal_verified_at", "compliance_overdue",
     } <= row.keys()
 

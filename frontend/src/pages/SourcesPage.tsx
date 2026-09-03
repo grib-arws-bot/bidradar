@@ -111,7 +111,6 @@ export function SourcesPage() {
               <TableCell>기관약자</TableCell>
               <TableCell>분류</TableCell>
               <TableCell>공고기관</TableCell>
-              <TableCell>공고 URL</TableCell>
               <TableCell>수집 방식</TableCell>
               <TableCell>수집 상태</TableCell>
               <TableCell>최종 수집일</TableCell>
@@ -127,13 +126,21 @@ export function SourcesPage() {
                     <TableCell>{row.name}</TableCell>
                     <TableCell>{row.abbr ?? "—"}</TableCell>
                     <TableCell>{row.category ?? "—"}</TableCell>
-                    <TableCell>{row.channel ?? "—"}</TableCell>
                     <TableCell>
-                      {row.notice_url ? (
-                        <Link href={row.notice_url} target="_blank" rel="noreferrer" sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
-                          바로가기
-                          <LaunchIcon sx={{ fontSize: 14 }} />
-                        </Link>
+                      {row.channel ? (
+                        row.channel_url ? (
+                          <Link
+                            href={row.channel_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+                          >
+                            {row.channel}
+                            <LaunchIcon sx={{ fontSize: 14 }} />
+                          </Link>
+                        ) : (
+                          row.channel
+                        )
                       ) : (
                         "—"
                       )}

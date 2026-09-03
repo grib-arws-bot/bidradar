@@ -39,7 +39,6 @@ def list_agencies(
             org.c.name,
             org.c.abbr,
             org.c.category,
-            org.c.notice_url,
             source.c.name.label("source_name"),
             source.c.org_name.label("channel_org_name"),
             source.c.homepage_url.label("source_homepage_url"),
@@ -85,7 +84,12 @@ def list_agencies(
                 "name": row["name"],
                 "abbr": row["abbr"],
                 "category": row["category"],
-                "notice_url": row["notice_url"] or row["source_homepage_url"],
+                # 채널(공고기관) 링크 — 2026-09-03(사용자 지시): "공고 URL" 열을 없애고 공고기관명
+                # 자체에 링크를 건다. org.notice_url(발주기관별 개별 링크)은 더 안 쓴다 — 우리가
+                # 실제로 아는 건 "이 채널이 어디서 공고를 내는가"뿐이라 채널 단위(source.homepage_url)
+                # 링크 하나로 통일하는 게 맞다. data.go.kr 문서 페이지는 절대 여기 안 옴 —
+                # 근거 확인용 URL은 legal_verified_at 옆 배지가 아니라 license_evidence_url에만 남음.
+                "channel_url": row["source_homepage_url"],
                 "channel": row["channel_org_name"] or row["source_name"],
                 "adapter_label": ADAPTER_LABELS.get(row["adapter_type"], row["adapter_type"]) if row["adapter_type"] else None,
                 "status": row_status,

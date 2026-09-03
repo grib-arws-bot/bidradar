@@ -164,20 +164,23 @@ ORG_SEED = [
 SOURCE_SEED = [
     # (이름, 기관, base_url, 홈페이지, 단계, 어댑터, is_system, skip_l1, 수집주기(분),
     #  법적등급, 등급 근거, 근거 페이지)
+    # 2026-09-03 — homepage_url을 data.go.kr API 문서 페이지에서 나라장터 실사이트(g2b.go.kr)로
+    # 정정. "데이터 소스" 화면의 공고기관 링크가 data.go.kr로 가면 안 된다는 지적(사용자) —
+    # data.go.kr 근거 링크는 license_evidence_url(준법 확인용, 사용자 화면에 안 나옴)에만 남긴다.
     ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService",
-     "https://www.data.go.kr/data/15129462/openapi.do", "발주계획", "openapi", True, True, 60,
+     "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129462/openapi.do"),
     ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService",
-     "https://www.data.go.kr/data/15129437/openapi.do", "사전규격", "openapi", True, False, 60,
+     "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129437/openapi.do"),
-    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/BidPublicInfoService",
-     "https://www.data.go.kr/data/15129394/openapi.do", "입찰공고", "openapi", True, False, 60,
+    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+     "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129394/openapi.do"),
     ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService",
-     "https://www.data.go.kr/data/15129397/openapi.do", "낙찰", "openapi", True, False, 60,
+     "https://www.g2b.go.kr/", "낙찰", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129397/openapi.do"),
     # 2026-09-03 발견: xlsx가 준 "apis.data.go.kr/B500001/..." 주소는 처음부터 완전히 틀린
@@ -185,7 +188,7 @@ SOURCE_SEED = [
     # Swagger 스펙(JSON)을 직접 찾아 확인한 결과 실제로는 한국수자원공사 자체 서버
     # (opendata.kwater.or.kr)에서 서비스된다.
     ("K-water 입찰공고", "한국수자원공사", "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
-     "https://www.data.go.kr/data/15101635/openapi.do", "입찰공고", "openapi", False, False, 60,
+     "https://ebid.kwater.or.kr/", "입찰공고", "openapi", False, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15101635/openapi.do"),
     # advisory INBOX #3(2026-09-01)로 교체 — "IRIS 사업공고"(범위 불명확한 자리표시자)를
@@ -214,9 +217,11 @@ SOURCE_SEED = [
     # 지원금액범위·지원기간까지 있어 상세페이지 없이도 정보가 풍부함(사업담당자 개인정보는
     # 상세페이지에만 있고 이 목록엔 없음, 3건 표본 확인). stage="공모예고" 재사용 — 둘 다
     # 공식 공고 전 단계라 같은 탭(사전규격/발주계획/공모예고)에 묶이는 게 맞음.
+    # homepage_url을 IRIS 접수예정과 동일하게 통일(2026-09-03, 사용자 지시) — 관리자 화면의
+    # 채널명이 둘 다 "IRIS"로 통일됐으니(위 주석 참고) 링크도 하나의 대표 진입점으로 통일한다.
     ("IRIS 공모예고", "IRIS",
      "https://www.iris.go.kr/contents/retrieveAncmPrntcList.do",
-     "https://www.iris.go.kr/contents/retrieveAncmPrntcListView.do", "공모예고", "openapi", False, True, 1440,
+     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(IRIS 접수예정과 동일 사이트·동일 근거, 2026-09-02 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
      "https://www.iris.go.kr/robots.txt"),
     # advisory INBOX #2(2026-09-01) — 과기정통부 "자체" 공고만 다룬다(범부처 아님). 이름에
@@ -224,7 +229,7 @@ SOURCE_SEED = [
     # 법적등급 A(자유) — data.go.kr 이용허락범위 '제한 없음'.
     ("과학기술정보통신부 사업공고(부처 자체, 범부처 아님)", "과학기술정보통신부",
      "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList",
-     "https://www.data.go.kr/data/15074634/openapi.do", "사업공고", "openapi", False, True, 1440,
+     "https://www.msit.go.kr/bbs/list.do?sCode=user&mId=311&mPid=121", "사업공고", "openapi", False, True, 1440,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15074634/openapi.do"),
     ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices",

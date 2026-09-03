@@ -27,7 +27,7 @@ export interface AgencyRow {
   name: string;
   abbr: string | null;
   category: string | null;
-  notice_url: string | null;
+  channel_url: string | null;
   channel: string | null;
   adapter_label: string | null;
   status: AgencyStatus;
