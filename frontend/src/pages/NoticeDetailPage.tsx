@@ -3,6 +3,7 @@ import ArrowForwardIcon from "@mui/icons-material/ArrowForwardIosOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import NotificationsOutlinedIcon from "@mui/icons-material/NotificationsOutlined";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
+import OpenInNewIcon from "@mui/icons-material/OpenInNewOutlined";
 import {
   Box,
   Button,
@@ -11,6 +12,7 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  Link,
   Stack,
   Tooltip,
   Typography,
@@ -19,7 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { followOrg } from "@/api/classification";
-import { fetchNeighbors, fetchNoticeDetail } from "@/api/notices";
+import { EXTRA_FIELD_LABELS, fetchNeighbors, fetchNoticeDetail, formatExtraValue } from "@/api/notices";
 
 export function NoticeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -96,27 +98,46 @@ export function NoticeDetailPage() {
         <Stack spacing={2}>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap>
             <Box>
-              <Chip label={notice.stage} size="small" color="secondary" variant="outlined" sx={{ mb: 1 }} />
+              <Stack direction="row" spacing={0.75} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
+                <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
+                {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
+                {notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
+              </Stack>
               <Typography variant="h2">{notice.title}</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {notice.org_name ?? "발주기관 미상"} · {notice.region ?? "지역 미상"}
               </Typography>
             </Box>
-            <Button
-              variant={notice.org_followed ? "contained" : "outlined"}
-              size="small"
-              startIcon={notice.org_followed ? <NotificationsActiveIcon /> : <NotificationsOutlinedIcon />}
-              disabled={followMutation.isPending || notice.org_followed}
-              onClick={() => followMutation.mutate()}
-            >
-              {notice.org_followed ? "팔로우 중" : "이 기관 팔로우"}
-            </Button>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<OpenInNewIcon fontSize="small" />}
+                component={Link}
+                href={notice.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                원문 보기
+              </Button>
+              <Button
+                variant={notice.org_followed ? "contained" : "outlined"}
+                size="small"
+                startIcon={notice.org_followed ? <NotificationsActiveIcon /> : <NotificationsOutlinedIcon />}
+                disabled={followMutation.isPending || notice.org_followed}
+                onClick={() => followMutation.mutate()}
+              >
+                {notice.org_followed ? "팔로우 중" : "이 기관 팔로우"}
+              </Button>
+            </Stack>
           </Stack>
 
-          <Stack direction="row" spacing={4}>
+          <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
+            <Field label="공고번호" value={notice.notice_no ?? "미부여"} />
             <Field label="추정가격" value={notice.est_price ? `${(notice.est_price / 100_000_000).toFixed(1)}억원` : "미공개"} />
             <Field label="게시일" value={notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "-"} />
             <Field label="마감일" value={notice.close_dt ? new Date(notice.close_dt).toLocaleString("ko-KR") : "마감일 미공개"} />
+            {notice.assignee_name && <Field label="담당자" value={notice.assignee_name} />}
           </Stack>
 
           {notice.scores.length > 0 && (
@@ -162,6 +183,29 @@ export function NoticeDetailPage() {
               </Stack>
             ))}
           </Stack>
+        </Card>
+      )}
+
+      {notice.extra && Object.keys(notice.extra).length > 0 && (
+        <Card sx={{ p: 3 }}>
+          <Typography variant="h3" sx={{ mb: 1.5 }}>
+            추가 정보
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
+            이 소스가 제공하는 원본 필드 그대로입니다 — 목록 응답에 담당자 개인정보는 없습니다.
+          </Typography>
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+            {Object.entries(notice.extra).map(([key, value]) => (
+              <Box key={key} sx={{ minWidth: 0 }}>
+                <Typography variant="caption" color="text.secondary">
+                  {EXTRA_FIELD_LABELS[key] ?? key}
+                </Typography>
+                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                  {formatExtraValue(key, value)}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
         </Card>
       )}
 

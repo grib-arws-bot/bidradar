@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 
 import { submitClassification, type ClassificationAction } from "@/api/classification";
-import type { FilterOptions, NoticeItem } from "@/api/notices";
+import { EXTRA_FIELD_LABELS, formatExtraValue, type FilterOptions, type NoticeItem } from "@/api/notices";
 import { ClassificationDialog } from "@/components/ClassificationDialog";
 
 function formatPrice(value: number | null): string {
@@ -24,22 +24,6 @@ function formatDday(closeDt: string | null): { label: string; urgent: boolean } 
   if (days < 0) return { label: "마감", urgent: false };
   return { label: days === 0 ? "D-Day" : `D-${days}`, urgent: days <= 3 };
 }
-
-// notice.extra(소스별 부가 필드, 2026-09-02) 원본 키 → 사람이 읽을 라벨. IRIS 접수예정의
-// 16개 목록 필드 중 명명 컬럼(title/org/open_dt/close_dt/notice_no/url)에 안 들어간 나머지가
-// 여기로 들어온다 — 전부 그대로 보여주고(사용자가 보고 나서 뺄 것을 정함), 라벨만 붙인다.
-const EXTRA_FIELD_LABELS: Record<string, string> = {
-  dDay: "마감 D-day",
-  rcveStt: "접수상태코드",
-  rcveSttSeNmLst: "접수상태",
-  rcveStrDe: "접수시작일",
-  sorgnId: "전문기관코드",
-  blngGovdSe: "소관부처코드",
-  blngGovdSeNm: "소관부처",
-  budJuriGovdSe: "예산소관코드",
-  pbofrTpSeLst: "공모유형코드",
-  pbofrTpSeNmLst: "공모유형",
-};
 
 interface Props {
   notice: NoticeItem;
@@ -112,14 +96,17 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
 
       {notice.extra && Object.keys(notice.extra).length > 0 && (
         <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
-          {Object.entries(notice.extra).map(([key, value]) => (
-            <Chip
-              key={key}
-              size="small"
-              variant="outlined"
-              label={`${EXTRA_FIELD_LABELS[key] ?? key}: ${value ?? "—"}`}
-            />
-          ))}
+          {Object.entries(notice.extra).map(([key, value]) => {
+            const formatted = formatExtraValue(key, value);
+            // 카드는 공간이 좁아 긴 요약 텍스트(사업내용 등)는 잘라서 보여준다 — 전체는 상세
+            // 페이지에서 확인.
+            const shown = formatted.length > 40 ? `${formatted.slice(0, 40)}…` : formatted;
+            return (
+              <Tooltip key={key} title={formatted.length > 40 ? formatted : ""} disableHoverListener={formatted.length <= 40}>
+                <Chip size="small" variant="outlined" label={`${EXTRA_FIELD_LABELS[key] ?? key}: ${shown}`} />
+              </Tooltip>
+            );
+          })}
         </Stack>
       )}
 

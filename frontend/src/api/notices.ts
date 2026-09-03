@@ -1,5 +1,45 @@
 import { apiClient } from "@/api/client";
 
+// notice.extra(소스별 부가 필드, 2026-09-02) 원본 키 → 사람이 읽을 라벨. 카드(NoticeCard)와
+// 상세(NoticeDetailPage) 양쪽에서 같이 쓰므로 여기 한 곳에 둔다 — 새 소스가 extra 필드를
+// 추가할 때마다 여기만 갱신하면 됨.
+export const EXTRA_FIELD_LABELS: Record<string, string> = {
+  // IRIS 접수예정
+  dDay: "마감 D-day",
+  rcveStt: "접수상태코드",
+  rcveSttSeNmLst: "접수상태",
+  rcveStrDe: "접수시작일",
+  sorgnId: "전문기관코드",
+  blngGovdSe: "소관부처코드",
+  blngGovdSeNm: "소관부처",
+  budJuriGovdSe: "예산소관코드",
+  pbofrTpSeLst: "공모유형코드",
+  pbofrTpSeNmLst: "공모유형",
+  // IRIS 공모예고
+  bsnsYy: "사업연도",
+  bsnsCn: "사업내용",
+  bsnsPursCn: "사업목적",
+  sprtFildCn: "지원분야",
+  sprtMinRsctAm: "지원금액(최소)",
+  sprtMxRsctAm: "지원금액(최대)",
+  sprtPridSe: "지원기간구분",
+  bsnsSpchClSeNm: "사업특성구분",
+  // 과학기술정보통신부 사업공고
+  deptName: "소관부서",
+};
+
+// 원 단위 정수로 오는 금액성 extra 필드는 est_price와 같은 방식(억원/만원)으로 보여준다.
+const EXTRA_AMOUNT_KEYS = new Set(["sprtMinRsctAm", "sprtMxRsctAm"]);
+
+export function formatExtraValue(key: string, value: string | number | null): string {
+  if (value === null || value === "") return "—";
+  if (EXTRA_AMOUNT_KEYS.has(key) && typeof value === "number") {
+    const eok = value / 100_000_000;
+    return eok >= 1 ? `${eok.toFixed(1)}억원` : `${(value / 10_000).toFixed(0)}만원`;
+  }
+  return String(value);
+}
+
 export interface NoticeItem {
   id: number;
   notice_no: string | null;
