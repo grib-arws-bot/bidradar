@@ -103,7 +103,7 @@ def test_run_source_end_to_end(monkeypatch):
     with engine.begin() as conn:
         result = run_source(conn, source_id)
 
-    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0}
+    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 0}
 
     with engine.connect() as conn:
         cctv_notice = conn.execute(select(notice.c.id, notice.c.title).where(notice.c.notice_no == "R26TEST0001")).first()
@@ -257,7 +257,65 @@ def test_run_source_filters_items_older_than_collection_window(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
 
-    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1}
+    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1, "already_closed": 0}
+
+
+# ---- 이미 마감된 공고는 수집 단계에서 제외(2026-09-04, 나라장터 82% 마감건 혼입 발견) -------
+
+
+def test_run_source_skips_items_already_past_close_date(monkeypatch):
+    now = datetime.now(timezone.utc)
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {
+        "items": [
+            {
+                "title": "이미 마감된 공고", "org": "테스트발주기관_마감필터",
+                "openDate": (now - timedelta(days=5)).strftime("%Y%m%d%H%M"),
+                "closeDate": (now - timedelta(days=1)).strftime("%Y%m%d%H%M"),
+                "url": "https://x/closed",
+            },
+            {
+                "title": "아직 진행중인 공고", "org": "테스트발주기관_마감필터",
+                "openDate": (now - timedelta(days=5)).strftime("%Y%m%d%H%M"),
+                "closeDate": (now + timedelta(days=5)).strftime("%Y%m%d%H%M"),
+                "url": "https://x/open",
+            },
+            {
+                # close_dt 자체가 없는 소스(IRIS 등)는 "마감됐다"고 판단할 근거가 없어 대상 제외
+                "title": "마감일 없는 공고", "org": "테스트발주기관_마감필터",
+                "openDate": (now - timedelta(days=5)).strftime("%Y%m%d%H%M"),
+                "url": "https://x/no-close",
+            },
+        ]
+    }
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    field_maps = [
+        ("title", "$.title", None), ("org_name", "$.org", None),
+        ("open_dt", "$.openDate", "%Y%m%d%H%M"), ("close_dt", "$.closeDate", "%Y%m%d%H%M"),
+        ("url", "$.url", None),
+    ]
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="A", field_maps=field_maps)
+    try:
+        with engine.begin() as conn:
+            result = run_source(conn, source_id, max_lookback_days=60)
+
+        with engine.connect() as conn:
+            titles = {
+                row.title
+                for row in conn.execute(select(notice.c.title).where(notice.c.source_id == source_id))
+            }
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.source_id == source_id))
+            conn.execute(delete(org).where(org.c.name == "테스트발주기관_마감필터"))
+            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
+            conn.execute(delete(source).where(source.c.id == source_id))
+
+    assert result == {"fetched": 3, "inserted": 2, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 1}
+    assert titles == {"아직 진행중인 공고", "마감일 없는 공고"}
 
 
 def test_run_source_records_failure_and_reraises(monkeypatch):

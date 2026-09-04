@@ -147,8 +147,9 @@ def run_source(
         )
     )
 
-    inserted = skipped = scored = out_of_window = 0
+    inserted = skipped = scored = out_of_window = already_closed = 0
     l1_ok = passes_l1(conn, source_id)
+    now = datetime.now(timezone.utc)
 
     for raw_item in raw_items:
         mapped = map_item(raw_item, field_maps)
@@ -160,6 +161,15 @@ def run_source(
         # _collection_window()가 계산해둔 값(2026-09-02, IRIS 2개월치 재수집 정확도 개선).
         if mapped["open_dt"] < begin:
             out_of_window += 1
+            continue
+        # 2026-09-04 — 나라장터는 공고 "게시일" 기준으로만 기간을 걸러줘서 이미 마감된 공고도
+        # 그대로 들어온다(실측: 용역 5,000건 중 82%가 이미 마감). BidRadar 취지("이미 늦기
+        # 전에 본다")상 이미 마감된 건 참여 판단에 쓸모가 없어 수집 단계에서부터 제외한다.
+        # close_dt가 없는 소스(IRIS·과기정통부 등, INBOX #1)는 "마감됐다"고 판단할 근거가
+        # 없으므로 대상이 아니다.
+        close_dt = mapped.get("close_dt")
+        if close_dt is not None and close_dt < now:
+            already_closed += 1
             continue
 
         org_id = _get_or_create_org(conn, mapped["org_name"], source_id) if mapped.get("org_name") else None
@@ -213,4 +223,5 @@ def run_source(
         "skipped": skipped,
         "scored": scored,
         "out_of_window": out_of_window,
+        "already_closed": already_closed,
     }

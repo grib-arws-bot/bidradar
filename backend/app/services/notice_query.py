@@ -193,16 +193,22 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
 
 
 def _apply_sort(stmt: Select, sort: str, priority_sq) -> Select:
+    # 2026-09-04 — 정렬 기준에 notice.id를 마지막 동점 처리 기준으로 항상 붙인다. 나라장터
+    # 대량 수집(수천 건)으로 close_dt·priority 등이 동일한 행이 흔해지면서, id 없이 정렬하면
+    # Postgres가 동점 행의 순서를 매 쿼리마다 다르게 줄 수 있어(정렬 안정성 미보장) 페이지네이션
+    # 시 같은 공고가 두 페이지에 겹쳐 나오는 문제가 실측으로 드러났다(20,000여 건 규모에서 재현).
     if sort == "close_asc":
-        return stmt.order_by(notice.c.close_dt.asc().nulls_last())
+        return stmt.order_by(notice.c.close_dt.asc().nulls_last(), notice.c.id.asc())
     if sort == "open_desc":
-        return stmt.order_by(notice.c.open_dt.desc())
+        return stmt.order_by(notice.c.open_dt.desc(), notice.c.id.asc())
     if sort == "price_desc":
-        return stmt.order_by(notice.c.est_price.desc().nulls_last())
+        return stmt.order_by(notice.c.est_price.desc().nulls_last(), notice.c.id.asc())
     if sort == "price_asc":
-        return stmt.order_by(notice.c.est_price.asc().nulls_last())
+        return stmt.order_by(notice.c.est_price.asc().nulls_last(), notice.c.id.asc())
     # 기본값 "priority"
-    return stmt.order_by(priority_sq.c.priority.desc().nulls_last(), notice.c.close_dt.asc().nulls_last())
+    return stmt.order_by(
+        priority_sq.c.priority.desc().nulls_last(), notice.c.close_dt.asc().nulls_last(), notice.c.id.asc()
+    )
 
 
 def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:

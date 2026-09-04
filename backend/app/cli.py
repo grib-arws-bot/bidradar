@@ -96,7 +96,8 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
         )
 
     print(f"수집 완료: fetched={result['fetched']} inserted={result['inserted']} "
-          f"skipped={result['skipped']} scored={result['scored']} out_of_window={result['out_of_window']}")
+          f"skipped={result['skipped']} scored={result['scored']} out_of_window={result['out_of_window']} "
+          f"already_closed={result['already_closed']}")
 
 
 def check_compliance(source_id: int | None) -> None:
@@ -113,6 +114,16 @@ def check_compliance(source_id: int | None) -> None:
     for r in results:
         status = "변경 감지 — 비활성화됨" if r["changed"] else ("확인 완료" if r["fetch_ok"] else f"확인 실패({r['error']})")
         print(f"[{r['source_id']}] {r['name']}: {status}")
+
+
+def cleanup_closed(retention_days: int) -> None:
+    """마감 후 retention_days일 지난 공고 삭제(2026-09-04 사용자 결정). 스케줄러 인프라가
+    아직 없어 지금은 사람이나 cron으로 이 명령을 직접 돌린다."""
+    from app.services.notice_cleanup import delete_expired_notices
+
+    with engine.begin() as conn:
+        deleted = delete_expired_notices(conn, retention_days=retention_days)
+    print(f"삭제 완료: {deleted}건 (마감 후 {retention_days}일 경과 기준)")
 
 
 def main() -> None:
@@ -132,6 +143,9 @@ def main() -> None:
     compliance_parser = subparsers.add_parser("check-compliance")
     compliance_parser.add_argument("--source-id", type=int, default=None, help="생략하면 B·C등급 전체 재확인")
 
+    cleanup_parser = subparsers.add_parser("cleanup-closed")
+    cleanup_parser.add_argument("--retention-days", type=int, default=30, help="마감 후 이 일수가 지나면 삭제(기본 30일)")
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin()
@@ -141,6 +155,8 @@ def main() -> None:
         collect(args.source_id, args.service_key, args.force, args.max_lookback_days)
     elif args.command == "check-compliance":
         check_compliance(args.source_id)
+    elif args.command == "cleanup-closed":
+        cleanup_closed(args.retention_days)
 
 
 if __name__ == "__main__":
