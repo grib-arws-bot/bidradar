@@ -23,12 +23,21 @@ function formatPrice(value: number | null): string {
   return eok >= 1 ? `${eok.toFixed(1)}억원` : `${(value / 10_000).toFixed(0)}만원`;
 }
 
+// 달력 날짜 기준으로 며칠 남았는지 계산 — 시각까지 포함한 순수 ms 차이를 24시간으로 나누면
+// "오늘 마감"인데 아직 몇 시간 안 지났다는 이유로 D-1로 뜨는 버그가 있었다(2026-09-05 발견,
+// 마감일이 오늘인데 D-1로 표시됨). 두 시각 모두 자정 기준으로 깎아서 비교해야 "오늘=D-0"이
+// 정확히 나온다.
+function daysUntil(target: Date, now: Date): number {
+  const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const startOfNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((startOfTarget.getTime() - startOfNow.getTime()) / (1000 * 60 * 60 * 24));
+}
+
 // 공고 생명주기 상태(2026-09-03, 입찰미정→입찰예정→입찰접수→입찰마감) 칩 — "입찰접수"이면서
 // 마감일이 있으면 D-day까지 같이 보여준다(예: "입찰접수 · D-3"), 그 외엔 상태 라벨만.
 function formatBidStatus(notice: NoticeItem): { label: string; urgent: boolean } {
   if (notice.bid_status === "in_progress" && notice.close_dt) {
-    const diffMs = new Date(notice.close_dt).getTime() - Date.now();
-    const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    const days = daysUntil(new Date(notice.close_dt), new Date());
     const dday = days === 0 ? "D-Day" : `D-${days}`;
     return { label: `입찰접수 · ${dday}`, urgent: days <= 3 };
   }
