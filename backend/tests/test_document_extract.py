@@ -38,6 +38,25 @@ def test_extract_hwpx_joins_paragraph_text():
     assert "둘째 문단입니다." in result.text
 
 
+def test_extract_hwpx_keeps_text_after_inline_linebreak():
+    """실제 규격서 표에서 발견(2026-09-05): <hp:t>안에 <hp:lineBreak/>가 있으면 ElementTree가
+    텍스트를 text/tail로 쪼갠다 — .text만 읽으면 태그 뒤 내용이 통째로 사라진다. 실제 사례:
+    "국제공동연구개발비를 제외한 <hp:lineBreak/>연구개발비의 100분의 75 이하"에서 핵심 수치
+    "100분의 75"가 유실됐었음."""
+    xml = (
+        f'<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="ns" xmlns:hp="{_HWPX_NS}">'
+        "<hp:p><hp:run><hp:t>국제공동연구개발비를 제외한 <hp:lineBreak/>연구개발비의 100분의 75 이하</hp:t></hp:run></hp:p>"
+        "</hs:sec>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Contents/section0.xml", xml)
+    result = extract_document("표.hwpx", buf.getvalue())
+    assert result.ok is True
+    assert "100분의 75 이하" in result.text
+    assert "국제공동연구개발비를 제외한 연구개발비의 100분의 75 이하" in result.text
+
+
 def test_extract_hwpx_no_sections_reports_failure_not_silent_empty():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:

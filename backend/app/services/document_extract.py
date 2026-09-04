@@ -31,6 +31,18 @@ _HWPX_PARAGRAPH_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 _HWP5TXT_TIMEOUT_SEC = 30
 
 
+def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
+    """<hp:t> 안에 <hp:lineBreak/>·<hp:tab/> 같은 인라인 태그가 섞이면 ElementTree가 텍스트를
+    text/tail로 쪼갠다 — .text만 읽으면 태그 뒤 내용이 통째로 사라진다(2026-09-05, 실제 규격서
+    표에서 발견: "100분의 75 이하" 같은 핵심 수치가 줄바꿈 태그 뒤에 있어 유실되고 있었음).
+    태그는 공백으로 치환해 이어붙인다."""
+    fragments = [t_elem.text or ""]
+    for child in t_elem:
+        fragments.append(" ")
+        fragments.append(child.tail or "")
+    return " ".join("".join(fragments).split())
+
+
 @dataclass
 class ExtractResult:
     text: str | None
@@ -61,8 +73,9 @@ def _extract_hwpx(content: bytes) -> ExtractResult:
             for name in section_names:
                 root = ElementTree.fromstring(z.read(name))
                 for t_elem in root.iter(f"{{{_HWPX_PARAGRAPH_NS}}}t"):
-                    if t_elem.text:
-                        parts.append(t_elem.text)
+                    text = _flatten_hwpx_text(t_elem)
+                    if text:
+                        parts.append(text)
         text = "\n".join(parts).strip()
     except Exception as exc:  # noqa: BLE001
         return ExtractResult(text=None, method="hwpx_xml", ok=False, error=str(exc))
