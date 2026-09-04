@@ -2,7 +2,7 @@ import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
 import DriveFileMoveOutlinedIcon from "@mui/icons-material/DriveFileMoveOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
-import { Box, Button, Card, Chip, Divider, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Card, Chip, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
@@ -50,11 +50,15 @@ interface Props {
   topics: FilterOptions["topics"];
   classifiedAs: ClassificationAction | null;
   onClassified: (noticeId: number, action: ClassificationAction) => void;
+  // 가로형(list, 기본) — 한 줄에 하나, 정보를 옆으로 펼쳐 보여준다.
+  // 세로형(grid) — 한 줄에 3개, 좁은 폭에 맞춰 위→아래로 쌓는다(2026-09-05 보기 스타일 추가).
+  variant?: "list" | "grid";
 }
 
 // U5 인수조건: "카드만 갱신(목록 리로드 없음)" — 분류검수 액션은 목록을 다시 안 부르고
 // 이 카드의 로컬 상태(classifiedAs, 부모가 들고 있음)만 바꾼다.
-export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassified }: Props) {
+export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassified, variant = "list" }: Props) {
+  const isGrid = variant === "grid";
   const bidStatus = formatBidStatus(notice);
   const [searchParams] = useSearchParams();
   const [dialogAction, setDialogAction] = useState<Extract<ClassificationAction, "recategorize" | "irrelevant"> | null>(
@@ -76,38 +80,57 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
   const budgetLabel = summary?.project_budget || formatPrice(notice.est_price);
 
   return (
-    <Card sx={{ p: 2.5, opacity: classifiedAs ? 0.7 : 1 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
+    <Card sx={{ p: isGrid ? 2 : 2.5, opacity: classifiedAs ? 0.7 : 1, height: isGrid ? "100%" : "auto", display: isGrid ? "flex" : "block", flexDirection: "column" }}>
+      <Stack
+        direction={isGrid ? "column" : "row"}
+        justifyContent={isGrid ? "flex-start" : "space-between"}
+        alignItems={isGrid ? "stretch" : "flex-start"}
+        spacing={isGrid ? 1 : 2}
+      >
         <Box sx={{ minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }} flexWrap="wrap" useFlexGap>
             <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
             {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
-            {notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
-            {notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
+            {!isGrid && notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
+            {!isGrid && notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
             {classifiedAs && <Chip label={CLASSIFIED_LABEL[classifiedAs]} size="small" color="success" />}
           </Stack>
           <Typography
             variant="h3"
             component={RouterLink}
             to={`/notices/${notice.id}?${searchParams.toString()}`}
-            sx={{ mb: 0.5, display: "block", color: "text.primary", "&:hover": { color: "primary.main" } }}
+            sx={{
+              mb: 0.5,
+              display: isGrid ? "-webkit-box" : "block",
+              WebkitLineClamp: isGrid ? 2 : undefined,
+              WebkitBoxOrient: isGrid ? "vertical" : undefined,
+              overflow: isGrid ? "hidden" : undefined,
+              color: "text.primary",
+              "&:hover": { color: "primary.main" },
+            }}
           >
             <HighlightedText text={notice.title} highlight={highlight} />
           </Typography>
           <Typography variant="body2" color="text.secondary">
             {notice.org_name ?? "발주기관 미상"}
             {notice.region ? ` · ${notice.region}` : ""}
-            {notice.notice_no ? ` · 공고번호 ${notice.notice_no}` : ""}
+            {!isGrid && notice.notice_no ? ` · 공고번호 ${notice.notice_no}` : ""}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }} className="tnum">
-            입찰게시일 {notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "미상"} · 입찰마감일{" "}
+            게시 {notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "미상"} · 마감{" "}
             {notice.close_dt ? new Date(notice.close_dt).toLocaleDateString("ko-KR") : "미상"}
-            {summary?.project_period ? ` · 총사업기간 ${summary.project_period}` : ""}
+            {!isGrid && summary?.project_period ? ` · 총사업기간 ${summary.project_period}` : ""}
           </Typography>
         </Box>
         {/* 사업비·D-day는 참여 판단에 가장 먼저 눈에 들어와야 하는 값이라 다른 텍스트보다
             크고 진하게 둔다(2026-09-05 사용자 요청). */}
-        <Stack alignItems="flex-end" spacing={0.5} sx={{ flexShrink: 0 }}>
+        <Stack
+          direction={isGrid ? "row" : "column"}
+          justifyContent={isGrid ? "space-between" : "flex-start"}
+          alignItems={isGrid ? "center" : "flex-end"}
+          spacing={0.5}
+          sx={{ flexShrink: 0, mt: isGrid ? 0.5 : 0 }}
+        >
           <Typography variant="h3" className="tnum" fontWeight={700} color="primary.main" sx={{ whiteSpace: "nowrap" }}>
             {budgetLabel}
           </Typography>
@@ -124,7 +147,14 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
       {summary && (summary.purpose || summary.content_narrative) && (
         <Box sx={{ mt: 1.5 }}>
           {summary.purpose && (
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            <Typography
+              variant="body2"
+              sx={
+                isGrid
+                  ? { fontWeight: 600, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }
+                  : { fontWeight: 600 }
+              }
+            >
               과제목표 — {summary.purpose}
             </Typography>
           )}
@@ -135,7 +165,7 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
               sx={{
                 mt: 0.25,
                 display: "-webkit-box",
-                WebkitLineClamp: 3,
+                WebkitLineClamp: isGrid ? 2 : 3,
                 WebkitBoxOrient: "vertical",
                 overflow: "hidden",
               }}
@@ -146,7 +176,7 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         </Box>
       )}
 
-      {notice.extra && Object.keys(notice.extra).length > 0 && (
+      {!isGrid && notice.extra && Object.keys(notice.extra).length > 0 && (
         <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
           {Object.entries(notice.extra).map(([key, value]) => {
             const formatted = formatExtraValue(key, value);
@@ -162,45 +192,78 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         </Stack>
       )}
 
+      <Box sx={{ flexGrow: isGrid ? 1 : undefined }} />
       <Divider sx={{ my: 1.5 }} />
 
-      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-        <Button
-          size="small"
-          startIcon={<CheckCircleOutlineIcon fontSize="small" />}
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate({ action: "confirm" })}
-        >
-          카테고리 맞음
-        </Button>
-        <Button
-          size="small"
-          startIcon={<DriveFileMoveOutlinedIcon fontSize="small" />}
-          disabled={mutation.isPending}
-          onClick={() => setDialogAction("recategorize")}
-        >
-          카테고리 재분류
-        </Button>
-        <Button
-          size="small"
-          color="error"
-          startIcon={<BlockOutlinedIcon fontSize="small" />}
-          disabled={mutation.isPending}
-          onClick={() => setDialogAction("irrelevant")}
-        >
-          완전 무관
-        </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
-          component={RouterLink}
-          to={`/notices/${notice.id}?${searchParams.toString()}`}
-          sx={{ ml: "auto" }}
-        >
-          심층 분석
-        </Button>
-      </Stack>
+      {isGrid ? (
+        // 좁은 폭에서는 라벨 텍스트 대신 아이콘 버튼으로 — 4개 버튼이 한 줄에 다 들어가야 함.
+        <Stack direction="row" spacing={0.5} justifyContent="space-between">
+          <Tooltip title="카테고리 맞음">
+            <span>
+              <IconButton size="small" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "confirm" })}>
+                <CheckCircleOutlineIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="카테고리 재분류">
+            <span>
+              <IconButton size="small" disabled={mutation.isPending} onClick={() => setDialogAction("recategorize")}>
+                <DriveFileMoveOutlinedIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="완전 무관">
+            <span>
+              <IconButton size="small" color="error" disabled={mutation.isPending} onClick={() => setDialogAction("irrelevant")}>
+                <BlockOutlinedIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="심층 분석">
+            <IconButton size="small" color="primary" component={RouterLink} to={`/notices/${notice.id}?${searchParams.toString()}`}>
+              <AutoAwesomeOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      ) : (
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button
+            size="small"
+            startIcon={<CheckCircleOutlineIcon fontSize="small" />}
+            disabled={mutation.isPending}
+            onClick={() => mutation.mutate({ action: "confirm" })}
+          >
+            카테고리 맞음
+          </Button>
+          <Button
+            size="small"
+            startIcon={<DriveFileMoveOutlinedIcon fontSize="small" />}
+            disabled={mutation.isPending}
+            onClick={() => setDialogAction("recategorize")}
+          >
+            카테고리 재분류
+          </Button>
+          <Button
+            size="small"
+            color="error"
+            startIcon={<BlockOutlinedIcon fontSize="small" />}
+            disabled={mutation.isPending}
+            onClick={() => setDialogAction("irrelevant")}
+          >
+            완전 무관
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+            component={RouterLink}
+            to={`/notices/${notice.id}?${searchParams.toString()}`}
+            sx={{ ml: "auto" }}
+          >
+            심층 분석
+          </Button>
+        </Stack>
+      )}
 
       {dialogAction && (
         <ClassificationDialog

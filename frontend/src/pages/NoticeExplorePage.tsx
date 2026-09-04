@@ -1,4 +1,6 @@
 import ArrowForwardIcon from "@mui/icons-material/ArrowForwardOutlined";
+import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
+import ViewListOutlinedIcon from "@mui/icons-material/ViewListOutlined";
 import {
   Box,
   Chip,
@@ -7,6 +9,9 @@ import {
   Pagination,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
@@ -30,6 +35,18 @@ const STATUS_TABS: { value: NoticeTab; label: string }[] = [
   { value: "closed", label: "입찰마감" },
 ];
 const DEFAULT_TAB: NoticeTab = "in_progress";
+
+type CardView = "list" | "grid";
+const CARD_VIEW_STORAGE_KEY = "bidradar:notice-card-view";
+
+function loadCardView(): CardView {
+  try {
+    const saved = localStorage.getItem(CARD_VIEW_STORAGE_KEY);
+    return saved === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
 
 const SORTS = [
   { value: "priority", label: "관심도순" },
@@ -71,6 +88,19 @@ export function NoticeExplorePage() {
   const [searchInput, setSearchInput] = useState(searchParams.get("q") ?? "");
   // U5: 분류검수 액션은 "카드만 갱신" — 목록을 다시 안 부르고 이 로컬 맵만 바꾼다.
   const [classifiedMap, setClassifiedMap] = useState<Map<number, ClassificationAction>>(new Map());
+  // 보기 스타일(가로형/세로형, 2026-09-05) — 사용자 개인 취향이라 서버에 안 남기고 브라우저에만
+  // 저장한다.
+  const [cardView, setCardView] = useState<CardView>(loadCardView);
+
+  function changeCardView(next: CardView | null) {
+    if (!next) return; // ToggleButtonGroup은 이미 눌린 버튼을 다시 누르면 null을 준다 — 무시.
+    setCardView(next);
+    try {
+      localStorage.setItem(CARD_VIEW_STORAGE_KEY, next);
+    } catch {
+      // 프라이빗 브라우징 등에서 저장 실패해도 이번 세션 안에서는 정상 동작해야 하므로 무시.
+    }
+  }
 
   const tab = (searchParams.get("tab") as NoticeTab) || DEFAULT_TAB;
   const sort = searchParams.get("sort") || "priority";
@@ -160,20 +190,34 @@ export function NoticeExplorePage() {
             </Stack>
           ))}
         </Stack>
-        <TextField
-          select
-          size="small"
-          label="정렬"
-          sx={{ width: 180 }}
-          value={sort}
-          onChange={(e) => updateParams({ sort: e.target.value, page: null })}
-        >
-          {SORTS.map((s) => (
-            <MenuItem key={s.value} value={s.value}>
-              {s.label}
-            </MenuItem>
-          ))}
-        </TextField>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <ToggleButtonGroup size="small" exclusive value={cardView} onChange={(_, next) => changeCardView(next)}>
+            <ToggleButton value="list" aria-label="가로형 보기">
+              <Tooltip title="가로형 — 한 줄에 하나씩">
+                <ViewListOutlinedIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="grid" aria-label="세로형 보기">
+              <Tooltip title="세로형 — 한 줄에 3개씩">
+                <GridViewOutlinedIcon fontSize="small" />
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>
+          <TextField
+            select
+            size="small"
+            label="정렬"
+            sx={{ width: 180 }}
+            value={sort}
+            onChange={(e) => updateParams({ sort: e.target.value, page: null })}
+          >
+            {SORTS.map((s) => (
+              <MenuItem key={s.value} value={s.value}>
+                {s.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Stack>
       </Stack>
 
       <TextField
@@ -187,6 +231,7 @@ export function NoticeExplorePage() {
       <NoticeFilterBar options={filterOptionsQuery.data} values={filters} onChange={handleFiltersChange} />
 
       <NoticeListBody
+        view={cardView}
         loading={listQuery.isLoading}
         items={listQuery.data?.items ?? []}
         q={q}
@@ -214,6 +259,7 @@ export function NoticeExplorePage() {
 }
 
 function NoticeListBody({
+  view,
   loading,
   items,
   q,
@@ -223,6 +269,7 @@ function NoticeListBody({
   onClearSearch,
   onClearFilters,
 }: {
+  view: CardView;
   loading: boolean;
   items: NoticeItem[];
   q: string;
@@ -245,18 +292,32 @@ function NoticeListBody({
     return <EmptyState variant="no-filter-result" onAction={onClearFilters} />;
   }
 
-  return (
-    <Stack spacing={1.5}>
-      {items.map((notice) => (
-        <NoticeCard
-          key={notice.id}
-          notice={notice}
-          highlight={q}
-          topics={topics}
-          classifiedAs={classifiedMap.get(notice.id) ?? null}
-          onClassified={onClassified}
-        />
-      ))}
-    </Stack>
-  );
+  const cards = items.map((notice) => (
+    <NoticeCard
+      key={notice.id}
+      notice={notice}
+      highlight={q}
+      topics={topics}
+      classifiedAs={classifiedMap.get(notice.id) ?? null}
+      onClassified={onClassified}
+      variant={view}
+    />
+  ));
+
+  if (view === "grid") {
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(3, 1fr)" },
+          gap: 1.5,
+          alignItems: "stretch",
+        }}
+      >
+        {cards}
+      </Box>
+    );
+  }
+
+  return <Stack spacing={1.5}>{cards}</Stack>;
 }
