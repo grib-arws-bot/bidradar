@@ -17,16 +17,28 @@ os.environ.setdefault(
 )
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import delete, insert, select
 
 from app.config import settings
 from app.db import engine
+from app.main import app
 from app.models import analysis, analysis_doc, analysis_requirement, notice, source
 from app.services.analysis.structure import (
     LLMNotConfiguredError,
     StructuringInProgressError,
     run_structuring,
 )
+
+EMAIL = "report@grib.co.kr"
+PASSWORD = "dev-local-test-pw-123"
+
+
+@pytest.fixture
+def client() -> TestClient:
+    c = TestClient(app)
+    assert c.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD}).status_code == 200
+    return c
 
 
 def _any_source_id(conn) -> int:
@@ -168,3 +180,61 @@ def test_run_structuring_records_failure_on_llm_error(done_analysis, monkeypatch
     assert row.status == "failed"
     assert row.step == "A2_structure"
     assert "네트워크 실패" in row.verdict
+
+
+# ---- API 라우트(POST /structure, GET /requirements) -------------------------------
+
+
+def _notice_id_of(analysis_id: int) -> int:
+    with engine.connect() as conn:
+        return conn.execute(select(analysis.c.notice_id).where(analysis.c.id == analysis_id)).scalar_one()
+
+
+def test_structure_route_requires_auth():
+    response = TestClient(app).post("/api/notices/1/structure", json={"model": "haiku"})
+    assert response.status_code == 401
+
+
+def test_requirements_route_requires_auth():
+    response = TestClient(app).get("/api/notices/1/requirements")
+    assert response.status_code == 401
+
+
+def test_requirements_route_returns_none_without_analysis(client: TestClient):
+    assert client.get("/api/notices/999999999/requirements").json() is None
+
+
+def test_structure_route_404_without_prior_extraction(client: TestClient):
+    response = client.post("/api/notices/999999999/structure", json={"model": "haiku"})
+    assert response.status_code == 404
+
+
+def test_structure_route_happy_path_then_requirements_visible(done_analysis, monkeypatch, client: TestClient):
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    notice_id = _notice_id_of(done_analysis)
+    raw_items = [{"category": "성능", "req_text": "초당 30프레임 이상", "req_value": "30", "req_unit": "fps", "op": "gte", "cite": "제3장 (1)"}]
+
+    with mock.patch("app.services.analysis.structure.fetch", return_value=_mock_anthropic_response(raw_items)):
+        response = client.post(f"/api/notices/{notice_id}/structure", json={"model": "haiku"})
+    assert response.status_code == 200
+    assert response.json()["saved"] == 1
+
+    got = client.get(f"/api/notices/{notice_id}/requirements").json()
+    assert got["analysis_id"] == done_analysis
+    assert len(got["requirements"]) == 1
+    assert got["requirements"][0]["req_text"] == "초당 30프레임 이상"
+    # A2 단계는 판정을 안 하므로 judgement/matched_product_id는 응답에 아예 없어야 한다 —
+    # "unknown"이라도 화면에 보이면 마치 판정된 것처럼 오해를 줄 수 있음.
+    assert "judgement" not in got["requirements"][0]
+    assert "matched_product_id" not in got["requirements"][0]
+
+    # 같은 분석에 재실행하면 409(중복 실행 거부, 비용 재발생 방지)
+    conflict = client.post(f"/api/notices/{notice_id}/structure", json={"model": "haiku"})
+    assert conflict.status_code == 409
+
+
+def test_structure_route_501_without_api_key(done_analysis, monkeypatch, client: TestClient):
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    notice_id = _notice_id_of(done_analysis)
+    response = client.post(f"/api/notices/{notice_id}/structure", json={"model": "haiku"})
+    assert response.status_code == 501

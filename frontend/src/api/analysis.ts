@@ -29,3 +29,34 @@ export async function runExtraction(noticeId: number): Promise<ExtractionResult>
   const { data } = await apiClient.post<ExtractionResult>(`/notices/${noticeId}/extract`);
   return data;
 }
+
+// S8 A2(요구사양 구조화, LLM, 2026-09-05) — 판정(A3)은 아직 없다. judgement 필드가 없는 건
+// 의도된 것 — "unknown"이라도 보이면 마치 충족 여부가 정해진 것처럼 오해를 줄 수 있어 백엔드
+// 응답 자체에서 뺐다.
+export interface Requirement {
+  category: string;
+  req_text: string;
+  req_value: string | null;
+  req_unit: string | null;
+  op: "gte" | "lte" | "eq" | "contains" | "manual";
+  cite: string;
+}
+
+export interface RequirementsResult {
+  analysis_id: number;
+  status: string;
+  step: string | null;
+  requirements: Requirement[];
+}
+
+export type LlmModel = "haiku" | "sonnet" | "opus";
+
+export async function fetchRequirements(noticeId: number): Promise<RequirementsResult | null> {
+  const { data } = await apiClient.get<RequirementsResult | null>(`/notices/${noticeId}/requirements`);
+  return data;
+}
+
+export async function runStructuring(noticeId: number, model: LlmModel): Promise<{ saved: number; cost_usd: number }> {
+  const { data } = await apiClient.post(`/notices/${noticeId}/structure`, { model });
+  return data;
+}

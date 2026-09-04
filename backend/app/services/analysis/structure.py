@@ -26,6 +26,13 @@ from app.security.url_guard import fetch
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
+# 구현스펙 07절 "모델은 하드코딩 3종 중 관리자가 선택" — CLI·API가 공유하는 짧은 별칭.
+MODEL_ALIASES = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+}
+
 # 100만 토큰당 USD — Anthropic 공식 가격표 기준 근사치(2026-09 확인). 요금이 바뀌면
 # platform.claude.com 가격 페이지와 대조해 갱신할 것 — analysis.llm_cost는 정산용이 아니라
 # 예산 감시용 근사값이다.
@@ -232,4 +239,52 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cost_usd": round(cost, 4),
+    }
+
+
+def _latest_analysis_id(conn: Connection, notice_id: int) -> int | None:
+    return conn.execute(
+        select(analysis.c.id).where(analysis.c.notice_id == notice_id).order_by(analysis.c.ver.desc())
+    ).scalars().first()
+
+
+def run_structuring_for_notice(conn: Connection, notice_id: int, *, model: str = "claude-haiku-4-5-20251001") -> dict:
+    """공고 상세 화면(관리자가 버튼을 눌러 실행)에서 쓰는 진입점 — 그 공고의 가장 최근 분석
+    (A1이 이미 끝나 있어야 함)에 대해 A2를 실행한다."""
+    analysis_id = _latest_analysis_id(conn, notice_id)
+    if analysis_id is None:
+        raise ValueError("먼저 첨부문서 추출(A1)을 실행해야 합니다 — 진행된 분석이 없습니다.")
+    return run_structuring(conn, analysis_id, model=model)
+
+
+def get_requirements(conn: Connection, notice_id: int) -> dict | None:
+    """공고 상세 화면 조회용 — 가장 최근 분석의 요구사양 목록. judgement/matched_product_id는
+    A2 단계에선 의미 없는 값(항상 unknown/NULL)이라 화면에 혼동을 주지 않도록 응답에서 뺀다
+    (A3가 실제 판정을 붙이기 전까지)."""
+    row = conn.execute(
+        select(analysis.c.id, analysis.c.status, analysis.c.step)
+        .where(analysis.c.notice_id == notice_id)
+        .order_by(analysis.c.ver.desc())
+    ).first()
+    if row is None:
+        return None
+
+    reqs = conn.execute(
+        select(
+            analysis_requirement.c.category,
+            analysis_requirement.c.req_text,
+            analysis_requirement.c.req_value,
+            analysis_requirement.c.req_unit,
+            analysis_requirement.c.op,
+            analysis_requirement.c.cite,
+        )
+        .where(analysis_requirement.c.analysis_id == row.id)
+        .order_by(analysis_requirement.c.id)
+    ).mappings().all()
+
+    return {
+        "analysis_id": row.id,
+        "status": row.status,
+        "step": row.step,
+        "requirements": [dict(r) for r in reqs],
     }

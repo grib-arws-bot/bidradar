@@ -20,14 +20,22 @@ import {
   Divider,
   IconButton,
   Link,
+  MenuItem,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { fetchLatestExtraction, runExtraction } from "@/api/analysis";
+import { fetchLatestExtraction, fetchRequirements, type LlmModel, runExtraction, runStructuring } from "@/api/analysis";
 import { followOrg } from "@/api/classification";
 import { BID_STATUS_LABELS, EXTRA_FIELD_LABELS, fetchNeighbors, fetchNoticeDetail, formatExtraValue } from "@/api/notices";
 
@@ -66,6 +74,16 @@ export function NoticeDetailPage() {
   const extractMutation = useMutation({
     mutationFn: () => runExtraction(noticeId),
     onSuccess: (result) => queryClient.setQueryData(["notice-extraction", noticeId], result),
+  });
+
+  const requirementsQuery = useQuery({
+    queryKey: ["notice-requirements", noticeId],
+    queryFn: () => fetchRequirements(noticeId),
+  });
+
+  const structureMutation = useMutation({
+    mutationFn: (model: LlmModel) => runStructuring(noticeId, model),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notice-requirements", noticeId] }),
   });
 
   if (detailQuery.isLoading) {
@@ -239,6 +257,12 @@ export function NoticeDetailPage() {
       <Divider />
 
       <ExtractionCard noticeId={noticeId} noticeUrl={notice.url} extractionQuery={extractionQuery} extractMutation={extractMutation} />
+
+      <RequirementsCard
+        extractionStatus={extractionQuery.data?.status}
+        requirementsQuery={requirementsQuery}
+        structureMutation={structureMutation}
+      />
     </Stack>
   );
 }
@@ -346,6 +370,104 @@ function ExtractionCard({
             </Accordion>
           ))}
         </Stack>
+      )}
+    </Card>
+  );
+}
+
+const OP_LABEL: Record<string, string> = { gte: "이상", lte: "이하", eq: "일치", contains: "포함", manual: "서술형" };
+const MODEL_LABEL: Record<LlmModel, string> = { haiku: "Haiku (저렴)", sonnet: "Sonnet", opus: "Opus" };
+
+function RequirementsCard({
+  extractionStatus,
+  requirementsQuery,
+  structureMutation,
+}: {
+  extractionStatus?: string;
+  requirementsQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof fetchRequirements>>>>;
+  structureMutation: ReturnType<typeof useMutation<Awaited<ReturnType<typeof runStructuring>>, unknown, LlmModel>>;
+}) {
+  const [model, setModel] = useState<LlmModel>("haiku");
+  const canRun = extractionStatus === "done";
+  const requirements = requirementsQuery.data?.requirements ?? [];
+  const alreadyStructured = requirementsQuery.data?.step === "A2_structure";
+  const errorDetail = (structureMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+
+  return (
+    <Card sx={{ p: 3 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+        <Box>
+          <Typography variant="h3">요구사양 구조화 (LLM, 파일럿)</Typography>
+          <Typography variant="caption" color="text.secondary">
+            규격서에서 요구사양을 추출만 합니다 — 충족 여부 판정은 아직 하지 않습니다. LLM 호출 비용이 발생하므로 신중히 실행하세요.
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <TextField
+            size="small"
+            select
+            label="모델"
+            value={model}
+            onChange={(e) => setModel(e.target.value as LlmModel)}
+            sx={{ minWidth: 140 }}
+            disabled={alreadyStructured}
+          >
+            {(Object.entries(MODEL_LABEL) as [LlmModel, string][]).map(([value, label]) => (
+              <MenuItem key={value} value={value}>
+                {label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Tooltip title={canRun ? "" : "먼저 위 첨부문서 추출(A1)이 완료돼야 합니다"}>
+            <span>
+              <Button
+                variant="contained"
+                size="small"
+                disabled={!canRun || alreadyStructured || structureMutation.isPending}
+                onClick={() => structureMutation.mutate(model)}
+              >
+                {structureMutation.isPending ? "구조화 중..." : alreadyStructured ? "구조화 완료됨" : "구조화 실행"}
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+      </Stack>
+
+      {errorDetail && (
+        <Alert severity="error" sx={{ mb: 1.5 }}>
+          {errorDetail}
+        </Alert>
+      )}
+
+      {requirements.length > 0 && (
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>분류</TableCell>
+              <TableCell>요구사항</TableCell>
+              <TableCell>기준값</TableCell>
+              <TableCell>조문 위치</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {requirements.map((req, i) => (
+              <TableRow key={i}>
+                <TableCell>
+                  <Chip label={req.category} size="small" />
+                </TableCell>
+                <TableCell>{req.req_text}</TableCell>
+                <TableCell className="tnum">
+                  {req.req_value ? `${req.req_value}${req.req_unit ?? ""} ${OP_LABEL[req.op]}` : OP_LABEL[req.op]}
+                </TableCell>
+                <TableCell>
+                  <Typography variant="caption" color="text.secondary">
+                    {req.cite}
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </Card>
   );

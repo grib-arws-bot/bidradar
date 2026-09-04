@@ -100,20 +100,13 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
           f"already_closed={result['already_closed']} auto_extracted={result['auto_extracted']}")
 
 
-_MODEL_ALIASES = {
-    "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
-}
-
-
 def structure(analysis_id: int, model: str) -> None:
     """S8 A2(요구사양 구조화, LLM) 수동 1회 실행. 반드시 관리자가 analysis id를 지정해서
     부를 때만 동작한다(CLAUDE.md S8 원칙 3 "자동 실행 금지") — auto_extract처럼 수집 파이프라인에
     자동으로 연결하지 않는다."""
-    from app.services.analysis.structure import run_structuring
+    from app.services.analysis.structure import MODEL_ALIASES, run_structuring
 
-    resolved_model = _MODEL_ALIASES.get(model, model)
+    resolved_model = MODEL_ALIASES.get(model, model)
     with engine.begin() as conn:
         result = run_structuring(conn, analysis_id, model=resolved_model)
 

@@ -7,6 +7,13 @@ from pydantic import BaseModel
 
 from app.db import engine
 from app.deps import require_auth
+from app.services.analysis.structure import (
+    LLMNotConfiguredError,
+    MODEL_ALIASES,
+    StructuringInProgressError,
+    get_requirements,
+    run_structuring_for_notice,
+)
 from app.services.analysis_pilot import (
     AnalysisInProgressError,
     UnsupportedSourceError,
@@ -144,3 +151,29 @@ def post_extract(notice_id: int, _email: str = Depends(require_auth)) -> dict:
 def get_extract(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
     with engine.connect() as conn:
         return get_latest_extraction(conn, notice_id)
+
+
+class StructureRequest(BaseModel):
+    model: str = "haiku"  # 구현스펙 07절 — 관리자가 3종(haiku/sonnet/opus) 중 선택, 기본은 비용이 싼 haiku
+
+
+@router.post("/{notice_id}/structure")
+def post_structure(notice_id: int, payload: StructureRequest, _email: str = Depends(require_auth)) -> dict:
+    """S8 A2(요구사양 구조화, LLM) — 이미 성공한 A1 추출 결과를 대상으로 요구사양을 뽑아낸다.
+    LLM 호출 비용이 발생하므로 관리자가 명시적으로 눌렀을 때만 실행(자동 실행 금지, 원칙 3)."""
+    model = MODEL_ALIASES.get(payload.model, payload.model)
+    with engine.begin() as conn:
+        try:
+            return run_structuring_for_notice(conn, notice_id, model=model)
+        except StructuringInProgressError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except LLMNotConfiguredError as exc:
+            raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{notice_id}/requirements")
+def get_requirements_route(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
+    with engine.connect() as conn:
+        return get_requirements(conn, notice_id)
