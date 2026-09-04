@@ -11,6 +11,15 @@ import os
 from unittest import mock
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword@127.0.0.1:15432/bidradar")
+# app.config.settings는 프로세스당 한 번만 생성되는 싱글턴 — 이 파일이 pytest 수집 순서상
+# 가장 먼저 app.db를 임포트하면 아래 두 값을 안 정해준 채로 실제 .env 값이 굳어버려서
+# 이후 도는 다른 테스트 파일들의 로그인이 전부 401로 깨진다(2026-09-04 발견). 다른 테스트
+# 파일과 동일한 값으로 고정해서 어떤 순서로 수집되든 같은 결과가 나오게 한다.
+os.environ.setdefault("ADMIN_EMAIL", "report@grib.co.kr")
+os.environ.setdefault(
+    "ADMIN_PASSWORD_HASH",
+    "$argon2id$v=19$m=65536,t=3,p=4$9/7/Wg+VSkOsVCeiQiCz7w$bdDzJi9bKuERjBb6NHN0Ztk+X6uwxugL7kViHVRiqnY",
+)
 
 import pytest
 from sqlalchemy import delete, insert, select
