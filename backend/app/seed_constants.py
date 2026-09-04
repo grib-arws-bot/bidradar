@@ -148,10 +148,10 @@ ORG_SEED = [
     ("한국토지주택공사", "LH", "공기업(자체조달)", None, "https://ebid.lh.or.kr/"),
     ("한국철도공사", "KORAIL", "공기업(자체조달)", None, "https://ebid.korail.com/"),
     ("국가철도공단", "KR", "공기업(자체조달)", None, "https://ebid.kr.or.kr/"),
-    ("서울특별시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("부산광역시교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("강원도교육청", None, "교육청", "나라장터 입찰공고정보서비스", None),
-    ("정보통신산업진흥원", "NIPA", "R&D 지원기관", "나라장터 입찰공고정보서비스", None),
+    ("서울특별시교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
+    ("부산광역시교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
+    ("강원도교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
+    ("정보통신산업진흥원", "NIPA", "R&D 지원기관", "나라장터 입찰공고정보서비스(용역)", None),
     ("한국콘텐츠진흥원", "KOCCA", "R&D 지원기관", None, None),
     ("한국에너지기술평가원", "KETEP", "R&D 지원기관", None, "https://www.ketep.re.kr/"),
     ("인천국제공항공사", "IIAC", "공기업(자체조달)", None, None),
@@ -167,15 +167,48 @@ SOURCE_SEED = [
     # 2026-09-03 — homepage_url을 data.go.kr API 문서 페이지에서 나라장터 실사이트(g2b.go.kr)로
     # 정정. "데이터 소스" 화면의 공고기관 링크가 data.go.kr로 가면 안 된다는 지적(사용자) —
     # data.go.kr 근거 링크는 license_evidence_url(준법 확인용, 사용자 화면에 안 나옴)에만 남긴다.
-    ("나라장터 발주계획현황서비스", "조달청", "https://apis.data.go.kr/1230000/OrderPlanSttusService",
+    # 2026-09-04 — 물품/용역/공사 3종으로 확장(REAL_OPENAPI_CONFIG 쪽 주석 참고). license_note는
+    # 3종 동일(같은 API 데이터셋, 오퍼레이션만 다름).
+    ("나라장터 발주계획현황서비스(용역)", "조달청", "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListServc",
      "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129462/openapi.do"),
+    ("나라장터 발주계획현황서비스(물품)", "조달청", "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListThng",
+     "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129462/openapi.do"),
+    ("나라장터 발주계획현황서비스(공사)", "조달청", "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListCnstwk",
+     "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129462/openapi.do"),
+    # 사전규격정보서비스는 등록을 미룬다(2026-09-04) — API 응답에 이 서비스 고유의 상세페이지
+    # URL 필드가 없고(specDocFileUrl1~5는 "첨부파일이 있을 때만" 채워지는 첨부 링크일 뿐, 없는
+    # 항목도 많음, 실측 확인), g2b.go.kr이 WebSquare 완전 SPA라 정적 스크래핑으로 URL 패턴을
+    # 알아낼 수도 없었다(조사 완료 — bfSpecRgstNo 기반 딥링크 코드를 못 찾음). notice.url이
+    # NOT NULL이라 신뢰할 수 있는 값 없이는 등록할 수 없음 — K-water 사전규격공개·발주계획을
+    # 같은 이유로 미룬 전례(30번 항목)와 동일 판단. Playwright 도입(사용자 승인 완료, 별도
+    # 작업) 이후 실제 브라우저로 사전규격 상세 URL을 찾으면 재시도한다.
     ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService",
      "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129437/openapi.do"),
-    ("나라장터 입찰공고정보서비스", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+    ("나라장터 입찰공고정보서비스(용역)", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc",
+     "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129394/openapi.do"),
+    # 2026-09-04 — 물품·공사는 등록만 해두고 DB에서 active=False로 비활성화(사용자 결정).
+    # 용역 소스를 최근 7~30일치만 수집해봐도 "청년의 날 행사 섭외", "임직원 건강검진" 등
+    # BidRadar 도메인(CCTV·안전관리·스마트교육)과 무관한 전국 단위 공고가 5,000건 그대로
+    # 들어옴 — L1 필터(scorer.passes_l1)가 아직 "품명번호 사전 없음"으로 항상 True를 반환하는
+    # 스텁이라 저장 단계에서 걸러지는 게 전혀 없기 때문. 관련성 필터를 넣기 전까지 물품·공사는
+    # 활성화하지 않는다. ⚠️ SOURCE_SEED 튜플엔 active 필드가 없고 _seed_sources()가 항상
+    # active=True로 넣으므로, 이 비활성화는 지금 DB 행에만 수동 적용된 상태 — 나중에 처음부터
+    # 다시 seed하면(현재 이 세션 데이터를 지우고 재시딩하는 경우) 수동으로 다시 꺼야 한다.
+    ("나라장터 입찰공고정보서비스(물품)", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThng",
+     "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129394/openapi.do"),
+    ("나라장터 입찰공고정보서비스(공사)", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoCnstwk",
      "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129394/openapi.do"),
@@ -242,9 +275,13 @@ SOURCE_SEED = [
 # 아니라 여기 한 곳에서 관리하고 템플릿이 자동으로 가져다 쓰게 한다. "관리자 등록 예시 소스"는
 # 테스트용이라 뺀다(실제 리포트에 나올 일이 없음).
 ATTRIBUTION_TEXT = {
-    "나라장터 발주계획현황서비스": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
+    "나라장터 발주계획현황서비스(용역)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
+    "나라장터 발주계획현황서비스(물품)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
+    "나라장터 발주계획현황서비스(공사)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
     "나라장터 사전규격정보서비스": "출처: 조달청 나라장터 사전규격정보서비스(공공데이터포털)",
-    "나라장터 입찰공고정보서비스": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
+    "나라장터 입찰공고정보서비스(용역)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
+    "나라장터 입찰공고정보서비스(물품)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
+    "나라장터 입찰공고정보서비스(공사)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 낙찰정보서비스": "출처: 조달청 나라장터 낙찰정보서비스(공공데이터포털)",
     "K-water 입찰공고": "출처: 한국수자원공사 입찰공고(공공데이터포털)",
     "IRIS 접수예정": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
@@ -256,7 +293,19 @@ ATTRIBUTION_TEXT = {
 # 구조만 있으면 되는 자리표시자라 건드리지 않는다. DATA_GO_KR_SERVICE_KEY 환경변수가 실제로
 # 설정되면 이 소스로 바로 `python -m app.cli collect --source-id <id>` 라이브 검증이 가능하다.
 REAL_OPENAPI_CONFIG = {
-    "나라장터 입찰공고정보서비스": {
+    # 2026-09-04 — 물품·용역·공사 3종으로 확장(사용자 지시: "3개 서비스만으로 전체 기능").
+    # 3종 모두 필드명이 동일해 아래 field_maps를 그대로 재사용, 오퍼레이션 경로와 biz_type만
+    # 다르다(2026-09-04 라이브 3종 실측으로 필드 동일성 확인). 첨부문서(ntceSpecDocUrl1~10 +
+    # ntceSpecFileNm1~10, 최대 10개)는 API 응답에 다운로드 URL이 이미 직접 들어있어 IRIS처럼
+    # HTML에서 발견할 필요가 없다 — 단 이번 등록 범위는 목록·상세 필드까지만이고, 이 첨부파일들을
+    # S8 추출 파이프라인에 연결하는 건 별도 작업으로 남긴다(analysis_pilot.py는 아직 IRIS 전용).
+    #
+    # ⚠️ 날짜 포맷 버그 발견(2026-09-04) — 기존 "용역" 항목의 format_hint가 "%Y%m%d%H%M"였는데
+    # 실제 응답은 "2026-09-01 03:00:32"(대시·콜론 포함) 형식이라 매번 파싱 실패 → open_dt가
+    # 필수 필드(mapper.REQUIRED_FIELDS)라 모든 항목이 조용히 skipped 처리되고 있었다(실제 DB에
+    # 나라장터 공고 0건으로 확인). 서비스키 승인이 이번에 처음 나서 지금까지 한 번도 실행된 적이
+    # 없어 발견이 늦었다 — 3종 모두 올바른 포맷으로 수정.
+    "나라장터 입찰공고정보서비스(용역)": {
         "config": {
             # 2026-09-03 발견: 원안(advisory INBOX)엔 "/ad/" 세그먼트가 빠져 있었다 — 그 상태로
             # 호출하면 NO_OPENAPI_SERVICE_ERROR("서비스가 없거나 폐기됨")가 나서 한동안 이 API
@@ -268,20 +317,135 @@ REAL_OPENAPI_CONFIG = {
             "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",
-            # 업무구분(물품/용역/공사/외자)은 나라장터 응답 필드가 아니라 "어느 오퍼레이션을
-            # 불렀는지"로 정해진다(2026-09-02 확인) — 이 엔드포인트(getBidPblancListInfoServc)는
-            # 4종 중 "용역" 전용. 물품(getBidPblancListInfoThing)·공사(getBidPblancListInfoCnstwk)·
-            # 외자(getBidPblancListInfoFrgcpt)는 별도 소스로 등록해야 함(아직 미등록).
             "biz_type": "용역",
+            # 2026-09-04 실측 — inqryBgnDt~inqryEndDt 구간이 60일이면 "입력범위값 초과 에러"
+            # (resultCode 07), 30일은 정상. 페이지당 100건 고정이라 pagination 없이는 1페이지만
+            # 가져와 나머지를 놓친다(용역 30일치가 100건을 훌쩍 넘음, 실측으로 확인) — total_path
+            # 없이 빈 페이지에서 멈추는 방식(어댑터 기본 동작)으로 안전하게 전량 수집.
+            "max_lookback_days": 30,
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
         },
         "field_maps": [
             ("notice_no", "$.bidNtceNo", None),
             ("title", "$.bidNtceNm", None),
             ("org_name", "$.ntceInsttNm", None),
-            ("open_dt", "$.bidNtceDt", "%Y%m%d%H%M"),
-            ("close_dt", "$.bidClseDt", "%Y%m%d%H%M"),
+            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
             ("est_price", "$.presmptPrce", None),
             ("url", "$.bidNtceDtlUrl", None),
+            ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),  # 계약체결방법
+            ("extra:opengDt", "$.opengDt", None),  # 개찰일시
+        ],
+    },
+    "나라장터 입찰공고정보서비스(물품)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThng",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "물품",
+            "max_lookback_days": 30,
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
+        },
+        "field_maps": [
+            ("notice_no", "$.bidNtceNo", None),
+            ("title", "$.bidNtceNm", None),
+            ("org_name", "$.ntceInsttNm", None),
+            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
+            ("est_price", "$.presmptPrce", None),
+            ("url", "$.bidNtceDtlUrl", None),
+            ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),
+            ("extra:opengDt", "$.opengDt", None),
+            ("extra:dtilPrdctClsfcNoNm", "$.dtilPrdctClsfcNoNm", None),  # 세부품명(물품 전용)
+        ],
+    },
+    "나라장터 입찰공고정보서비스(공사)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoCnstwk",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "공사",
+            "max_lookback_days": 30,
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
+        },
+        "field_maps": [
+            ("notice_no", "$.bidNtceNo", None),
+            ("title", "$.bidNtceNm", None),
+            ("org_name", "$.ntceInsttNm", None),
+            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
+            ("est_price", "$.presmptPrce", None),
+            ("url", "$.bidNtceDtlUrl", None),
+            ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),
+            ("extra:opengDt", "$.opengDt", None),
+            ("extra:cnstrtsiteRgnNm", "$.cnstrtsiteRgnNm", None),  # 공사현장지역(공사 전용)
+        ],
+    },
+    # 2026-09-04 — 발주계획 3종 신규 등록. url=orderPlanDtlUrl(전 biz_type 공통, 실측 확인).
+    # 첨부파일: API 응답에 atchFileExistnceYn 플래그만 있고 실제 다운로드 URL 필드가 없다(실측
+    # 248건 전수 확인, "Y" 사례 0건) — 첨부파일을 보려면 orderPlanDtlUrl 상세페이지를 열어야
+    # 하는데 g2b.go.kr이 WebSquare SPA라 정적 스크래핑이 안 됨(조사 완료). 이 소스는 목록·상세
+    # 필드까지만 등록하고, 첨부파일 수집은 Playwright 도입(별도 결정) 이후로 미룬다.
+    "나라장터 발주계획현황서비스(용역)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListServc",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDate", "end": "inqryEndDate", "format": "%Y%m%d"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "용역",
+            # 2026-09-04 실측 — 60일 범위는 정상(입찰공고와 달리 범위 초과 에러 없음)이나 페이지당
+            # 100건 고정이라 pagination 없이는 1페이지만 가져온다(60일치 338건 확인, 100건만
+            # 저장되고 나머지 238건 누락되던 버그).
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
+        },
+        "field_maps": [
+            ("title", "$.bizNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.orderPlanDtlUrl", None),
+            ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
+            ("extra:prcrmntMethd", "$.prcrmntMethd", None),  # 조달방식
+            ("extra:sumOrderAmt", "$.sumOrderAmt", None),  # 발주예정금액
+        ],
+    },
+    "나라장터 발주계획현황서비스(물품)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListThng",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDate", "end": "inqryEndDate", "format": "%Y%m%d"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "물품",
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
+        },
+        "field_maps": [
+            ("title", "$.bizNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.orderPlanDtlUrl", None),
+            ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
+            ("extra:prcrmntMethd", "$.prcrmntMethd", None),
+            ("extra:sumOrderAmt", "$.sumOrderAmt", None),
+        ],
+    },
+    "나라장터 발주계획현황서비스(공사)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListCnstwk",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDate", "end": "inqryEndDate", "format": "%Y%m%d"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "공사",
+            "pagination": {"page_param": "pageNo", "max_pages": 50},
+        },
+        "field_maps": [
+            ("title", "$.bizNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.orderPlanDtlUrl", None),
+            ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
+            ("extra:prcrmntMethd", "$.prcrmntMethd", None),
+            ("extra:sumOrderAmt", "$.sumOrderAmt", None),
         ],
     },
     # advisory INBOX #2(2026-09-01) 필드명 추정을 2026-09-02 실제 서비스키로 라이브 검증·정정함
@@ -339,7 +503,16 @@ REAL_OPENAPI_CONFIG = {
     # 불필요, 공개 JSON 응답). advisory 원안은 "GET·html·서버렌더링"이었으나 검증 결과 정정 —
     # 실제로는 페이지 자체(GET)는 빈 템플릿만 오고, 진짜 데이터는 이 엔드포인트를 폼바디 POST로
     # 불러야 나온다(그래서 어댑터를 openapi로 재분류). 상세 URL은 응답에 없어 ancmId로 조립.
-    # 접수중·마감 탭(POST 바디의 ancmPrg 값이 다름 — ancmIng/ancmEnd)은 이번 범위 아님(INBOX #3).
+    #
+    # 2026-09-04 버그 수정(의사결정_로그) — 원래 의도(INBOX #3: "접수중·마감은 범위 아님")대로면
+    # ancmPrg="ancmPre"(접수예정 탭)를 보내야 하는데, params에 이 키 자체가 빠져 있어 서버가
+    # 히든필드 기본값(ancmIng=접수중)으로 응답해왔다 — "IRIS 접수예정"이라는 이름과 반대로
+    # 실제로는 접수중 공고만 수집해온 것을 라이브 재현으로 확인. 실제 사이트의 탭 전환
+    # onclick(f_bsnsAncmListForm_go)이 쓰는 값(ancmPre/ancmIng/ancmEnd)을 그대로 사용해 수정.
+    # ancmPre 전체는 554페이지(약 5,540건, 등록일 기준 내림차순 정렬 — 페이지 1은 2026-09-01,
+    # 페이지 2부터 2025-12-23으로 바로 떨어짐. IRIS 공모예고처럼 등록순서라 정렬이 어긋나는
+    # 문제는 없어 전 페이지 스캔이 필요 없다) 중 최근 2개월치만 있으면 되므로 max_pages를
+    # 낮게(15) 유지한다.
     "IRIS 접수예정": {
         "config": {
             "endpoint": "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
@@ -347,13 +520,14 @@ REAL_OPENAPI_CONFIG = {
             "params": {
                 "pageIndex": "1", "prgmId": "", "pbofrTpArr": "", "ancmSttArr": "",
                 "blngGovdSeArr": "", "sorgnIdArr": "", "qualCndtArr": "", "techFildArr": "",
+                "ancmPrg": "ancmPre",
             },
             "items_path": "$.listBsnsAncmBtinSitu[*]",
             # 2026-09-02 — IRIS는 날짜범위 파라미터를 안 받는다(공고일 기준 요청 필터 자체가
             # 없음, techFildArr 등은 분야 필터일 뿐). 대신 pageIndex로만 넘어가고 응답의
             # paginationInfo.totalPageCount로 전체 페이지 수를 알 수 있어, 전 페이지를 받은 뒤
             # runner._collection_window()가 계산한 begin(2개월 캡)으로 클라이언트측에서 자른다.
-            "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 20},
+            "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 15},
         },
         "field_maps": [
             ("notice_no", "$.ancmNo", None),

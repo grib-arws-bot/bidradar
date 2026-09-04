@@ -20,13 +20,24 @@ from app.collector.runner import run_source
 from app.db import engine
 from app.models import notice, notice_score, org, raw_payload, source, source_config, source_field_map, source_run
 
+# 2026-09-04 — 날짜를 고정 문자열이 아니라 "지금부터 며칠"로 계산한다. 예전엔 하드코딩된
+# 2026-09-01 등을 썼는데 시간이 지나 오늘 날짜가 그 값을 지나가버리면 out_of_window로 걸러져
+# 테스트가 깨졌다(2026-09-04 발견). 포맷도 실제 API 응답과 같은 "%Y-%m-%d %H:%M:%S"로 맞춘다 —
+# 예전 포맷("%Y%m%d%H%M")은 seed_constants.py의 실제 버그였던 값이라 지금은 seed에 없다.
+_NOW = datetime.now(timezone.utc)
+
+
+def _fmt(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 SAMPLE_ITEMS = [
     {
         "bidNtceNo": "R26TEST0001",
         "bidNtceNm": "지능형 CCTV 통합관제시스템 구축",
         "ntceInsttNm": "테스트발주기관",
-        "bidNtceDt": "202609010900",
-        "bidClseDt": "202609201800",
+        "bidNtceDt": _fmt(_NOW - timedelta(days=1)),
+        "bidClseDt": _fmt(_NOW + timedelta(days=19)),
         "presmptPrce": "512,000,000",
         "bidNtceDtlUrl": "https://www.g2b.go.kr/bid/R26TEST0001",
     },
@@ -34,17 +45,32 @@ SAMPLE_ITEMS = [
         "bidNtceNo": "R26TEST0002",
         "bidNtceNm": "청사 화장실 리모델링",
         "ntceInsttNm": "테스트발주기관",
-        "bidNtceDt": "202609020900",
-        "bidClseDt": "202609211800",
+        "bidNtceDt": _fmt(_NOW),
+        "bidClseDt": _fmt(_NOW + timedelta(days=20)),
         "presmptPrce": "80,000,000",
         "bidNtceDtlUrl": "https://www.g2b.go.kr/bid/R26TEST0002",
     },
 ]
 
 
+def _paginated_mock_fetch(items: list[dict]) -> mock.Mock:
+    # 2026-09-04 — 이 소스(나라장터 입찰공고정보서비스)의 실제 config에 pagination이 추가되면서
+    # (60일 초과 시 API 자체가 범위 초과 에러를 내고, 페이지당 100건 고정이라 여러 페이지를
+    # 넘겨야 전량이 나옴) 고정 mock.Mock(return_value=...)을 쓰면 매번 같은 2건을 계속 돌려줘
+    # 빈 페이지를 못 만나 max_pages(50)까지 다 돈다(100건 fetched로 테스트가 깨짐). pageNo=1일
+    # 때만 실제 항목을, 그 외(2페이지째)엔 빈 목록을 돌려줘 정상적으로 1페이지에서 멈추게 한다.
+    def _side_effect(*args, **kwargs):
+        page = kwargs.get("params", {}).get("pageNo", "1")
+        resp = mock.Mock()
+        resp.json.return_value = {"response": {"body": {"items": items if page == "1" else []}}}
+        return resp
+
+    return mock.Mock(side_effect=_side_effect)
+
+
 def _bid_service_source_id() -> int:
     with engine.connect() as conn:
-        row = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스")).first()
+        row = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스(용역)")).first()
     assert row, "U2 시드가 먼저 실행돼 있어야 함"
     return row[0]
 
@@ -71,9 +97,7 @@ def _clean_collector_side_effects():
 
 
 def test_run_source_end_to_end(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"response": {"body": {"items": SAMPLE_ITEMS}}}
-    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", _paginated_mock_fetch(SAMPLE_ITEMS))
 
     source_id = _bid_service_source_id()
     with engine.begin() as conn:
@@ -95,9 +119,7 @@ def test_run_source_end_to_end(monkeypatch):
 
 
 def test_run_source_is_idempotent_on_rerun(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"response": {"body": {"items": SAMPLE_ITEMS}}}
-    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", _paginated_mock_fetch(SAMPLE_ITEMS))
 
     source_id = _bid_service_source_id()
     with engine.begin() as conn:
@@ -110,9 +132,7 @@ def test_run_source_is_idempotent_on_rerun(monkeypatch):
 
 
 def test_run_source_second_call_narrows_window_to_last_success(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"response": {"body": {"items": SAMPLE_ITEMS}}}
-    mock_fetch = mock.Mock(return_value=mock_response)
+    mock_fetch = _paginated_mock_fetch(SAMPLE_ITEMS)
     monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
 
     source_id = _bid_service_source_id()

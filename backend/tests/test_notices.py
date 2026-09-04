@@ -109,7 +109,9 @@ def test_search_filters_by_title(client: TestClient):
     response = client.get("/api/notices", params={"tab": "all", "q": "CCTV", "size": 50})
     assert response.status_code == 200
     for item in response.json()["items"]:
-        assert "CCTV" in item["title"]
+        # 대소문자 구분 없이 매칭돼야 한다 — 나라장터 실공고 중 소문자 "cctv" 제목도 있음
+        # (2026-09-04 발견, 대문자만 가정했던 이전 검증이 실데이터로 깨짐).
+        assert "cctv" in item["title"].lower()
 
 
 def test_price_range_filter(client: TestClient):

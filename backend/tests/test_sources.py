@@ -92,9 +92,11 @@ def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
         "legal_tier", "legal_verified_at", "compliance_overdue",
     } <= row.keys()
 
-    # 조달청·IRIS(공고기관/채널이지 발주기관이 아님)는 이 목록에 나오면 안 된다
+    # IRIS(공고기관/채널이지 발주기관이 아님)는 이 목록에 나오면 안 된다. "조달청"은 한때
+    # 여기서도 안 나왔지만(채널명일 뿐이라) 나라장터 우수조달물품 제3자단가계약처럼 조달청
+    # 자신이 실제 발주기관인 실공고가 있어(2026-09-04 실데이터로 확인) 더 이상 배제 대상이
+    # 아니다 — org 테이블에 정당하게 들어올 수 있는 이름이다.
     names = [r["name"] for r in rows]
-    assert "조달청" not in names
     assert "IRIS" not in names
 
     # 한글 이름이 영어 이름보다 먼저 나와야 한다(2026-09-01 요청)

@@ -55,7 +55,7 @@ FIELD_MAPS = [
 
 def _bid_service_source_id() -> int:
     with engine.connect() as conn:
-        row = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스")).first()
+        row = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스(용역)")).first()
     assert row, "U2 시드가 먼저 실행돼 있어야 함"
     return row[0]
 
