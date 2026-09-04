@@ -1,10 +1,17 @@
 import ArrowBackIcon from "@mui/icons-material/ArrowBackIosNewOutlined";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForwardIosOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlineOutlined";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMoreOutlined";
 import NotificationsOutlinedIcon from "@mui/icons-material/NotificationsOutlined";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
 import OpenInNewIcon from "@mui/icons-material/OpenInNewOutlined";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
   Box,
   Button,
   Card,
@@ -20,8 +27,12 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
+import { fetchLatestExtraction, runExtraction } from "@/api/analysis";
 import { followOrg } from "@/api/classification";
 import { BID_STATUS_LABELS, EXTRA_FIELD_LABELS, fetchNeighbors, fetchNoticeDetail, formatExtraValue } from "@/api/notices";
+
+const DOC_KIND_LABEL: Record<string, string> = { pdf: "PDF", hwpx: "HWPX", hwp: "HWP", other: "기타" };
+const EXTRACT_STATUS_LABEL: Record<string, string> = { running: "진행 중", done: "완료", failed: "실패" };
 
 export function NoticeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,6 +56,16 @@ export function NoticeDetailPage() {
   const followMutation = useMutation({
     mutationFn: () => followOrg(noticeId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notice", noticeId] }),
+  });
+
+  const extractionQuery = useQuery({
+    queryKey: ["notice-extraction", noticeId],
+    queryFn: () => fetchLatestExtraction(noticeId),
+  });
+
+  const extractMutation = useMutation({
+    mutationFn: () => runExtraction(noticeId),
+    onSuccess: (result) => queryClient.setQueryData(["notice-extraction", noticeId], result),
   });
 
   if (detailQuery.isLoading) {
@@ -217,14 +238,116 @@ export function NoticeDetailPage() {
 
       <Divider />
 
-      <Tooltip title="심층 분석은 다음 작업 단위(U9)에서 제공됩니다">
-        <span>
-          <Button variant="contained" startIcon={<AutoAwesomeOutlinedIcon />} disabled>
-            심층 분석 실행
-          </Button>
-        </span>
-      </Tooltip>
+      <ExtractionCard noticeId={noticeId} noticeUrl={notice.url} extractionQuery={extractionQuery} extractMutation={extractMutation} />
     </Stack>
+  );
+}
+
+function ExtractionCard({
+  noticeUrl,
+  extractionQuery,
+  extractMutation,
+}: {
+  noticeId: number;
+  noticeUrl: string;
+  extractionQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof fetchLatestExtraction>>>>;
+  extractMutation: ReturnType<typeof useMutation<Awaited<ReturnType<typeof runExtraction>>, unknown, void>>;
+}) {
+  const isIris = noticeUrl.includes("iris.go.kr");
+  const result = extractMutation.data ?? extractionQuery.data;
+
+  const errorDetail = (extractMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+
+  return (
+    <Card sx={{ p: 3 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+        <Box>
+          <Typography variant="h3">심층 분석 (파일럿)</Typography>
+          <Typography variant="caption" color="text.secondary">
+            첨부문서를 다운로드해 텍스트만 추출합니다 — 충족 여부 판정은 아직 하지 않습니다. 지금은 IRIS 공고만 지원.
+          </Typography>
+        </Box>
+        <Tooltip title={isIris ? "" : "이 파일럿은 아직 IRIS 공고만 지원합니다"}>
+          <span>
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<AutoAwesomeOutlinedIcon />}
+              disabled={!isIris || extractMutation.isPending || result?.status === "running"}
+              onClick={() => extractMutation.mutate()}
+            >
+              {extractMutation.isPending ? "추출 중..." : result ? "다시 추출" : "첨부문서 추출 실행"}
+            </Button>
+          </span>
+        </Tooltip>
+      </Stack>
+
+      {errorDetail && (
+        <Alert severity="error" sx={{ mb: 1.5 }}>
+          {errorDetail}
+        </Alert>
+      )}
+
+      {result && (
+        <Stack spacing={1.5}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Chip
+              label={EXTRACT_STATUS_LABEL[result.status] ?? result.status}
+              size="small"
+              color={result.status === "done" ? "success" : result.status === "failed" ? "error" : "default"}
+            />
+            <Typography variant="body2" color="text.secondary">
+              {result.docs.length > 0 ? `첨부 ${result.docs.length}건` : "첨부문서 없음"}
+            </Typography>
+          </Stack>
+
+          {result.docs.map((doc, i) => (
+            <Accordion key={`${doc.name}-${i}`} disableGutters variant="outlined">
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, width: "100%" }}>
+                  {doc.extract_ok ? (
+                    <CheckCircleOutlineIcon fontSize="small" color="success" />
+                  ) : (
+                    <ErrorOutlineIcon fontSize="small" color="error" />
+                  )}
+                  <Chip label={DOC_KIND_LABEL[doc.kind] ?? doc.kind} size="small" />
+                  <Typography variant="body2" noWrap sx={{ flex: 1 }}>
+                    {doc.name}
+                  </Typography>
+                  {doc.extract_method && (
+                    <Typography variant="caption" color="text.secondary">
+                      {doc.extract_method}
+                    </Typography>
+                  )}
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails>
+                {doc.error && (
+                  <Alert severity={doc.extract_ok ? "warning" : "error"} sx={{ mb: 1 }}>
+                    {doc.error}
+                  </Alert>
+                )}
+                {doc.text && (
+                  <Box
+                    sx={{
+                      whiteSpace: "pre-wrap",
+                      maxHeight: 400,
+                      overflow: "auto",
+                      p: 1.5,
+                      bgcolor: "background.default",
+                      borderRadius: 1,
+                      fontSize: "0.8125rem",
+                    }}
+                  >
+                    {doc.text}
+                  </Box>
+                )}
+              </AccordionDetails>
+            </Accordion>
+          ))}
+        </Stack>
+      )}
+    </Card>
   );
 }
 
