@@ -17,18 +17,10 @@ from sqlalchemy import delete, select
 
 from app.db import engine
 from app.main import app
-from app.models import audit_log, auth_session, interest_topic, login_attempt
+from app.models import audit_log, interest_topic
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
-
-
-@pytest.fixture(autouse=True)
-def _clean_auth_tables():
-    with engine.begin() as conn:
-        conn.execute(delete(auth_session))
-        conn.execute(delete(login_attempt))
-    yield
 
 
 @pytest.fixture

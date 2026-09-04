@@ -13,22 +13,14 @@ os.environ.setdefault(
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from app.db import engine
 from app.main import app
-from app.models import auth_session, login_attempt, notice, raw_payload, source, source_run
+from app.models import notice, raw_payload, source, source_run
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
-
-
-@pytest.fixture(autouse=True)
-def _clean_auth_tables():
-    with engine.begin() as conn:
-        conn.execute(delete(auth_session))
-        conn.execute(delete(login_attempt))
-    yield
 
 
 @pytest.fixture

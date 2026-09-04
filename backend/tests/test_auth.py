@@ -16,26 +16,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.config import settings
 from app.db import engine
 from app.main import app
-from app.models import auth_session, login_attempt
+from app.models import auth_session
 
 CORRECT_PASSWORD = "dev-local-test-pw-123"
 EMAIL = "report@grib.co.kr"
-
-
-@pytest.fixture(autouse=True)
-def _clean_auth_tables():
-    with engine.begin() as conn:
-        conn.execute(delete(auth_session))
-        conn.execute(delete(login_attempt))
-    yield
-    with engine.begin() as conn:
-        conn.execute(delete(auth_session))
-        conn.execute(delete(login_attempt))
 
 
 @pytest.fixture
