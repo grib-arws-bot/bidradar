@@ -181,14 +181,20 @@ SOURCE_SEED = [
      "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129462/openapi.do"),
-    # 사전규격정보서비스는 등록을 미룬다(2026-09-04) — API 응답에 이 서비스 고유의 상세페이지
-    # URL 필드가 없고(specDocFileUrl1~5는 "첨부파일이 있을 때만" 채워지는 첨부 링크일 뿐, 없는
-    # 항목도 많음, 실측 확인), g2b.go.kr이 WebSquare 완전 SPA라 정적 스크래핑으로 URL 패턴을
-    # 알아낼 수도 없었다(조사 완료 — bfSpecRgstNo 기반 딥링크 코드를 못 찾음). notice.url이
-    # NOT NULL이라 신뢰할 수 있는 값 없이는 등록할 수 없음 — K-water 사전규격공개·발주계획을
-    # 같은 이유로 미룬 전례(30번 항목)와 동일 판단. Playwright 도입(사용자 승인 완료, 별도
-    # 작업) 이후 실제 브라우저로 사전규격 상세 URL을 찾으면 재시도한다.
-    ("나라장터 사전규격정보서비스", "조달청", "https://apis.data.go.kr/1230000/ao/PubDataOpnStdService",
+    # 2026-09-05 — 등록 보류를 해제(사용자 지시). g2b.go.kr 상세페이지 URL은 여전히 못 찾았으나
+    # (Playwright 이후 과제) notice.url엔 이 서비스가 실제로 제공하는 첨부파일 다운로드 URL
+    # (specDocFileUrl1, 로그인 없이 접근 확인됨)을 대신 쓴다 — 표본 100건 중 92%가 이 필드를
+    # 갖고 있음(실측). 첨부가 아예 없는 나머지 8%는 url이 빈 문자열이 돼 mapper의 필수필드
+    # 검사(REQUIRED_FIELDS)에 걸려 자동으로 건너뛰어진다(별도 예외처리 불필요).
+    ("나라장터 사전규격정보서비스(용역)", "조달청", "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoServc",
+     "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129437/openapi.do"),
+    ("나라장터 사전규격정보서비스(물품)", "조달청", "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoThng",
+     "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
+     "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
+     "https://www.data.go.kr/data/15129437/openapi.do"),
+    ("나라장터 사전규격정보서비스(공사)", "조달청", "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoCnstwk",
      "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129437/openapi.do"),
@@ -196,14 +202,10 @@ SOURCE_SEED = [
      "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129394/openapi.do"),
-    # 2026-09-04 — 물품·공사는 등록만 해두고 DB에서 active=False로 비활성화(사용자 결정).
-    # 용역 소스를 최근 7~30일치만 수집해봐도 "청년의 날 행사 섭외", "임직원 건강검진" 등
-    # BidRadar 도메인(CCTV·안전관리·스마트교육)과 무관한 전국 단위 공고가 5,000건 그대로
-    # 들어옴 — L1 필터(scorer.passes_l1)가 아직 "품명번호 사전 없음"으로 항상 True를 반환하는
-    # 스텁이라 저장 단계에서 걸러지는 게 전혀 없기 때문. 관련성 필터를 넣기 전까지 물품·공사는
-    # 활성화하지 않는다. ⚠️ SOURCE_SEED 튜플엔 active 필드가 없고 _seed_sources()가 항상
-    # active=True로 넣으므로, 이 비활성화는 지금 DB 행에만 수동 적용된 상태 — 나중에 처음부터
-    # 다시 seed하면(현재 이 세션 데이터를 지우고 재시딩하는 경우) 수동으로 다시 꺼야 한다.
+    # 2026-09-04 물품·공사를 active=False로 비활성화(L1 필터 부재로 무관한 전국 공고 혼입,
+    # 37번 항목) → **2026-09-05 활성화로 변경됨(사용자 지시)**. L1 관련성 필터 자체는 아직
+    # 스텁이라 여전히 무관한 공고가 섞여 들어오지만, 이미 마감된 공고를 걸러내는 장치(37번
+    # 항목, runner.py already_closed)가 생겨 최소한 "82% 마감건 혼입" 문제는 재발하지 않는다.
     ("나라장터 입찰공고정보서비스(물품)", "조달청", "https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoThng",
      "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
@@ -212,6 +214,9 @@ SOURCE_SEED = [
      "https://www.g2b.go.kr/", "입찰공고", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129394/openapi.do"),
+    # 2026-09-05 — 지금 단계에선 필요 없음(사용자 지시). Phase 2(분석 기능, 낙찰가·경쟁률 등
+    # 시장 분석에 씀)까지 등록만 해두고 REAL_OPENAPI_CONFIG는 만들지 않는다 — 자리표시자
+    # config라 실제로 collect를 돌려도 의미 있는 데이터가 안 나온다(안전).
     ("나라장터 낙찰정보서비스", "조달청", "https://apis.data.go.kr/1230000/ScsbidInfoService",
      "https://www.g2b.go.kr/", "낙찰", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
@@ -244,6 +249,17 @@ SOURCE_SEED = [
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(2026-09-01 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
      "https://www.iris.go.kr/robots.txt"),
+    # 2026-09-05 — "접수중"(ancmPrg=ancmIng) 탭도 별도 소스로 등록(사용자 지시). 접수예정과
+    # 동일 엔드포인트·필드매핑, ancmPrg 값과 stage만 다르다. 이미 공식으로 접수를 받고 있는
+    # 단계라 stage="입찰공고"(나라장터의 "이미 열려서 접수 중" 의미와 동일선상). 같은 ancmId로
+    # 이미 "IRIS 접수예정"에 저장된 공고를 다시 만나면 notice.url이 같아 새 행을 만들지 않고
+    # 기존 행을 그대로 재사용한다(runner.py 기존 dedup 로직) — stage는 최초 수집 시점 값 그대로
+    # 남지만 실시간 상태는 bid_status(open_dt/close_dt 기반 계산값, 33번 항목)가 대신한다.
+    ("IRIS 접수중", "IRIS",
+     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
+     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "입찰공고", "openapi", False, True, 1440,
+     "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(IRIS 접수예정과 동일 사이트·동일 근거)",
+     "https://www.iris.go.kr/robots.txt"),
     # 2026-09-02(의사결정_로그 24번) — IRIS 사업정보 메뉴 4개 화면 전수조사 중 발견. "접수예정"
     # (위 소스)보다도 이른 단계 — 접수예정/접수중/마감 탭과는 별개의 화면(retrieveAncmPrntc*)이라
     # 별도 소스로 등록. 목록 응답 자체에 사업내용·목적·지원분야 요약(35~230자, 원문 아님)과
@@ -265,26 +281,26 @@ SOURCE_SEED = [
      "https://www.msit.go.kr/bbs/list.do?sCode=user&mId=311&mPid=121", "사업공고", "openapi", False, True, 1440,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15074634/openapi.do"),
-    ("관리자 등록 예시 소스", "테스트기관", "https://example.grib-test.kr/notices",
-     None, "입찰공고", "feed", False, True, 60,
-     "A", "테스트용 자리표시자 — 실제 외부 소스 아님, 등급 판단 대상 아님", None),
 ]
+# "관리자 등록 예시 소스"(테스트용 자리표시자) 2026-09-05 삭제(사용자 지시) — 실 소스만 남긴다.
 
 # 출처표시 문구(advisory INBOX #7) — 소스명 → 뉴스레터/공유리포트 하단에 자동으로 붙일 문구.
 # 공공데이터포털 정책상 제0유형 외 전 유형 출처표시 의무 — 사람이 매번 기억해서 붙이는 게
-# 아니라 여기 한 곳에서 관리하고 템플릿이 자동으로 가져다 쓰게 한다. "관리자 등록 예시 소스"는
-# 테스트용이라 뺀다(실제 리포트에 나올 일이 없음).
+# 아니라 여기 한 곳에서 관리하고 템플릿이 자동으로 가져다 쓰게 한다.
 ATTRIBUTION_TEXT = {
     "나라장터 발주계획현황서비스(용역)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
     "나라장터 발주계획현황서비스(물품)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
     "나라장터 발주계획현황서비스(공사)": "출처: 조달청 나라장터 발주계획현황서비스(공공데이터포털)",
-    "나라장터 사전규격정보서비스": "출처: 조달청 나라장터 사전규격정보서비스(공공데이터포털)",
+    "나라장터 사전규격정보서비스(용역)": "출처: 조달청 나라장터 사전규격정보서비스(공공데이터포털)",
+    "나라장터 사전규격정보서비스(물품)": "출처: 조달청 나라장터 사전규격정보서비스(공공데이터포털)",
+    "나라장터 사전규격정보서비스(공사)": "출처: 조달청 나라장터 사전규격정보서비스(공공데이터포털)",
     "나라장터 입찰공고정보서비스(용역)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 입찰공고정보서비스(물품)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 입찰공고정보서비스(공사)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 낙찰정보서비스": "출처: 조달청 나라장터 낙찰정보서비스(공공데이터포털)",
     "K-water 입찰공고": "출처: 한국수자원공사 입찰공고(공공데이터포털)",
     "IRIS 접수예정": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
+    "IRIS 접수중": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "IRIS 공모예고": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": "출처: 과학기술정보통신부 사업공고(공공데이터포털)",
 }
@@ -448,6 +464,73 @@ REAL_OPENAPI_CONFIG = {
             ("extra:sumOrderAmt", "$.sumOrderAmt", None),
         ],
     },
+    # 2026-09-05 — 사전규격 3종 등록(보류 해제, 사용자 지시). url은 이 서비스가 주는 상세페이지
+    # URL이 없어 첨부파일 다운로드 URL(specDocFileUrl1, 로그인 없이 접근 가능함을 확인함)로
+    # 대신한다 — 표본 100건 중 92%가 이 필드를 가짐(실측). 나머지 8%(첨부 자체가 없는 공고)는
+    # url이 빈 문자열이 돼 mapper.REQUIRED_FIELDS에 걸려 자동으로 skipped 처리된다.
+    # date_range_params 60일 요청도 에러 없이 정상 응답함을 확인(입찰공고정보서비스와 달리 이
+    # 서비스엔 30일 상한이 없음) — 단 물량이 매우 많아(30일 기준 용역 4,763건·물품 4,968건·
+    # 공사 246건) 초기 백필은 --max-lookback-days를 짧게 잡아서 돈다(운영 가이드, 코드 아님).
+    "나라장터 사전규격정보서비스(용역)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoServc",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "용역",
+            "pagination": {"page_param": "pageNo", "max_pages": 60},
+        },
+        "field_maps": [
+            ("notice_no", "$.bfSpecRgstNo", None),
+            ("title", "$.prdctClsfcNoNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.specDocFileUrl1", None),
+            ("extra:refNo", "$.refNo", None),  # 내부관리번호
+            ("extra:swBizObjYn", "$.swBizObjYn", None),  # SW사업대상여부
+        ],
+    },
+    "나라장터 사전규격정보서비스(물품)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoThng",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "물품",
+            "pagination": {"page_param": "pageNo", "max_pages": 60},
+        },
+        "field_maps": [
+            ("notice_no", "$.bfSpecRgstNo", None),
+            ("title", "$.prdctClsfcNoNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.specDocFileUrl1", None),
+            ("extra:refNo", "$.refNo", None),
+            ("extra:swBizObjYn", "$.swBizObjYn", None),
+        ],
+    },
+    "나라장터 사전규격정보서비스(공사)": {
+        "config": {
+            "endpoint": "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoCnstwk",
+            "params": {"inqryDiv": "1", "type": "json", "numOfRows": "100", "pageNo": "1"},
+            "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
+            "items_path": "$.response.body.items[*]",
+            "biz_type": "공사",
+            "pagination": {"page_param": "pageNo", "max_pages": 60},
+        },
+        "field_maps": [
+            ("notice_no", "$.bfSpecRgstNo", None),
+            ("title", "$.prdctClsfcNoNm", None),
+            ("org_name", "$.orderInsttNm", None),
+            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
+            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
+            ("url", "$.specDocFileUrl1", None),
+            ("extra:refNo", "$.refNo", None),
+            ("extra:swBizObjYn", "$.swBizObjYn", None),
+        ],
+    },
     # advisory INBOX #2(2026-09-01) 필드명 추정을 2026-09-02 실제 서비스키로 라이브 검증·정정함
     # (`advisory/공공데이타/공공데이터_인증_key_260902_*.xlsx`의 실키 사용) — ⚠️ **`type=json`을
     # 보내도 실제로는 XML만 응답**(어댑터에 XML 지원 추가, format:"xml"). items_path는
@@ -540,6 +623,40 @@ REAL_OPENAPI_CONFIG = {
             # 등)를 notice.extra에 담아 화면 카드에 보여준다(전부 목록 응답에 이미 있던 값 —
             # 사업담당자·연락처 같은 개인정보는 상세페이지에만 있고 목록 응답엔 없음을 직접
             # 확인함, 그래도 mapper.validate_field_maps가 재차 걸러줌).
+            ("extra:dDay", "$.dDay", None),
+            ("extra:rcveStt", "$.rcveStt", None),
+            ("extra:rcveSttSeNmLst", "$.rcveSttSeNmLst", None),
+            ("extra:rcveStrDe", "$.rcveStrDe", None),
+            ("extra:sorgnId", "$.sorgnId", None),
+            ("extra:blngGovdSe", "$.blngGovdSe", None),
+            ("extra:blngGovdSeNm", "$.blngGovdSeNm", None),
+            ("extra:budJuriGovdSe", "$.budJuriGovdSe", None),
+            ("extra:pbofrTpSeLst", "$.pbofrTpSeLst", None),
+            ("extra:pbofrTpSeNmLst", "$.pbofrTpSeNmLst", None),
+        ],
+    },
+    # 2026-09-05 — "접수중"(ancmPrg=ancmIng) 탭. 필드매핑은 접수예정과 완전히 동일(같은
+    # 엔드포인트·같은 응답 스키마), ancmPrg 값만 다르다. 실측(2026-09-04) 기준 이 탭은
+    # totalPageCount가 2뿐이라(약 15~20건) max_pages를 낮게 유지해도 전량 커버된다.
+    "IRIS 접수중": {
+        "config": {
+            "endpoint": "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
+            "method": "POST",
+            "params": {
+                "pageIndex": "1", "prgmId": "", "pbofrTpArr": "", "ancmSttArr": "",
+                "blngGovdSeArr": "", "sorgnIdArr": "", "qualCndtArr": "", "techFildArr": "",
+                "ancmPrg": "ancmIng",
+            },
+            "items_path": "$.listBsnsAncmBtinSitu[*]",
+            "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 10},
+        },
+        "field_maps": [
+            ("notice_no", "$.ancmNo", None),
+            ("title", "$.ancmTl", None),
+            ("org_name", "$.sorgnNm", None),
+            ("open_dt", "$.ancmDe", "%Y-%m-%d"),
+            ("close_dt", "$.rcveEndDe", "%Y.%m.%d"),
+            ("url", "urlfmt:https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId={ancmId}", None),
             ("extra:dDay", "$.dDay", None),
             ("extra:rcveStt", "$.rcveStt", None),
             ("extra:rcveSttSeNmLst", "$.rcveSttSeNmLst", None),
