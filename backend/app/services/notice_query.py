@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import Select, and_, exists, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import analysis, customer, notice, notice_score, org, requirement
+from app.models import analysis, customer, notice, notice_score, org, requirement, source
 
 SORT_OPTIONS = ("priority", "close_asc", "open_desc", "price_desc", "price_asc")
 
@@ -154,11 +154,13 @@ def _base_select(priority_sq) -> Select:
             notice.c.assignee_name,
             notice.c.extra,
             org.c.name.label("org_name"),
+            source.c.channel_name,
             priority_sq.c.priority,
             summary_sq.c.summary.label("analysis_summary"),
         )
         .select_from(notice)
         .join(org, org.c.id == notice.c.org_id, isouter=True)
+        .join(source, source.c.id == notice.c.source_id, isouter=True)
         .join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
         .join(summary_sq, summary_sq.c.notice_id == notice.c.id, isouter=True)
     )
@@ -298,7 +300,7 @@ def ordered_ids(conn: Connection, filters: NoticeFilters) -> list[int]:
 def filter_options(conn: Connection) -> dict:
     """S1 필터 바 드롭다운용 참조 목록. 정식 /api/orgs, /api/admin/sources(U12/U15)와는 별개 —
     지금은 필터 UI 하나만 위한 가벼운 조회."""
-    from app.models import interest_topic, source
+    from app.models import interest_topic
 
     topics = conn.execute(
         select(interest_topic.c.id, interest_topic.c.name)
@@ -306,7 +308,14 @@ def filter_options(conn: Connection) -> dict:
         .order_by(interest_topic.c.sort_order)
     ).mappings().all()
     orgs = conn.execute(select(org.c.id, org.c.name).order_by(org.c.name)).mappings().all()
-    sources = conn.execute(select(source.c.id, source.c.name).order_by(source.c.name)).mappings().all()
+    # "데이터 소스" 필터(2026-09-05)는 개별 source 행이 아니라 공고기관(channel_name) 단위로
+    # 묶어서 보여준다 — 나라장터 하나만 봐도 사전규격·발주계획·입찰공고 3종×물품/용역/공사로
+    # 9개 행이 나와 관리자가 아닌 일반 사용자에게는 지나치게 세분화돼 있었다.
+    source_rows = conn.execute(select(source.c.id, source.c.channel_name).order_by(source.c.channel_name)).all()
+    channel_ids: dict[str, list[int]] = {}
+    for source_id, channel_name in source_rows:
+        channel_ids.setdefault(channel_name, []).append(source_id)
+    channels = [{"name": name, "source_ids": ids} for name, ids in sorted(channel_ids.items())]
     stages = [row[0] for row in conn.execute(select(notice.c.stage).distinct())]
     regions = [row[0] for row in conn.execute(select(notice.c.region).distinct().where(notice.c.region.is_not(None)))]
     biz_types = [row[0] for row in conn.execute(select(notice.c.biz_type).distinct().where(notice.c.biz_type.is_not(None)))]
@@ -315,7 +324,7 @@ def filter_options(conn: Connection) -> dict:
     return {
         "topics": [dict(row) for row in topics],
         "orgs": [dict(row) for row in orgs],
-        "sources": [dict(row) for row in sources],
+        "channels": channels,
         "stages": stages,
         "regions": regions,
         "biz_types": biz_types,

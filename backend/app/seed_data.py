@@ -53,6 +53,7 @@ from app.seed_constants import (
     SOURCE_SEED,
     STAGES,
 )
+from app.services.source_registry import derive_channel_name
 
 _RNG = random.Random(42)  # 재현 가능한 시드
 
@@ -140,7 +141,8 @@ def _seed_sources(conn) -> tuple[list[int], list[int]]:
     ) in SOURCE_SEED:
         row = conn.execute(
             insert(source).values(
-                name=name, org_name=org_name, base_url=url, homepage_url=homepage_url,
+                name=name, org_name=org_name, channel_name=derive_channel_name(name, org_name),
+                base_url=url, homepage_url=homepage_url,
                 stage=stage, adapter_type=adapter,
                 frequency_minutes=frequency_minutes, is_system=is_system, skip_l1=skip_l1, active=True,
                 legal_tier=legal_tier, license_note=license_note, license_evidence_url=license_evidence_url,

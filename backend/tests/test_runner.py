@@ -185,7 +185,8 @@ def _make_temp_source(
     src_id = conn.execute(
         insert(source)
         .values(
-            name=f"테스트 소스({legal_tier}등급)", org_name="테스트기관", base_url="https://example.grib-test.kr/api",
+            name=f"테스트 소스({legal_tier}등급)", org_name="테스트기관", channel_name="테스트기관",
+            base_url="https://example.grib-test.kr/api",
             stage="입찰공고", adapter_type="openapi", frequency_minutes=frequency_minutes,
             is_system=False, skip_l1=True, active=True, legal_tier=legal_tier, auto_extract=auto_extract,
         )

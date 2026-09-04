@@ -52,7 +52,7 @@ def test_notices_list_shape(client: TestClient):
     assert body["total"] >= len(body["items"])
     if body["items"]:
         item = body["items"][0]
-        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt", "analysis_summary"} <= item.keys()
+        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt", "analysis_summary", "channel_name"} <= item.keys()
 
 
 def test_notices_list_includes_latest_analysis_summary(client: TestClient):
@@ -192,9 +192,17 @@ def test_filter_options_shape(client: TestClient):
     response = client.get("/api/notices/filter-options")
     assert response.status_code == 200
     body = response.json()
-    assert set(body.keys()) == {"topics", "orgs", "sources", "stages", "regions", "biz_types", "work_types"}
+    assert set(body.keys()) == {"topics", "orgs", "channels", "stages", "regions", "biz_types", "work_types"}
     assert len(body["topics"]) > 0
     assert len(body["orgs"]) > 0
+    # "데이터 소스"는 개별 source 행이 아니라 공고기관(나라장터/IRIS 등) 단위로 묶여야 한다
+    # (2026-09-05) — 나라장터 소스 6~9개가 각각 따로 나오면 안 됨.
+    assert len(body["channels"]) > 0
+    channel = body["channels"][0]
+    assert {"name", "source_ids"} <= channel.keys()
+    assert isinstance(channel["source_ids"], list) and len(channel["source_ids"]) >= 1
+    names = [c["name"] for c in body["channels"]]
+    assert len(names) == len(set(names))  # 채널명 중복 없음(묶였다는 증거)
 
 
 # ---- U5: 분류 검수 액션 + S1-d 상세 -------------------------------------------------

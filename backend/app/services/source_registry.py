@@ -17,6 +17,19 @@ ADAPTER_LABELS = {"openapi": "오픈API", "feed": "피드", "html": "HTML 크롤
 # 마지막 준법 확인일로부터 이만큼 지나면 S5 화면에 경고 배지(advisory INBOX #6, 분기 재확인 주기)
 COMPLIANCE_WARNING_DAYS = 90
 
+# 소스명 접두어 → 공고기관(채널) 표시명(2026-09-05, 공고 탐색 필터 재구성). 새 채널을 추가할
+# 소스를 등록할 때는 이 목록도 같이 갱신해야 한다 — 안 그러면 org_name으로 조용히 대체된다
+# (아래 derive_channel_name 참고, "조용한 오분류" 방지를 위해 매칭 실패도 org_name이라는
+# 눈에 보이는 값으로 떨어지게 함).
+CHANNEL_NAME_PREFIXES = ("나라장터", "IRIS", "K-water", "과학기술정보통신부")
+
+
+def derive_channel_name(source_name: str, org_name: str | None) -> str:
+    for prefix in CHANNEL_NAME_PREFIXES:
+        if source_name.startswith(prefix):
+            return prefix
+    return org_name or source_name
+
 
 def list_sources(conn: Connection) -> list[dict]:
     """기관명 → 소스명 순으로 정렬된 전체 소스 목록. 각 소스의 최근 수집 상태·시각을 붙인다."""

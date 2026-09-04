@@ -84,6 +84,8 @@ export interface NoticeItem {
   // 명명 컬럼에 없는 소스 고유 필드만 여기 들어간다. 다른 소스는 null.
   extra: Record<string, string | number | null> | null;
   org_name: string | null;
+  // 공고기관(채널) 표시명(2026-09-05) — 나라장터/IRIS 등. org_name(발주기관)과는 다른 축.
+  channel_name: string | null;
   priority: number | null;
   analysis_summary: NoticeAnalysisSummary | null;
 }
@@ -99,7 +101,9 @@ export interface NoticeListResponse {
 export interface FilterOptions {
   topics: { id: number; name: string }[];
   orgs: { id: number; name: string }[];
-  sources: { id: number; name: string }[];
+  // "데이터 소스" 필터(2026-09-05) — 개별 source 행이 아니라 공고기관(나라장터/IRIS 등) 단위로
+  // 묶여 있다. 채널 하나를 선택하면 그 채널에 속한 source_ids 전체가 필터에 반영된다.
+  channels: { name: string; source_ids: number[] }[];
   stages: string[];
   regions: string[];
   biz_types: string[];

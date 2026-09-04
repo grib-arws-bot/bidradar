@@ -45,6 +45,16 @@ interface Props {
   onChange: (values: NoticeFilterValues) => void;
 }
 
+// "데이터 소스" 필터는 채널(공고기관) 단위로 선택하지만 실제 값은 개별 source_id 배열로
+// 보관한다(백엔드가 이미 그 형태를 받음) — 그 채널의 source_ids가 전부 선택돼 있으면 그
+// 채널이 "선택됨"으로 보인다.
+function selectedChannels(
+  channels: FilterOptions["channels"],
+  sourceIds: number[],
+): FilterOptions["channels"] {
+  return channels.filter((c) => c.source_ids.every((id) => sourceIds.includes(id)));
+}
+
 // 필터 9종(구현스펙 04절): domain·org·source·price(min+max 합쳐 1종)·region·stage·close_in·status·qualified
 export function NoticeFilterBar({ options, values, onChange }: Props) {
   const set = <K extends keyof NoticeFilterValues>(key: K, value: NoticeFilterValues[K]) =>
@@ -79,12 +89,12 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
           multiple
           size="small"
           sx={{ minWidth: 200 }}
-          options={options?.sources ?? []}
-          getOptionLabel={(o) => o.name}
-          value={(options?.sources ?? []).filter((s) => values.source.includes(s.id))}
-          onChange={(_, selected) => set("source", selected.map((s) => s.id))}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          renderInput={(params) => <TextField {...params} label="소스" />}
+          options={options?.channels ?? []}
+          getOptionLabel={(c) => c.name}
+          value={selectedChannels(options?.channels ?? [], values.source)}
+          onChange={(_, selected) => set("source", selected.flatMap((c) => c.source_ids))}
+          isOptionEqualToValue={(a, b) => a.name === b.name}
+          renderInput={(params) => <TextField {...params} label="데이터 소스" />}
         />
         <Autocomplete
           multiple
@@ -203,12 +213,11 @@ function AppliedChips({ options, values, onChange }: Props) {
       onDelete: () => onChange({ ...values, org: values.org.filter((v) => v !== id) }),
     });
   });
-  values.source.forEach((id) => {
-    const name = options?.sources.find((s) => s.id === id)?.name ?? String(id);
+  selectedChannels(options?.channels ?? [], values.source).forEach((c) => {
     chips.push({
-      key: `source-${id}`,
-      label: `소스: ${name}`,
-      onDelete: () => onChange({ ...values, source: values.source.filter((v) => v !== id) }),
+      key: `channel-${c.name}`,
+      label: `데이터 소스: ${c.name}`,
+      onDelete: () => onChange({ ...values, source: values.source.filter((id) => !c.source_ids.includes(id)) }),
     });
   });
   values.region.forEach((r) =>

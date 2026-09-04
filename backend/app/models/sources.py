@@ -25,6 +25,12 @@ source = Table(
     Column("id", Integer, primary_key=True),
     Column("name", String(200), nullable=False),
     Column("org_name", String(200)),  # 이 소스를 운영하는 기관
+    # 사용자에게 보이는 포털/채널 브랜드명(2026-09-05, 공고 탐색 필터 재구성) — org_name과 다른
+    # 개념이다. 예: 나라장터 계열 소스 6개는 org_name이 전부 "조달청"(실제 운영기관)이지만
+    # channel_name은 "나라장터"(공고를 보는 사람이 인지하는 채널). IRIS처럼 둘이 같은 값인
+    # 경우도 있다. `app/services/source_registry.py`의 `derive_channel_name()`으로 시드 시점에
+    # 채워진다 — 이름 접두어 기반이라 새 채널이 추가되면 그 함수를 갱신해야 함.
+    Column("channel_name", String(100), nullable=False),
     Column("base_url", Text, nullable=False),
     # base_url은 실제 호출 엔드포인트라 사람이 보기엔 불친절함(예: API 베이스 URL) — 관리자 페이지
     # "소스 관리" 표에서 기관/서비스를 확인하러 갈 수 있는 사람용 링크(data.go.kr 데이터셋 페이지 등)

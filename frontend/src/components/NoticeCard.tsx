@@ -89,7 +89,13 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
       >
         <Box sx={{ minWidth: 0 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }} flexWrap="wrap" useFlexGap>
-            <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
+            {/* 공고기관(채널)과 단계를 한 칩에 — "나라장터 · 입찰공고"처럼(2026-09-05 요청) */}
+            <Chip
+              label={notice.channel_name ? `${notice.channel_name} · ${notice.stage}` : notice.stage}
+              size="small"
+              color="secondary"
+              variant="outlined"
+            />
             {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
             {!isGrid && notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
             {!isGrid && notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
@@ -162,13 +168,11 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{
-                mt: 0.25,
-                display: "-webkit-box",
-                WebkitLineClamp: isGrid ? 2 : 3,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
+              sx={
+                isGrid
+                  ? { mt: 0.25, whiteSpace: "pre-wrap" } // 세로형은 과제내용을 전체 표시(2026-09-05 요청)
+                  : { mt: 0.25, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
+              }
             >
               과제내용 — {summary.content_narrative}
             </Typography>
