@@ -17,6 +17,7 @@ from app.collector.pii import mask_pii
 from app.collector.scorer import L2_PROMOTE_THRESHOLD, passes_l1, score_l2
 from app.collector.work_type import guess_work_type
 from app.models import notice, notice_score, org, raw_payload, source, source_config, source_credential, source_field_map, source_run
+from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
 
 # 공고가 2개월(60일) 넘게 열려있는 경우를 본 적이 없다는 판단(2026-09-01 결정) — 수집 이력이
 # 없거나 공백이 이보다 크면 그 이상 과거까지는 훑지 않는다. source_config.config에
@@ -147,7 +148,7 @@ def run_source(
         )
     )
 
-    inserted = skipped = scored = out_of_window = already_closed = 0
+    inserted = skipped = scored = out_of_window = already_closed = auto_extracted = 0
     l1_ok = passes_l1(conn, source_id)
     now = datetime.now(timezone.utc)
 
@@ -200,6 +201,22 @@ def run_source(
             notice_id = result.id
             inserted += 1
 
+            # 2026-09-05 — S8 파일럿(첨부문서 다운로드+텍스트 추출) 자동 실행. 관리자가 이
+            # 소스에서 명시적으로 켜둔 경우에만 동작한다(source.auto_extract) — CLAUDE.md S8
+            # 원칙 3("자동 실행 금지")과 충돌하지 않는 이유는 시스템이 알아서 트는 게 아니라
+            # 관리자가 미리 정해둔 설정이기 때문. IRIS만 기본으로 켜져 있고(물량이 적음),
+            # 나라장터처럼 물량이 많은 소스는 기본 꺼짐 — 실수로 켜져도 지원 안 하는 URL은
+            # UnsupportedSourceError로 조용히 건너뛴다. 실패해도 수집 자체는 계속돼야 하므로
+            # 예외를 여기서 삼킨다(개별 공고 분석 실패가 전체 수집을 막으면 안 됨).
+            if src["auto_extract"]:
+                try:
+                    run_extraction_pilot(conn, notice_id)
+                    auto_extracted += 1
+                except (AnalysisInProgressError, UnsupportedSourceError):
+                    pass
+                except Exception:  # noqa: BLE001 — 조용히 삼키지만 개별 공고 건이라 수집 자체엔 지장 없음
+                    pass
+
         if not l1_ok:
             continue
 
@@ -226,4 +243,5 @@ def run_source(
         "scored": scored,
         "out_of_window": out_of_window,
         "already_closed": already_closed,
+        "auto_extracted": auto_extracted,
     }

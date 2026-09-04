@@ -52,6 +52,12 @@ source = Table(
     # 출처표시 문구(advisory INBOX #7) — 공공데이터포털 정책상 제0유형 외 전 유형 의무.
     # 뉴스레터/공유리포트/향후 S8 내보내기 템플릿이 이 값을 자동으로 붙인다(사람이 안 잊게).
     Column("attribution_text", Text),
+    # 2026-09-05 — S8 파일럿(첨부문서 다운로드+텍스트 추출)을 이 소스의 새 공고가 수집될 때마다
+    # 자동으로 실행할지. CLAUDE.md S8 원칙("자동 실행 금지 — 사용자가 지정할 때만 실행")과
+    # 충돌하지 않는다 — 시스템이 알아서 켜는 게 아니라 관리자가 여기서 미리 정해두는 설정이기
+    # 때문. 기본 False — 나라장터처럼 물량이 많은 소스는 관리자가 명시적으로 켜기 전엔 절대
+    # 자동 실행 안 됨(app/collector/runner.py run_source).
+    Column("auto_extract", Boolean, nullable=False, server_default="false"),
 )
 
 source_config = Table(

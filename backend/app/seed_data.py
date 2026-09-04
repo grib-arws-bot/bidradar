@@ -43,6 +43,7 @@ from app.models import (
 )
 from app.seed_constants import (
     ATTRIBUTION_TEXT,
+    AUTO_EXTRACT_SOURCES,
     INTEREST_TOPICS,
     KEYWORD_SEED,
     NOTICE_TITLE_TEMPLATES,
@@ -147,6 +148,7 @@ def _seed_sources(conn) -> tuple[list[int], list[int]]:
                 # robots.txt를 다시 읽어 이 값을 갱신한다(app/collector/compliance.py).
                 legal_verified_at=_now(),
                 attribution_text=ATTRIBUTION_TEXT.get(name),
+                auto_extract=name in AUTO_EXTRACT_SOURCES,
             ).returning(source.c.id)
         ).one()
         source_ids.append(row.id)

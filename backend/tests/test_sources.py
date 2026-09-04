@@ -13,9 +13,11 @@ os.environ.setdefault(
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.db import engine
 from app.main import app
+from app.models import audit_log, source
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -42,9 +44,10 @@ def test_sources_list_shape_and_sorted_by_org(client: TestClient):
     row = rows[0]
     assert {
         "id", "name", "org_name", "homepage_url", "adapter_type", "adapter_label", "stage", "status", "last_run_at",
-        "legal_tier", "legal_verified_at", "compliance_overdue",
+        "legal_tier", "legal_verified_at", "compliance_overdue", "auto_extract",
     } <= row.keys()
     assert row["legal_tier"] in {"A", "B", "C"}
+    assert isinstance(row["auto_extract"], bool)
 
     # 기관별로 묶여 있어야 한다 — DB 콜레이션이 파이썬 sorted()와 한글 정렬 기준이 다를 수 있어
     # 정확한 알파벳 순서 대신 "같은 기관명이 떨어져서 두 번 나타나지 않는지"만 확인한다
@@ -112,3 +115,53 @@ def test_agencies_filter_by_status_no_source(client: TestClient):
     filtered = client.get("/api/admin/sources/agencies", params={"status": "no_source"}).json()
     assert any(r["abbr"] == "KOCCA" for r in filtered)
     assert all(r["status"] == "no_source" for r in filtered)
+
+
+# ---- 첨부문서 자동 분석 토글(2026-09-04, S8 A1 auto_extract) -----------------------
+
+
+@pytest.fixture
+def _restore_auto_extract():
+    """토글 대상 소스의 auto_extract 원래 값을 기억해뒀다가 테스트 후 되돌린다 —
+    공유 개발 DB라 실제 IRIS 설정(auto_extract=true)을 테스트가 영구히 바꾸면 안 된다."""
+    with engine.connect() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        original = conn.execute(select(source.c.auto_extract).where(source.c.id == source_id)).scalar_one()
+    yield source_id, original
+    with engine.begin() as conn:
+        conn.execute(source.update().where(source.c.id == source_id).values(auto_extract=original))
+        conn.execute(
+            audit_log.delete().where(audit_log.c.target_type == "source", audit_log.c.target_id == str(source_id))
+        )
+
+
+def test_auto_extract_requires_auth():
+    response = TestClient(app).patch("/api/admin/sources/1/auto-extract", json={"auto_extract": True})
+    assert response.status_code == 401
+
+
+def test_auto_extract_update_success_and_audit_logged(client: TestClient, _restore_auto_extract):
+    source_id, original = _restore_auto_extract
+    toggled = not original
+
+    response = client.patch(f"/api/admin/sources/{source_id}/auto-extract", json={"auto_extract": toggled})
+    assert response.status_code == 200
+    assert response.json() == {"id": source_id, "auto_extract": toggled}
+
+    rows = client.get("/api/admin/sources").json()
+    row = next(r for r in rows if r["id"] == source_id)
+    assert row["auto_extract"] == toggled
+
+    with engine.connect() as conn:
+        detail = conn.execute(
+            select(audit_log.c.detail)
+            .where(audit_log.c.target_type == "source", audit_log.c.target_id == str(source_id))
+            .order_by(audit_log.c.id.desc())
+            .limit(1)
+        ).scalar_one()
+    assert detail == {"auto_extract": toggled}
+
+
+def test_auto_extract_unknown_source_404(client: TestClient):
+    response = client.patch("/api/admin/sources/999999/auto-extract", json={"auto_extract": True})
+    assert response.status_code == 404

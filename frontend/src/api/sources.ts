@@ -13,11 +13,16 @@ export interface SourceRow {
   legal_tier: "A" | "B" | "C";
   legal_verified_at: string | null;
   compliance_overdue: boolean;
+  auto_extract: boolean;
 }
 
 export async function fetchSources(): Promise<SourceRow[]> {
   const { data } = await apiClient.get<SourceRow[]>("/admin/sources");
   return data;
+}
+
+export async function updateAutoExtract(sourceId: number, enabled: boolean): Promise<void> {
+  await apiClient.patch(`/admin/sources/${sourceId}/auto-extract`, { auto_extract: enabled });
 }
 
 export type AgencyStatus = "ok" | "warn" | "fail" | "inactive" | "no_run_yet" | "no_source";

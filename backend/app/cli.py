@@ -97,7 +97,7 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
 
     print(f"수집 완료: fetched={result['fetched']} inserted={result['inserted']} "
           f"skipped={result['skipped']} scored={result['scored']} out_of_window={result['out_of_window']} "
-          f"already_closed={result['already_closed']}")
+          f"already_closed={result['already_closed']} auto_extracted={result['auto_extracted']}")
 
 
 def check_compliance(source_id: int | None) -> None:

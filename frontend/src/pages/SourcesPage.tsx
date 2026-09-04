@@ -6,18 +6,20 @@ import {
   Link,
   MenuItem,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { fetchAgencies, type AgencyStatus } from "@/api/sources";
+import { fetchAgencies, fetchSources, updateAutoExtract, type AgencyStatus } from "@/api/sources";
 
 const STATUS_LABEL: Record<AgencyStatus, { label: string; color: "success" | "warning" | "error" | "default" }> = {
   ok: { label: "정상", color: "success" },
@@ -36,6 +38,7 @@ export function SourcesPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<AgencyStatus | "">("");
   const [category, setCategory] = useState("");
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-agencies", q, status, category],
@@ -45,6 +48,16 @@ export function SourcesPage() {
         status: (status as AgencyStatus) || undefined,
         category: category || undefined,
       }),
+  });
+
+  const { data: sources, isLoading: sourcesLoading } = useQuery({
+    queryKey: ["admin-sources"],
+    queryFn: fetchSources,
+  });
+
+  const autoExtractMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateAutoExtract(id, enabled),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-sources"] }),
   });
 
   const categories = useMemo(() => {
@@ -62,6 +75,47 @@ export function SourcesPage() {
         조달청·IRIS 같은 이름은 발주기관이 아니라 공고기관(수집 채널)이라 "공고기관" 열에만
         나타납니다.
       </Typography>
+
+      <Typography variant="h3" sx={{ mb: 0.5, fontSize: 18 }}>
+        수집 채널 — 첨부문서 자동 분석
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        켜두면 이 채널에서 새 공고를 수집할 때마다 첨부문서를 자동으로 내려받아 텍스트를
+        추출합니다(S8 A1, 충족 판정 아님). 나라장터처럼 건수가 많은 채널은 꺼둔 채로
+        공고 상세페이지에서 수동으로 실행하는 것을 권장합니다.
+      </Typography>
+      <Card sx={{ overflowX: "auto", mb: 3 }}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>채널명</TableCell>
+              <TableCell>공고 단계</TableCell>
+              <TableCell>수집 방식</TableCell>
+              <TableCell align="right">첨부문서 자동 분석</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {!sourcesLoading &&
+              sources?.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>{row.name}</TableCell>
+                  <TableCell>{row.stage}</TableCell>
+                  <TableCell>{row.adapter_label}</TableCell>
+                  <TableCell align="right">
+                    <Tooltip title={row.auto_extract ? "자동 분석 켜짐" : "자동 분석 꺼짐"}>
+                      <Switch
+                        size="small"
+                        checked={row.auto_extract}
+                        disabled={autoExtractMutation.isPending}
+                        onChange={(e) => autoExtractMutation.mutate({ id: row.id, enabled: e.target.checked })}
+                      />
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+          </TableBody>
+        </Table>
+      </Card>
 
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mb: 2 }}>
         <TextField

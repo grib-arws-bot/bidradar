@@ -36,6 +36,7 @@ def list_sources(conn: Connection) -> list[dict]:
             source.c.active,
             source.c.legal_tier,
             source.c.legal_verified_at,
+            source.c.auto_extract,
             source_run.c.status,
             source_run.c.run_at,
         )
@@ -67,6 +68,13 @@ def list_sources(conn: Connection) -> list[dict]:
                 "legal_tier": row["legal_tier"],
                 "legal_verified_at": verified_at.isoformat() if verified_at else None,
                 "compliance_overdue": compliance_overdue,
+                "auto_extract": row["auto_extract"],
             }
         )
     return result
+
+
+def set_auto_extract(conn: Connection, source_id: int, enabled: bool) -> bool:
+    """소스가 존재해 실제로 값이 바뀌었으면 True, 없는 source_id면 False."""
+    result = conn.execute(source.update().where(source.c.id == source_id).values(auto_extract=enabled))
+    return result.rowcount > 0

@@ -18,7 +18,9 @@ from sqlalchemy import delete, insert, select
 
 from app.collector.runner import run_source
 from app.db import engine
-from app.models import notice, notice_score, org, raw_payload, source, source_config, source_field_map, source_run
+from app.models import (
+    analysis, notice, notice_score, org, raw_payload, source, source_config, source_field_map, source_run,
+)
 
 # 2026-09-04 — 날짜를 고정 문자열이 아니라 "지금부터 며칠"로 계산한다. 예전엔 하드코딩된
 # 2026-09-01 등을 썼는데 시간이 지나 오늘 날짜가 그 값을 지나가버리면 out_of_window로 걸러져
@@ -103,7 +105,7 @@ def test_run_source_end_to_end(monkeypatch):
     with engine.begin() as conn:
         result = run_source(conn, source_id)
 
-    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 0}
+    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 0, "auto_extracted": 0}
 
     with engine.connect() as conn:
         cctv_notice = conn.execute(select(notice.c.id, notice.c.title).where(notice.c.notice_no == "R26TEST0001")).first()
@@ -155,7 +157,8 @@ _TITLE_ONLY_FIELD_MAP = [("title", "$.title", None)]
 
 
 def _make_temp_source(
-    conn, *, legal_tier: str, frequency_minutes: int = 1440, field_maps: list[tuple] = _TITLE_ONLY_FIELD_MAP
+    conn, *, legal_tier: str, frequency_minutes: int = 1440, field_maps: list[tuple] = _TITLE_ONLY_FIELD_MAP,
+    auto_extract: bool = False,
 ) -> int:
     """C/B등급 강제를 검증하려고 만드는 테스트 전용 소스 — 시드 데이터(IRIS 등)를 건드리지
     않고 격리해서 확인한다."""
@@ -164,7 +167,7 @@ def _make_temp_source(
         .values(
             name=f"테스트 소스({legal_tier}등급)", org_name="테스트기관", base_url="https://example.grib-test.kr/api",
             stage="입찰공고", adapter_type="openapi", frequency_minutes=frequency_minutes,
-            is_system=False, skip_l1=True, active=True, legal_tier=legal_tier,
+            is_system=False, skip_l1=True, active=True, legal_tier=legal_tier, auto_extract=auto_extract,
         )
         .returning(source.c.id)
     ).scalar_one()
@@ -257,7 +260,7 @@ def test_run_source_filters_items_older_than_collection_window(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
 
-    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1, "already_closed": 0}
+    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1, "already_closed": 0, "auto_extracted": 0}
 
 
 # ---- 이미 마감된 공고는 수집 단계에서 제외(2026-09-04, 나라장터 82% 마감건 혼입 발견) -------
@@ -314,7 +317,7 @@ def test_run_source_skips_items_already_past_close_date(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
 
-    assert result == {"fetched": 3, "inserted": 2, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 1}
+    assert result == {"fetched": 3, "inserted": 2, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 1, "auto_extracted": 0}
     assert titles == {"아직 진행중인 공고", "마감일 없는 공고"}
 
 
@@ -333,3 +336,74 @@ def test_run_source_records_failure_and_reraises(monkeypatch):
             select(source_run.c.status).where(source_run.c.source_id == source_id).order_by(source_run.c.id.desc())
         ).first()
     assert run_row == ("fail",)
+
+
+# ---- 소스별 첨부문서 자동 분석 토글(2026-09-04, IRIS는 ON·나라장터는 OFF) -------------------
+
+
+_AUTO_EXTRACT_FIELD_MAP = [("title", "$.title", None), ("org_name", "$.org", None), ("url", "$.url", None)]
+
+
+def _auto_extract_item(url: str) -> dict:
+    return {"title": "자동분석 대상 공고", "org": "테스트발주기관_자동분석", "url": url}
+
+
+def test_run_source_auto_extract_on_triggers_pilot_for_new_notice(monkeypatch):
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"items": [_auto_extract_item("https://www.iris.go.kr/test/TESTAUTOEXTRACT1")]}
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+    # analysis_pilot 쪽 fetch(상세페이지 HTML)는 별도 호출부라 따로 목 처리해야 실제 iris.go.kr에 안 나간다.
+    html_response = mock.Mock()
+    html_response.text = "<html>첨부파일 없음</html>"
+    monkeypatch.setattr("app.services.analysis_pilot.fetch", mock.Mock(return_value=html_response))
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="A", field_maps=_AUTO_EXTRACT_FIELD_MAP, auto_extract=True)
+    try:
+        with engine.begin() as conn:
+            result = run_source(conn, source_id, max_lookback_days=60)
+
+        with engine.connect() as conn:
+            analysis_row = conn.execute(
+                select(analysis.c.status).join(notice, notice.c.id == analysis.c.notice_id)
+                .where(notice.c.source_id == source_id)
+            ).first()
+    finally:
+        with engine.begin() as conn:
+            notice_ids = [row[0] for row in conn.execute(select(notice.c.id).where(notice.c.source_id == source_id))]
+            if notice_ids:
+                conn.execute(delete(analysis).where(analysis.c.notice_id.in_(notice_ids)))
+            conn.execute(delete(notice).where(notice.c.source_id == source_id))
+            conn.execute(delete(org).where(org.c.name == "테스트발주기관_자동분석"))
+            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
+            conn.execute(delete(source).where(source.c.id == source_id))
+
+    assert result["inserted"] == 1
+    assert result["auto_extracted"] == 1
+    assert analysis_row == ("done",)
+
+
+def test_run_source_auto_extract_off_does_not_trigger_pilot(monkeypatch):
+    mock_response = mock.Mock()
+    mock_response.json.return_value = {"items": [_auto_extract_item("https://www.iris.go.kr/test/TESTAUTOEXTRACT2")]}
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+    pilot_fetch = mock.Mock()
+    monkeypatch.setattr("app.services.analysis_pilot.fetch", pilot_fetch)
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, legal_tier="A", field_maps=_AUTO_EXTRACT_FIELD_MAP, auto_extract=False)
+    try:
+        with engine.begin() as conn:
+            result = run_source(conn, source_id, max_lookback_days=60)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.source_id == source_id))
+            conn.execute(delete(org).where(org.c.name == "테스트발주기관_자동분석"))
+            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
+            conn.execute(delete(source).where(source.c.id == source_id))
+
+    assert result["inserted"] == 1
+    assert result["auto_extracted"] == 0
+    pilot_fetch.assert_not_called()

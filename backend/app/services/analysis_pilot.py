@@ -133,11 +133,20 @@ def run_extraction_pilot(conn: Connection, notice_id: int) -> dict:
         ).returning(analysis.c.id)
     ).scalar_one()
 
-    if "iris.go.kr" in notice_url:
-        html = fetch(notice_url).text
-        attachments = _discover_iris_attachments(html)
-    else:
-        attachments = _discover_g2b_attachments(conn, row.source_id, row.notice_no)
+    try:
+        if "iris.go.kr" in notice_url:
+            html = fetch(notice_url).text
+            attachments = _discover_iris_attachments(html)
+        else:
+            attachments = _discover_g2b_attachments(conn, row.source_id, row.notice_no)
+    except Exception as exc:  # noqa: BLE001 — 여기서 안 잡으면 analysis가 "running"에 영원히
+        # 멈춘다(2026-09-05, 자동 실행 도입으로 사람이 재시도 안 하는 경우가 생겨 더 중요해짐).
+        conn.execute(
+            analysis.update()
+            .where(analysis.c.id == analysis_id)
+            .values(status="failed", step="A1_extract", finished_at=datetime.now(timezone.utc), verdict=str(exc))
+        )
+        return {"analysis_id": analysis_id, "status": "failed", "attachments_found": 0, "docs": [], "error": str(exc)}
 
     docs_result = []
     any_ok = False

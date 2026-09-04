@@ -157,6 +157,12 @@ ORG_SEED = [
     ("인천국제공항공사", "IIAC", "공기업(자체조달)", None, None),
 ]
 
+# S8 파일럿 자동 실행(2026-09-05, 사용자 지시) — "IRIS는 수집과 동시에 첨부문서까지 자동
+# 분석, 나라장터는 물량이 많으니 사용자가 선택할 때만"이라는 요청을 소스별 관리자 설정
+# (source.auto_extract)으로 구현한다. 여기 있는 이름만 시드 시점에 True로 켠다 — 나머지는
+# 전부 기본값 False(관리자가 "데이터 소스" 화면에서 언제든 개별로 켤 수 있음).
+AUTO_EXTRACT_SOURCES = frozenset({"IRIS 접수예정", "IRIS 접수중", "IRIS 공모예고"})
+
 # 법적 등급(legal_tier)은 advisory INBOX #5(2026-09-01)에서 도입 — A(자유)/B(조건부)/C(금지).
 # C등급 후보(NTIS·S2B·KIAT·SEMAS·NRF·KETEP·IPET·IITP)는 아직 실제로 등록된 소스가 없어(활성화
 # 자체가 금지 대상이라 등록할 이유가 없음) SOURCE_SEED엔 A/B만 나온다 — app/collector/runner.py
