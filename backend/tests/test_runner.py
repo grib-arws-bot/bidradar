@@ -150,6 +150,26 @@ def test_run_source_second_call_narrows_window_to_last_success(monkeypatch):
     assert second_begin > first_begin
 
 
+def test_run_source_explicit_window_bypasses_auto_narrowing(monkeypatch):
+    """window= 를 주면 직전 성공 이력과 무관하게 그 구간을 그대로 써야 한다(2026-09-05,
+    나라장터 입찰공고 30일 백필을 하루씩 쪼갤 때 쓰는 경로)."""
+    mock_fetch = _paginated_mock_fetch(SAMPLE_ITEMS)
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    source_id = _bid_service_source_id()
+    with engine.begin() as conn:
+        run_source(conn, source_id)  # 성공 이력을 하나 만들어 둔다 — 자동 좁히기가 있다면 걸릴 상황
+
+    explicit_begin = datetime.now(timezone.utc) - timedelta(days=20)
+    explicit_end = datetime.now(timezone.utc) - timedelta(days=19)
+    with engine.begin() as conn:
+        run_source(conn, source_id, window=(explicit_begin, explicit_end))
+
+    sent_params = mock_fetch.call_args.kwargs["params"]
+    assert sent_params["inqryBgnDt"] == explicit_begin.strftime("%Y%m%d%H%M")
+    assert sent_params["inqryEndDt"] == explicit_end.strftime("%Y%m%d%H%M")
+
+
 # ---- 법적 등급 강제(advisory INBOX #5, 2026-09-01) ------------------------------------
 
 

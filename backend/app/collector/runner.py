@@ -76,11 +76,21 @@ def run_source(
     *,
     max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS,
     force: bool = False,
+    window: tuple[datetime, datetime] | None = None,
 ) -> dict:
     """소스 하나를 1회 수집한다. 반환값은 결과 요약(로그·테스트 검증용).
 
     force=True는 관리자가 수동으로 즉시 재수집할 때만 쓴다 — B등급 최소 수집 간격을 우회한다
     (advisory INBOX #5). 등급 C 차단은 force로도 못 뚫는다 — 활성화 자체가 금지된 소스라서.
+
+    window=(begin, end)는 _collection_window()의 자동 좁히기(직전 성공 시각 기준)를 완전히
+    건너뛰고 호출부가 지정한 구간만 그대로 쓴다 — 최초 백필을 하루 단위로 쪼갤 때만 쓰는
+    용도다(2026-09-05, 나라장터 입찰공고 30일 일괄 백필이 25페이지 안팎에서 반복적으로
+    data.go.kr 타임아웃에 걸려 매번 전량 롤백되는 문제. 한 번에 너무 많은 페이지를 순차
+    요청하면서 타임아웃 확률이 누적된 것으로 추정 — 하루씩 나누면 실패해도 그 하루치만 다시
+    시도하면 됨). `_last_ok_run_at()`의 run_at은 "실제로 이 명령을 실행한 시각"이라 하루치
+    구간을 흉내 낸 값이 아니므로, 자동 좁히기에 맡기면 다음 청크의 begin이 그 하루의 끝이
+    아니라 방금 실행한 실제 시각으로 어긋난다 — 그래서 자동 좁히기를 아예 우회한다.
     """
     src = conn.execute(select(source).where(source.c.id == source_id)).mappings().first()
     if src is None:
@@ -128,8 +138,11 @@ def run_source(
         )
     ).scalar_one_or_none()
 
-    effective_max_lookback = cfg["config"].get("max_lookback_days", max_lookback_days)
-    begin, end = _collection_window(conn, source_id, max_lookback_days=effective_max_lookback)
+    if window is not None:
+        begin, end = window
+    else:
+        effective_max_lookback = cfg["config"].get("max_lookback_days", max_lookback_days)
+        begin, end = _collection_window(conn, source_id, max_lookback_days=effective_max_lookback)
 
     try:
         raw_items = fetch_openapi_items(cfg["config"], service_key, begin=begin, end=end)
