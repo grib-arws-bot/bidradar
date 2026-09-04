@@ -76,8 +76,11 @@ def test_agencies_requires_auth():
 def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
     response = client.get("/api/admin/sources/agencies")
     assert response.status_code == 200
-    rows = response.json()
+    body = response.json()
+    assert {"items", "total", "page", "size"} <= body.keys()
+    rows = body["items"]
     assert len(rows) > 0
+    assert body["total"] >= len(rows)
 
     row = rows[0]
     assert {
@@ -100,21 +103,37 @@ def test_agencies_list_shape_and_hangul_first_sort(client: TestClient):
 
 
 def test_agencies_search_by_abbr(client: TestClient):
-    rows = client.get("/api/admin/sources/agencies", params={"q": "NIPA"}).json()
+    rows = client.get("/api/admin/sources/agencies", params={"q": "NIPA"}).json()["items"]
     assert len(rows) == 1
     assert rows[0]["name"] == "정보통신산업진흥원"
 
 
 def test_agencies_filter_by_status_no_source(client: TestClient):
     # KOCCA는 아직 소속 소스가 없는 시드 데이터(2026-09-01 seed) — "no_source" 상태여야 함
-    rows = client.get("/api/admin/sources/agencies", params={"q": "KOCCA"}).json()
+    rows = client.get("/api/admin/sources/agencies", params={"q": "KOCCA"}).json()["items"]
     assert len(rows) == 1
     assert rows[0]["status"] == "no_source"
     assert rows[0]["channel"] is None
 
-    filtered = client.get("/api/admin/sources/agencies", params={"status": "no_source"}).json()
+    filtered = client.get("/api/admin/sources/agencies", params={"status": "no_source", "size": 100}).json()["items"]
     assert any(r["abbr"] == "KOCCA" for r in filtered)
     assert all(r["status"] == "no_source" for r in filtered)
+
+
+def test_agencies_pagination_second_page_is_disjoint(client: TestClient):
+    first = client.get("/api/admin/sources/agencies", params={"size": 20, "page": 1}).json()
+    second = client.get("/api/admin/sources/agencies", params={"size": 20, "page": 2}).json()
+    assert first["total"] == second["total"]
+    first_ids = {r["id"] for r in first["items"]}
+    second_ids = {r["id"] for r in second["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_agency_categories_route(client: TestClient):
+    categories = client.get("/api/admin/sources/agencies/categories").json()
+    assert isinstance(categories, list)
+    assert len(categories) > 0
+    assert categories == sorted(categories)
 
 
 # ---- 첨부문서 자동 분석 토글(2026-09-04, S8 A1 auto_extract) -----------------------

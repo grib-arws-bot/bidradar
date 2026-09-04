@@ -47,9 +47,23 @@ export interface AgencyFilters {
   q?: string;
   status?: AgencyStatus;
   category?: string;
+  page?: number;
+  size?: number;
 }
 
-export async function fetchAgencies(filters: AgencyFilters = {}): Promise<AgencyRow[]> {
-  const { data } = await apiClient.get<AgencyRow[]>("/admin/sources/agencies", { params: filters });
+export interface AgencyPage {
+  items: AgencyRow[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export async function fetchAgencies(filters: AgencyFilters = {}): Promise<AgencyPage> {
+  const { data } = await apiClient.get<AgencyPage>("/admin/sources/agencies", { params: filters });
+  return data;
+}
+
+export async function fetchAgencyCategories(): Promise<string[]> {
+  const { data } = await apiClient.get<string[]>("/admin/sources/agencies/categories");
   return data;
 }

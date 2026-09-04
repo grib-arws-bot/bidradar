@@ -5,6 +5,7 @@ import {
   Chip,
   Link,
   MenuItem,
+  Pagination,
   Stack,
   Switch,
   Table,
@@ -17,9 +18,11 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import { fetchAgencies, fetchSources, updateAutoExtract, type AgencyStatus } from "@/api/sources";
+import { fetchAgencies, fetchAgencyCategories, fetchSources, updateAutoExtract, type AgencyStatus } from "@/api/sources";
+
+const AGENCY_PAGE_SIZE = 50;
 
 const STATUS_LABEL: Record<AgencyStatus, { label: string; color: "success" | "warning" | "error" | "default" }> = {
   ok: { label: "정상", color: "success" },
@@ -38,16 +41,32 @@ export function SourcesPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<AgencyStatus | "">("");
   const [category, setCategory] = useState("");
+  const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
 
+  // 필터가 바뀌면 이전 필터 기준 페이지 번호가 새 결과에서 의미가 없어지니 1페이지로 되돌린다.
+  const updateFilters = (next: { q?: string; status?: AgencyStatus | ""; category?: string }) => {
+    if ("q" in next) setQ(next.q ?? "");
+    if ("status" in next) setStatus(next.status ?? "");
+    if ("category" in next) setCategory(next.category ?? "");
+    setPage(1);
+  };
+
   const { data, isLoading } = useQuery({
-    queryKey: ["admin-agencies", q, status, category],
+    queryKey: ["admin-agencies", q, status, category, page],
     queryFn: () =>
       fetchAgencies({
         q: q || undefined,
         status: (status as AgencyStatus) || undefined,
         category: category || undefined,
+        page,
+        size: AGENCY_PAGE_SIZE,
       }),
+  });
+
+  const { data: categories } = useQuery({
+    queryKey: ["admin-agency-categories"],
+    queryFn: fetchAgencyCategories,
   });
 
   const { data: sources, isLoading: sourcesLoading } = useQuery({
@@ -60,10 +79,7 @@ export function SourcesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin-sources"] }),
   });
 
-  const categories = useMemo(() => {
-    if (!data) return [];
-    return Array.from(new Set(data.map((r) => r.category).filter((c): c is string => !!c))).sort();
-  }, [data]);
+  const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / AGENCY_PAGE_SIZE));
 
   return (
     <Box>
@@ -122,7 +138,7 @@ export function SourcesPage() {
           size="small"
           label="기관명·약자 검색"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => updateFilters({ q: e.target.value })}
           sx={{ minWidth: 220 }}
         />
         <TextField
@@ -130,7 +146,7 @@ export function SourcesPage() {
           select
           label="수집 상태"
           value={status}
-          onChange={(e) => setStatus(e.target.value as AgencyStatus | "")}
+          onChange={(e) => updateFilters({ status: e.target.value as AgencyStatus | "" })}
           sx={{ minWidth: 160 }}
         >
           <MenuItem value="">전체</MenuItem>
@@ -145,11 +161,11 @@ export function SourcesPage() {
           select
           label="분류"
           value={category}
-          onChange={(e) => setCategory(e.target.value)}
+          onChange={(e) => updateFilters({ category: e.target.value })}
           sx={{ minWidth: 180 }}
         >
           <MenuItem value="">전체</MenuItem>
-          {categories.map((c) => (
+          {categories?.map((c) => (
             <MenuItem key={c} value={c}>
               {c}
             </MenuItem>
@@ -173,7 +189,7 @@ export function SourcesPage() {
           </TableHead>
           <TableBody>
             {!isLoading &&
-              data?.map((row) => {
+              data?.items.map((row) => {
                 const meta = STATUS_LABEL[row.status] ?? STATUS_LABEL.no_source;
                 return (
                   <TableRow key={row.id}>
@@ -229,12 +245,17 @@ export function SourcesPage() {
               })}
           </TableBody>
         </Table>
-        {!isLoading && data?.length === 0 && (
+        {!isLoading && data?.items.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 3, textAlign: "center" }}>
             조건에 맞는 발주기관이 없습니다.
           </Typography>
         )}
       </Card>
+      {!isLoading && data && data.total > AGENCY_PAGE_SIZE && (
+        <Stack alignItems="center" sx={{ mt: 2 }}>
+          <Pagination count={pageCount} page={page} onChange={(_, value) => setPage(value)} />
+        </Stack>
+      )}
     </Box>
   );
 }

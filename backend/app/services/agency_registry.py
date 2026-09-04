@@ -7,33 +7,47 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.engine import Connection
 
 from app.models import org, source, source_run
 from app.services.source_registry import ADAPTER_LABELS, COMPLIANCE_WARNING_DAYS
 
-_HANGUL_RE = re.compile(r"^[가-힣]")
+DEFAULT_PAGE_SIZE = 50
 
+# 한글이 영어보다 먼저 나와야 한다(2026-09-01 요청) — 파이썬 정렬 대신 SQL에서 직접 순서를
+# 매겨야 페이지네이션(LIMIT/OFFSET)이 전체 정렬 순서와 일치한다(2026-09-05, org 2,396건 규모로
+# 커지면서 매 요청 전체를 파이썬 메모리에 올려 정렬하던 방식을 더 못 씀).
+_HANGUL_FIRST = case((org.c.name.op("~")("^[가-힣]"), 0), else_=1)
 
-def _sort_key(name: str) -> tuple[int, str]:
-    # 한글순 먼저, 그다음 영어(그 외 문자)순 — DB 콜레이션에 기대지 않고 여기서 직접 정렬한다
-    return (0 if _HANGUL_RE.match(name) else 1, name)
+# 화면에 보여줄 status는 원래 파이썬에서 계산했는데(no_source/inactive/no_run_yet/실제상태),
+# status 필터+페이지네이션을 SQL에서 같이 하려면 이 계산도 SQL로 옮겨야 한다 — 그대로 옮김.
+_STATUS_EXPR = case(
+    (source.c.id.is_(None), literal("no_source")),
+    (source.c.active.is_(False), literal("inactive")),
+    (source_run.c.status.is_(None), literal("no_run_yet")),
+    else_=source_run.c.status,
+)
 
 
 def list_agencies(
-    conn: Connection, *, q: str | None = None, status: str | None = None, category: str | None = None
-) -> list[dict]:
-    """q: 기관명·약자 부분일치 검색. status/category: 정확히 일치하는 것만."""
+    conn: Connection,
+    *,
+    q: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
+    page: int = 1,
+    size: int = DEFAULT_PAGE_SIZE,
+) -> tuple[list[dict], int]:
+    """q: 기관명·약자 부분일치 검색. status/category: 정확히 일치하는 것만. (행 목록, 전체 건수)."""
     latest_run_sq = (
         select(source_run.c.source_id, func.max(source_run.c.id).label("latest_id"))
         .group_by(source_run.c.source_id)
         .subquery()
     )
-    stmt = (
+    base = (
         select(
             org.c.id,
             org.c.name,
@@ -43,11 +57,10 @@ def list_agencies(
             source.c.org_name.label("channel_org_name"),
             source.c.homepage_url.label("source_homepage_url"),
             source.c.adapter_type,
-            source.c.active.label("source_active"),
             source.c.legal_tier,
             source.c.legal_verified_at,
-            source_run.c.status,
             source_run.c.run_at,
+            _STATUS_EXPR.label("row_status"),
         )
         .select_from(org)
         .join(source, source.c.id == org.c.source_id, isouter=True)
@@ -56,23 +69,20 @@ def list_agencies(
     )
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(or_(org.c.name.ilike(like), org.c.abbr.ilike(like)))
+        base = base.where(or_(org.c.name.ilike(like), org.c.abbr.ilike(like)))
     if category:
-        stmt = stmt.where(org.c.category == category)
+        base = base.where(org.c.category == category)
+    if status:
+        base = base.where(_STATUS_EXPR == status)
 
+    total = conn.execute(select(func.count()).select_from(base.subquery())).scalar_one()
+
+    stmt = base.order_by(_HANGUL_FIRST, org.c.name).offset((page - 1) * size).limit(size)
     rows = conn.execute(stmt).mappings().all()
 
     now = datetime.now(timezone.utc)
     result = []
     for row in rows:
-        if row["source_name"] is None:
-            row_status = "no_source"  # 아직 어느 채널로 수집할지 정해지지 않음
-        else:
-            row_status = row["status"] if row["source_active"] else "inactive"
-            if row_status is None:
-                row_status = "no_run_yet"  # 채널은 있으나 아직 한 번도 수집 안 됨
-        if status and row_status != status:
-            continue
         verified_at = row["legal_verified_at"]
         # 채널이 아예 없는 발주기관(no_source)은 준법 확인 대상 자체가 아니다 — 경고 배지도 없음.
         compliance_overdue = row["source_name"] is not None and (
@@ -92,7 +102,7 @@ def list_agencies(
                 "channel_url": row["source_homepage_url"],
                 "channel": row["channel_org_name"] or row["source_name"],
                 "adapter_label": ADAPTER_LABELS.get(row["adapter_type"], row["adapter_type"]) if row["adapter_type"] else None,
-                "status": row_status,
+                "status": row["row_status"],
                 "last_run_at": row["run_at"].isoformat() if row["run_at"] else None,
                 # 준법 확인 배지(advisory INBOX #6) — 채널(source) 단위 값을 그대로 보여준다.
                 "legal_tier": row["legal_tier"],
@@ -100,5 +110,13 @@ def list_agencies(
                 "compliance_overdue": compliance_overdue,
             }
         )
-    result.sort(key=lambda r: _sort_key(r["name"]))
-    return result
+    return result, total
+
+
+def list_agency_categories(conn: Connection) -> list[str]:
+    """분류 드롭다운용 전체 분류 목록 — list_agencies가 페이지네이션되면서(2026-09-05)
+    현재 페이지 행에서만 뽑던 방식을 못 쓰게 돼 별도로 뗐다."""
+    rows = conn.execute(
+        select(org.c.category).where(org.c.category.is_not(None)).distinct().order_by(org.c.category)
+    ).scalars().all()
+    return list(rows)

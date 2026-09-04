@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
-from app.services.agency_registry import list_agencies
+from app.services.agency_registry import DEFAULT_PAGE_SIZE, list_agencies, list_agency_categories
 from app.services.source_registry import list_sources, set_auto_extract
 
 router = APIRouter(prefix="/api/admin/sources", tags=["sources"])
@@ -45,7 +45,16 @@ def get_agencies_route(
     q: str | None = None,
     status: str | None = None,
     category: str | None = None,
+    page: int = 1,
+    size: int = DEFAULT_PAGE_SIZE,
     _email: str = Depends(require_auth),
-) -> list[dict]:
+) -> dict:
     with engine.connect() as conn:
-        return list_agencies(conn, q=q, status=status, category=category)
+        items, total = list_agencies(conn, q=q, status=status, category=category, page=page, size=size)
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+@router.get("/agencies/categories")
+def get_agency_categories_route(_email: str = Depends(require_auth)) -> list[str]:
+    with engine.connect() as conn:
+        return list_agency_categories(conn)
