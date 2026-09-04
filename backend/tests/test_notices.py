@@ -18,9 +18,11 @@ os.environ.setdefault(
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
+from app.models import notice, source
 from app.services.notice_query import SORT_OPTIONS, TABS, compute_bid_status
 
 EMAIL = "report@grib.co.kr"
@@ -292,6 +294,64 @@ def test_bid_status_closed_takes_priority_even_without_open_dt():
     # 방어적 케이스 — 마감일만 있고 시작일이 없는 비정상 데이터도 "마감"을 우선한다.
     now = datetime.now(timezone.utc)
     assert compute_bid_status(None, now - timedelta(days=1), now) == "closed"
+
+
+# ---- 사전규격·발주계획·공모예고는 정식 입찰일이 없어 항상 입찰미정(2026-09-05 발견·확정) --
+# 이 3단계의 open_dt/close_dt는 "입찰 시작/마감"이 아니라 레코드 자체의 등록·게시일이다 —
+# 실측(사전규격 1,284건 중 1,272건)에서 "입찰접수 중"으로 잘못 표시되던 문제를 사용자가 발견.
+
+
+@pytest.mark.parametrize("stage", ["사전규격", "발주계획", "공모예고"])
+def test_bid_status_pre_notice_stages_always_unscheduled_even_with_dates_in_progress(stage: str):
+    now = datetime.now(timezone.utc)
+    # open_dt가 과거, close_dt가 미래라 stage를 안 보면 "in_progress"로 잘못 판정됐을 케이스.
+    assert compute_bid_status(now - timedelta(days=5), now + timedelta(days=5), now, stage) == "unscheduled"
+
+
+@pytest.mark.parametrize("stage", ["사전규격", "발주계획", "공모예고"])
+def test_bid_status_pre_notice_stages_unscheduled_even_when_close_dt_passed(stage: str):
+    now = datetime.now(timezone.utc)
+    # close_dt가 지났어도(의견수렴 마감 등) "closed"가 아니라 여전히 "unscheduled" — 정식
+    # 입찰 자체가 없던 단계라 "마감"이라는 개념이 성립하지 않는다.
+    assert compute_bid_status(now - timedelta(days=10), now - timedelta(days=1), now, stage) == "unscheduled"
+
+
+def test_bid_status_bidding_stage_unaffected_by_pre_notice_rule():
+    # "입찰공고"·"사업공고" 등 정식 단계는 종전 로직 그대로(회귀 방지).
+    now = datetime.now(timezone.utc)
+    assert compute_bid_status(now - timedelta(days=1), now + timedelta(days=1), now, "입찰공고") == "in_progress"
+    assert compute_bid_status(now - timedelta(days=10), now - timedelta(days=1), now, "입찰공고") == "closed"
+
+
+def test_unscheduled_tab_includes_pre_notice_stage_notice_via_sql(client: TestClient):
+    # _bid_status_condition(SQL)이 compute_bid_status(Python)와 어긋나면 탭에서 걸러진 공고와
+    # 카드 상태 라벨이 서로 다르게 보이는 사고가 난다(파일 상단 주석 참고) — 실제 API 응답으로
+    # SQL 쪽도 같은 규칙을 따르는지 확인한다.
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="사전규격",
+                title="[테스트] 입찰미정 고정 확인용 사전규격 공고",
+                open_dt=now - timedelta(days=5), close_dt=now + timedelta(days=5),
+                url="https://x/pre-notice-unscheduled-test",
+            ).returning(notice.c.id)
+        ).scalar_one()
+    try:
+        # 실데이터가 많아 페이지에 다 안 잡힐 수 있으니(2026-09-04 나라장터 대량 수집 이후)
+        # 고유 제목으로 검색해 이 테스트 공고만 좁혀서 확인한다.
+        q = "입찰미정 고정 확인용"
+        unscheduled = client.get("/api/notices", params={"tab": "unscheduled", "q": q, "size": 20}).json()["items"]
+        in_progress = client.get("/api/notices", params={"tab": "in_progress", "q": q, "size": 20}).json()["items"]
+        assert notice_id in {i["id"] for i in unscheduled}
+        assert notice_id not in {i["id"] for i in in_progress}
+
+        detail = client.get(f"/api/notices/{notice_id}").json()
+        assert detail["bid_status"] == "unscheduled"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id == notice_id))
 
 
 def test_notice_list_and_detail_include_bid_status(client: TestClient):
