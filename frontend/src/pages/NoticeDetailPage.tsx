@@ -178,11 +178,22 @@ export function NoticeDetailPage() {
             </Stack>
           </Stack>
 
-          <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
+          <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap alignItems="flex-end">
+            <Field label="발주기관" value={notice.org_name ?? "미상"} />
             <Field label="공고번호" value={notice.notice_no ?? "미부여"} />
-            <Field label="추정가격" value={notice.est_price ? `${(notice.est_price / 100_000_000).toFixed(1)}억원` : "미공개"} />
-            <Field label="게시일" value={notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "-"} />
-            <Field label="마감일" value={notice.close_dt ? new Date(notice.close_dt).toLocaleString("ko-KR") : "마감일 미공개"} />
+            <Field label="총사업기간" value={requirementsQuery.data?.summary?.project_period || "미분석"} />
+            {/* 사업비는 참여 판단에서 가장 먼저 보는 값이라 크게 강조한다(2026-09-05 요청) — A2
+                요약(더 정확한 문구)이 있으면 우선, 없으면 목록 카드와 동일하게 추정가격으로 대체. */}
+            <Field
+              label="사업비"
+              value={
+                requirementsQuery.data?.summary?.project_budget ||
+                (notice.est_price ? `${(notice.est_price / 100_000_000).toFixed(1)}억원` : "미공개")
+              }
+              large
+            />
+            <Field label="입찰게시일" value={notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "-"} />
+            <Field label="입찰마감일" value={notice.close_dt ? new Date(notice.close_dt).toLocaleString("ko-KR") : "마감일 미공개"} />
             {notice.assignee_name && <Field label="담당자" value={notice.assignee_name} />}
           </Stack>
 
@@ -604,13 +615,13 @@ function RequirementsCard({
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, large }: { label: string; value: string; large?: boolean }) {
   return (
     <Box>
       <Typography variant="caption" color="text.secondary">
         {label}
       </Typography>
-      <Typography variant="body2" className="tnum" fontWeight={600}>
+      <Typography variant={large ? "h3" : "body2"} className="tnum" fontWeight={700} color={large ? "primary.main" : "text.primary"}>
         {value}
       </Typography>
     </Box>

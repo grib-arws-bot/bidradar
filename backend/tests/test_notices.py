@@ -22,7 +22,7 @@ from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
-from app.models import notice, source
+from app.models import analysis, notice, source
 from app.services.notice_query import SORT_OPTIONS, TABS, compute_bid_status
 
 EMAIL = "report@grib.co.kr"
@@ -52,7 +52,34 @@ def test_notices_list_shape(client: TestClient):
     assert body["total"] >= len(body["items"])
     if body["items"]:
         item = body["items"][0]
-        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt"} <= item.keys()
+        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt", "analysis_summary"} <= item.keys()
+
+
+def test_notices_list_includes_latest_analysis_summary(client: TestClient):
+    """S8 A2 요약정보(2026-09-05) — summary가 있는 최신 분석만 얹혀야 하고(구버전 summary=NULL인
+    분석은 무시), 이 조회 자체는 LLM을 호출하지 않는다."""
+    with engine.begin() as conn:
+        notice_id = conn.execute(select(notice.c.id).where(notice.c.title.ilike("%CCTV%")).limit(1)).scalar_one()
+        conn.execute(
+            insert(analysis).values(
+                notice_id=notice_id, source_kind="notice", input_ref="x", status="done", ver=1, summary=None,
+            )
+        )
+        conn.execute(
+            insert(analysis).values(
+                notice_id=notice_id, source_kind="notice", input_ref="x", status="done", ver=2,
+                summary={"project_period": "1년", "project_budget": "10억원", "purpose": "테스트", "content_narrative": "테스트 내용"},
+            )
+        )
+    try:
+        rows = client.get("/api/notices", params={"tab": "all", "q": "CCTV", "size": 50}).json()["items"]
+        row = next(r for r in rows if r["id"] == notice_id)
+        assert row["analysis_summary"] == {
+            "project_period": "1년", "project_budget": "10억원", "purpose": "테스트", "content_narrative": "테스트 내용",
+        }
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(analysis).where(analysis.c.notice_id == notice_id))
 
 
 def test_all_five_tabs_respond(client: TestClient):

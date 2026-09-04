@@ -70,11 +70,16 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
     },
   });
 
+  const summary = notice.analysis_summary;
+  // 사업비는 est_price(대부분 R&D 공고는 비어 있음)보다 A2 요약(summary.project_budget,
+  // "150억원 이내(당해 19억원)"처럼 더 정확한 문구)이 있으면 그쪽을 우선한다(2026-09-05).
+  const budgetLabel = summary?.project_budget || formatPrice(notice.est_price);
+
   return (
     <Card sx={{ p: 2.5, opacity: classifiedAs ? 0.7 : 1 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
         <Box sx={{ minWidth: 0 }}>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }} flexWrap="wrap" useFlexGap>
             <Chip label={notice.stage} size="small" color="secondary" variant="outlined" />
             {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
             {notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
@@ -92,20 +97,54 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
           <Typography variant="body2" color="text.secondary">
             {notice.org_name ?? "발주기관 미상"}
             {notice.region ? ` · ${notice.region}` : ""}
+            {notice.notice_no ? ` · 공고번호 ${notice.notice_no}` : ""}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }} className="tnum">
+            입찰게시일 {notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "미상"} · 입찰마감일{" "}
+            {notice.close_dt ? new Date(notice.close_dt).toLocaleDateString("ko-KR") : "미상"}
+            {summary?.project_period ? ` · 총사업기간 ${summary.project_period}` : ""}
           </Typography>
         </Box>
+        {/* 사업비·D-day는 참여 판단에 가장 먼저 눈에 들어와야 하는 값이라 다른 텍스트보다
+            크고 진하게 둔다(2026-09-05 사용자 요청). */}
         <Stack alignItems="flex-end" spacing={0.5} sx={{ flexShrink: 0 }}>
-          <Typography variant="body2" className="tnum" fontWeight={600}>
-            {formatPrice(notice.est_price)}
+          <Typography variant="h3" className="tnum" fontWeight={700} color="primary.main" sx={{ whiteSpace: "nowrap" }}>
+            {budgetLabel}
           </Typography>
           <Chip
             label={bidStatus.label}
-            size="small"
+            size="medium"
             color={bidStatus.urgent ? "error" : "default"}
             variant={bidStatus.urgent ? "filled" : "outlined"}
+            sx={{ fontWeight: 700 }}
           />
         </Stack>
       </Stack>
+
+      {summary && (summary.purpose || summary.content_narrative) && (
+        <Box sx={{ mt: 1.5 }}>
+          {summary.purpose && (
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              과제목표 — {summary.purpose}
+            </Typography>
+          )}
+          {summary.content_narrative && (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                mt: 0.25,
+                display: "-webkit-box",
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              과제내용 — {summary.content_narrative}
+            </Typography>
+          )}
+        </Box>
+      )}
 
       {notice.extra && Object.keys(notice.extra).length > 0 && (
         <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
@@ -151,13 +190,16 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         >
           완전 무관
         </Button>
-        <Tooltip title="심층 분석은 다음 작업 단위(U9)에서 제공됩니다">
-          <span style={{ marginLeft: "auto" }}>
-            <Button size="small" variant="outlined" startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />} disabled>
-              심층 분석
-            </Button>
-          </span>
-        </Tooltip>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+          component={RouterLink}
+          to={`/notices/${notice.id}?${searchParams.toString()}`}
+          sx={{ ml: "auto" }}
+        >
+          심층 분석
+        </Button>
       </Stack>
 
       {dialogAction && (

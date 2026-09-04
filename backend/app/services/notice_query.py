@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import Select, and_, exists, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import customer, notice, notice_score, org, requirement
+from app.models import analysis, customer, notice, notice_score, org, requirement
 
 SORT_OPTIONS = ("priority", "close_asc", "open_desc", "price_desc", "price_asc")
 
@@ -113,7 +113,30 @@ def _priority_subquery():
     )
 
 
+def _latest_analysis_summary_subquery():
+    """공고 목록 카드에 "요약정보"(사업기간·사업비·과제목표·과제내용)를 얹기 위한 서브쿼리 —
+    S8 A2가 아직 실행 안 된 공고가 대부분이라(파일럿, 관리자가 건별로 실행) summary가 NULL인
+    분석은 애초에 제외해 최신 유효 분석만 남긴다. 이 조인은 새 LLM 호출을 만들지 않는다 —
+    이미 저장된 값을 보여줄 뿐."""
+    latest_ver_sq = (
+        select(analysis.c.notice_id, func.max(analysis.c.ver).label("max_ver"))
+        .where(analysis.c.summary.is_not(None))
+        .group_by(analysis.c.notice_id)
+        .subquery()
+    )
+    return (
+        select(analysis.c.notice_id, analysis.c.summary)
+        .select_from(analysis)
+        .join(
+            latest_ver_sq,
+            and_(analysis.c.notice_id == latest_ver_sq.c.notice_id, analysis.c.ver == latest_ver_sq.c.max_ver),
+        )
+        .subquery()
+    )
+
+
 def _base_select(priority_sq) -> Select:
+    summary_sq = _latest_analysis_summary_subquery()
     return (
         select(
             notice.c.id,
@@ -132,10 +155,12 @@ def _base_select(priority_sq) -> Select:
             notice.c.extra,
             org.c.name.label("org_name"),
             priority_sq.c.priority,
+            summary_sq.c.summary.label("analysis_summary"),
         )
         .select_from(notice)
         .join(org, org.c.id == notice.c.org_id, isouter=True)
         .join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
+        .join(summary_sq, summary_sq.c.notice_id == notice.c.id, isouter=True)
     )
 
 

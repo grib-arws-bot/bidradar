@@ -56,6 +56,15 @@ export const BID_STATUS_LABELS: Record<BidStatus, string> = {
   closed: "입찰마감",
 };
 
+// S8 A2 요약정보(2026-09-05) — 파일럿이라 대부분의 공고는 아직 분석 전(null). 목록 조회가
+// 이미 저장된 값을 얹어 보여줄 뿐, 이 조회 자체가 새 LLM 호출을 만들지 않는다.
+export interface NoticeAnalysisSummary {
+  project_period: string;
+  project_budget: string;
+  purpose: string;
+  content_narrative: string;
+}
+
 export interface NoticeItem {
   id: number;
   notice_no: string | null;
@@ -76,6 +85,7 @@ export interface NoticeItem {
   extra: Record<string, string | number | null> | null;
   org_name: string | null;
   priority: number | null;
+  analysis_summary: NoticeAnalysisSummary | null;
 }
 
 export interface NoticeListResponse {
