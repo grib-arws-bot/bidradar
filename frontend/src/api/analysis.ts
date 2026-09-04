@@ -42,11 +42,6 @@ export interface Requirement {
   cite: string;
 }
 
-export interface AnalysisContentItem {
-  title: string;
-  summary: string;
-}
-
 export interface AnalysisEvaluationItem {
   item: string;
   weight: string;
@@ -65,7 +60,7 @@ export interface AnalysisSummary {
   project_period: string;
   project_budget: string;
   purpose: string;
-  content_items: AnalysisContentItem[];
+  content_narrative: string;
   evaluation: AnalysisEvaluationItem[];
   budget_conditions: AnalysisBudgetConditions;
 }

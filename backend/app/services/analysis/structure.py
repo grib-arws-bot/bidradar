@@ -67,20 +67,25 @@ _SYSTEM_PROMPT = """당신은 공공입찰 규격서를 관리자가 한눈에 �
    op="manual"로 넣고 req_value/req_unit은 비워두세요.
 5. category는 다음 중 문서 맥락에 맞는 것으로 분류하세요: 성능/인증/실적/인력/자격/기타.
    신청자격·참여제한·참여기관 구성 요건은 "자격"으로 분류하세요.
+6. category="자격" 항목의 req_text는 **단답형 명사구**로 짧게 쓰세요(예: "산학연 컨소시엄 필수",
+   "중소기업만 해당", "동일기관 중복참여 불가") — 법조문을 그대로 옮기거나 긴 문장으로 풀어쓰지 마세요.
 
-[summary] 서술형 개요 — 항목화하지 않고 문장/짧은 목록으로
+[summary] 서술형 개요
 - project_period: 사업(연구개발)기간. 예: "5년 이내(당해 9개월 이내)"
 - project_budget: 사업금액(정부지원연구개발비 등). 예: "150억원 이내(당해 19억원)"
-- purpose: 사업목적을 1~3문장으로
-- content_items: 사업내용을 항목별로 나눠 {title, summary} 목록으로(내역사업이 여러 개면 각각)
-- evaluation: 평가기준을 {item, weight, note} 목록으로(배점표가 있으면 항목명·비율·세부내용)
-- budget_conditions: 사업비 조건(중소기업 기준 우선, 문서에 기업 규모별로 다르게 나오면 중소기업
-  해당 값을 쓰고 다른 규모 값은 note에 덧붙이세요):
-    - government_support_ratio: 정부지원금 비율(예: "국제공동연구개발비 제외 연구개발비의 75% 이하")
-    - institution_cash_burden_ratio: 기관현금부담 비율(예: "기관부담연구개발비의 10% 이상")
-    - tech_fee_collection: 기술료 징수 여부와 산정기준(징수/미징수, 징수 시 요약)
-    - youth_hiring_requirement: 청년인력 채용 조건(대상 연령·채용 규모·유지기간 등)
-    - labor_cost_basis: 인건비 계상 기준(현금 계상 가능 조건, 계상률 상한 등)
+- purpose: 사업목적 — **원문 문장을 의역하지 말고 그대로 인용**하세요.
+- content_narrative: 사업내용을 관리자가 바로 이해할 수 있도록 **10줄 내외의 자연스러운 문단**으로
+  분석·서술하세요(원문 항목을 그대로 나열하지 말고, 추진배경·목표·주요 연구내용·기대성과를
+  엮어서 풀어 쓰세요) — 이것만은 단순 추출이 아니라 종합 분석입니다.
+- evaluation: 평가기준을 {item, weight, note} 목록으로. item/weight/note 모두 **원문 표현을
+  그대로** 옮기세요(재구성·의역 금지) — 배점표가 있으면 항목명·비율·세부 평가내용을 원문 그대로.
+- budget_conditions: 사업비 조건(중소기업 기준). **모두 단답형으로 짧게** — 전체 문장이 아니라
+  핵심 수치나 키워드만 씁니다:
+    - government_support_ratio: 예: "75% 이하"
+    - institution_cash_burden_ratio: 예: "10% 이상"
+    - tech_fee_collection: 예: "징수대상" 또는 "미징수"
+    - youth_hiring_requirement: 예: "5억원당 1명"
+    - labor_cost_basis: 현금 계상이 허용되는 핵심 조건만 키워드로(예: "지식서비스 분야", "신규채용자")
 찾을 수 없는 필드는 빈 문자열/빈 배열로 두세요 — 지어내지 마세요."""
 
 _REQUIREMENT_SCHEMA = {
@@ -107,14 +112,7 @@ _REQUIREMENT_SCHEMA = {
                 "project_period": {"type": "string"},
                 "project_budget": {"type": "string"},
                 "purpose": {"type": "string"},
-                "content_items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"title": {"type": "string"}, "summary": {"type": "string"}},
-                        "required": ["title", "summary"],
-                    },
-                },
+                "content_narrative": {"type": "string", "description": "사업내용을 10줄 내외로 종합 서술"},
                 "evaluation": {
                     "type": "array",
                     "items": {
@@ -142,7 +140,7 @@ _REQUIREMENT_SCHEMA = {
                     ],
                 },
             },
-            "required": ["project_period", "project_budget", "purpose", "content_items", "evaluation", "budget_conditions"],
+            "required": ["project_period", "project_budget", "purpose", "content_narrative", "evaluation", "budget_conditions"],
         },
     },
     "required": ["requirements", "summary"],

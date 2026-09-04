@@ -232,28 +232,6 @@ export function NoticeDetailPage() {
         </Card>
       )}
 
-      {notice.extra && Object.keys(notice.extra).length > 0 && (
-        <Card sx={{ p: 3 }}>
-          <Typography variant="h3" sx={{ mb: 1.5 }}>
-            추가 정보
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1.5 }}>
-            이 소스가 제공하는 원본 필드 그대로입니다 — 목록 응답에 담당자 개인정보는 없습니다.
-          </Typography>
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
-            {Object.entries(notice.extra).map(([key, value]) => (
-              <Box key={key} sx={{ minWidth: 0 }}>
-                <Typography variant="caption" color="text.secondary">
-                  {EXTRA_FIELD_LABELS[key] ?? key}
-                </Typography>
-                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
-                  {formatExtraValue(key, value)}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
-        </Card>
-      )}
 
       <Divider />
 
@@ -450,7 +428,7 @@ function RequirementsCard({
     <Card sx={{ p: 3 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
         <Box>
-          <Typography variant="h3">심층 분석 종합 (LLM, 파일럿)</Typography>
+          <Typography variant="h3">요약정보 (LLM, 파일럿)</Typography>
           <Typography variant="caption" color="text.secondary">
             규격서에서 사업 내용·요구사양을 추출·정리만 합니다 — 충족 여부 판정은 아직 하지 않습니다. LLM 호출 비용이 발생하므로 신중히 실행하세요.
           </Typography>
@@ -527,21 +505,12 @@ function RequirementsCard({
             </TableBody>
           </Table>
 
-          {summary.content_items.length > 0 && (
+          {summary.content_narrative && (
             <>
               <SectionHeading>2. 사업내용</SectionHeading>
-              <Table size="small">
-                <TableBody>
-                  {summary.content_items.map((c, i) => (
-                    <TableRow key={i}>
-                      <TableCell sx={{ width: 220, verticalAlign: "top", fontWeight: 600 }}>
-                        ({`사업${i + 1}`}) {c.title}
-                      </TableCell>
-                      <TableCell>{c.summary}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.8 }}>
+                {summary.content_narrative}
+              </Typography>
             </>
           )}
 
@@ -608,6 +577,27 @@ function RequirementsCard({
               <RequirementsTable requirements={items} />
             </Box>
           ))}
+
+          {notice.extra && Object.keys(notice.extra).length > 0 && (
+            <>
+              <SectionHeading>추가 정보</SectionHeading>
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+                이 소스가 제공하는 원본 필드 그대로입니다.
+              </Typography>
+              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
+                {Object.entries(notice.extra).map(([key, value]) => (
+                  <Box key={key} sx={{ minWidth: 0 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {EXTRA_FIELD_LABELS[key] ?? key}
+                    </Typography>
+                    <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                      {formatExtraValue(key, value)}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </>
+          )}
         </>
       )}
     </Card>

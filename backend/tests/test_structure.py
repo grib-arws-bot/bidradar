@@ -49,7 +49,7 @@ _SAMPLE_SUMMARY = {
     "project_period": "5년 이내(당해 9개월 이내)",
     "project_budget": "150억원 이내(당해 19억원)",
     "purpose": "연안하구 시스템 변화 프로세스 규명",
-    "content_items": [{"title": "연안하구 관리기술 개발", "summary": "관측·분석기술 개발"}],
+    "content_narrative": "연안하구 관리기술 개발 사업은 관측·분석기술 개발을 목표로 한다.",
     "evaluation": [{"item": "연구개발", "weight": "40%", "note": "계획 구체성 등"}],
     "budget_conditions": {
         "government_support_ratio": "국제공동연구개발비 제외 연구개발비의 75% 이하",
