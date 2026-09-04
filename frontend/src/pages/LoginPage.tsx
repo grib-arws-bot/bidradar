@@ -4,10 +4,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Box,
   Button,
-  Checkbox,
   CircularProgress,
   Divider,
-  FormControlLabel,
   IconButton,
   InputAdornment,
   Paper,
@@ -22,6 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { checkDevAutologinEnabled, devAutologin, login } from "@/api/auth";
+import { useSession } from "@/hooks/useSession";
 
 const schema = z.object({
   email: z.string().min(1, "이메일을 입력하세요"),
@@ -66,7 +65,6 @@ export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
-  const [remember, setRemember] = useState(false);
   const {
     register,
     handleSubmit,
@@ -82,10 +80,19 @@ export function LoginPage() {
     navigate("/notices", { replace: true });
   };
 
+  // 이 PC에서 한 번 로그인하면 쿠키가 살아있는 한 다음부터는 비밀번호 없이 자동으로 들어가야
+  // 한다는 요청(2026-09-04) — /login에 직접 들어와도 이미 유효한 세션이 있으면 폼을 보여주지
+  // 않고 바로 넘긴다. "로그인 상태 유지" 체크박스는 없앴다: 매번 켜야 하는 옵션이 아니라
+  // 항상 이렇게 동작해야 하는 것이므로 로그인은 늘 30일짜리 세션(remember=true)으로 발급한다.
+  const sessionQuery = useSession();
+  useEffect(() => {
+    if (sessionQuery.data) navigate("/notices", { replace: true });
+  }, [sessionQuery.data, navigate]);
+
   const { enabled: autologinEnabled, active: autologinActive, retry: retryAutologin } = useDevAutologin(goToNotices);
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) => login(values.email, values.password, remember),
+    mutationFn: (values: FormValues) => login(values.email, values.password, true),
     onSuccess: goToNotices,
     onError: (error: unknown) => {
       const detail =
@@ -94,6 +101,14 @@ export function LoginPage() {
       setError("password", { message: detail });
     },
   });
+
+  if (sessionQuery.isLoading || sessionQuery.data) {
+    return (
+      <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "background.default" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -160,11 +175,6 @@ export function LoginPage() {
                       ),
                     },
                   }}
-                />
-                <FormControlLabel
-                  control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />}
-                  label="로그인 상태 유지"
-                  sx={{ alignSelf: "flex-start", ml: -1 }}
                 />
                 <Button type="submit" variant="contained" size="large" disabled={mutation.isPending} fullWidth>
                   로그인
