@@ -46,21 +46,42 @@ OPS = ("gte", "lte", "eq", "contains", "manual")
 
 _MAX_DOC_CHARS = 120_000  # Haiku 컨텍스트(200k 토큰) 안에 여유 있게 들어오는 상한 — 넘으면 잘라내고 표시한다.
 
-_TOOL_NAME = "extract_requirements"
-_SYSTEM_PROMPT = """당신은 공공입찰 규격서에서 참여기업이 충족해야 할 요구사양을 추출하는 보조 도구입니다.
+_CATEGORIES = ("성능", "인증", "실적", "인력", "자격", "기타")
 
-규칙:
-1. 문서에 실제로 명시된 요구사항만 추출합니다 — 추측하거나 일반적인 상식으로 채우지 마세요.
-2. 각 항목은 반드시 원문 조문 위치(cite)를 함께 답니다 — 장/절/항 번호나 표 제목처럼 문서에서
+_TOOL_NAME = "extract_requirements"
+_SYSTEM_PROMPT = """당신은 공공입찰 규격서를 관리자가 한눈에 읽을 수 있게 정리하는 보조 도구입니다.
+두 가지를 만듭니다 — (1) 항목/값/연산자로 쪼갤 수 있는 개별 요구사양 목록, (2) 항목으로
+쪼개지지 않는 서술형 개요(사업개요·사업내용·평가기준). 둘 다 판단이 아니라 추출·정리입니다.
+
+공통 규칙:
+- 문서에 실제로 명시된 내용만 씁니다 — 추측하거나 일반적인 상식으로 채우지 마세요.
+- 충족 여부를 판단하지 마세요. judgement 같은 필드는 절대 포함하지 마세요.
+
+[requirements] 개별 요구사양
+1. 각 항목은 반드시 원문 조문 위치(cite)를 함께 답니다 — 장/절/항 번호나 표 제목처럼 문서에서
    다시 찾을 수 있는 표현으로 적으세요. 위치를 특정할 수 없으면 그 항목은 아예 추출하지 마세요.
-3. 수치 비교 가능한 항목(예: "3년 이상 유지보수 실적")은 op을 gte/lte/eq 중 하나로, req_value에
+2. 수치 비교 가능한 항목(예: "3년 이상 유지보수 실적")은 op을 gte/lte/eq 중 하나로, req_value에
    숫자만, req_unit에 단위를 분리해서 넣으세요.
-4. 특정 목록에 포함되는지 여부(예: 보유해야 할 인증 목록)는 op="contains"로 넣으세요.
-5. 서술형이라 규칙으로 판정할 수 없는 항목(예: "제안서에 구축 방안을 상세히 기술할 것")은
+3. 특정 목록에 포함되는지 여부(예: 보유해야 할 인증 목록)는 op="contains"로 넣으세요.
+4. 서술형이라 규칙으로 판정할 수 없는 항목(예: "제안서에 구축 방안을 상세히 기술할 것")은
    op="manual"로 넣고 req_value/req_unit은 비워두세요.
-6. 충족 여부를 판단하지 마세요 — 당신의 역할은 추출뿐입니다. judgement 같은 필드는 절대
-   포함하지 마세요.
-7. category는 "성능"/"인증"/"실적"/"인력"/"기타" 중 문서 맥락에 맞는 것으로 분류하세요."""
+5. category는 다음 중 문서 맥락에 맞는 것으로 분류하세요: 성능/인증/실적/인력/자격/기타.
+   신청자격·참여제한·참여기관 구성 요건은 "자격"으로 분류하세요.
+
+[summary] 서술형 개요 — 항목화하지 않고 문장/짧은 목록으로
+- project_period: 사업(연구개발)기간. 예: "5년 이내(당해 9개월 이내)"
+- project_budget: 사업금액(정부지원연구개발비 등). 예: "150억원 이내(당해 19억원)"
+- purpose: 사업목적을 1~3문장으로
+- content_items: 사업내용을 항목별로 나눠 {title, summary} 목록으로(내역사업이 여러 개면 각각)
+- evaluation: 평가기준을 {item, weight, note} 목록으로(배점표가 있으면 항목명·비율·세부내용)
+- budget_conditions: 사업비 조건(중소기업 기준 우선, 문서에 기업 규모별로 다르게 나오면 중소기업
+  해당 값을 쓰고 다른 규모 값은 note에 덧붙이세요):
+    - government_support_ratio: 정부지원금 비율(예: "국제공동연구개발비 제외 연구개발비의 75% 이하")
+    - institution_cash_burden_ratio: 기관현금부담 비율(예: "기관부담연구개발비의 10% 이상")
+    - tech_fee_collection: 기술료 징수 여부와 산정기준(징수/미징수, 징수 시 요약)
+    - youth_hiring_requirement: 청년인력 채용 조건(대상 연령·채용 규모·유지기간 등)
+    - labor_cost_basis: 인건비 계상 기준(현금 계상 가능 조건, 계상률 상한 등)
+찾을 수 없는 필드는 빈 문자열/빈 배열로 두세요 — 지어내지 마세요."""
 
 _REQUIREMENT_SCHEMA = {
     "type": "object",
@@ -70,7 +91,7 @@ _REQUIREMENT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "category": {"type": "string"},
+                    "category": {"type": "string", "enum": list(_CATEGORIES)},
                     "req_text": {"type": "string", "description": "요구사항 원문을 간결하게 정리한 문장"},
                     "req_value": {"type": "string", "description": "비교 가능한 값(없으면 빈 문자열)"},
                     "req_unit": {"type": "string", "description": "단위(없으면 빈 문자열)"},
@@ -79,9 +100,52 @@ _REQUIREMENT_SCHEMA = {
                 },
                 "required": ["category", "req_text", "op", "cite"],
             },
-        }
+        },
+        "summary": {
+            "type": "object",
+            "properties": {
+                "project_period": {"type": "string"},
+                "project_budget": {"type": "string"},
+                "purpose": {"type": "string"},
+                "content_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}, "summary": {"type": "string"}},
+                        "required": ["title", "summary"],
+                    },
+                },
+                "evaluation": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"type": "string"},
+                            "weight": {"type": "string"},
+                            "note": {"type": "string"},
+                        },
+                        "required": ["item", "weight"],
+                    },
+                },
+                "budget_conditions": {
+                    "type": "object",
+                    "properties": {
+                        "government_support_ratio": {"type": "string"},
+                        "institution_cash_burden_ratio": {"type": "string"},
+                        "tech_fee_collection": {"type": "string"},
+                        "youth_hiring_requirement": {"type": "string"},
+                        "labor_cost_basis": {"type": "string"},
+                    },
+                    "required": [
+                        "government_support_ratio", "institution_cash_burden_ratio", "tech_fee_collection",
+                        "youth_hiring_requirement", "labor_cost_basis",
+                    ],
+                },
+            },
+            "required": ["project_period", "project_budget", "purpose", "content_items", "evaluation", "budget_conditions"],
+        },
     },
-    "required": ["requirements"],
+    "required": ["requirements", "summary"],
 }
 
 
@@ -106,10 +170,10 @@ def _collect_source_text(conn: Connection, analysis_id: int) -> str:
     return combined
 
 
-def _call_anthropic(model: str, document_text: str) -> tuple[list[dict], int, int]:
-    """(requirements, input_tokens, output_tokens)를 반환한다. HTTP 호출 자체가 실패하면
-    그대로 예외를 던진다 — 실패해도 흔적 없이 사라지면 안 되므로 호출부가 analysis.status를
-    반드시 갱신해야 한다."""
+def _call_anthropic(model: str, document_text: str) -> tuple[list[dict], dict, int, int]:
+    """(requirements, summary, input_tokens, output_tokens)를 반환한다. HTTP 호출 자체가
+    실패하면 그대로 예외를 던진다 — 실패해도 흔적 없이 사라지면 안 되므로 호출부가
+    analysis.status를 반드시 갱신해야 한다."""
     payload = {
         "model": model,
         "max_tokens": 8000,
@@ -147,8 +211,10 @@ def _call_anthropic(model: str, document_text: str) -> tuple[list[dict], int, in
     if tool_use is None:
         raise RuntimeError("모델이 구조화된 형식으로 응답하지 않았습니다(tool_use 블록 없음)")
 
-    requirements = tool_use.get("input", {}).get("requirements", [])
-    return requirements, input_tokens, output_tokens
+    tool_input = tool_use.get("input", {})
+    requirements = tool_input.get("requirements", [])
+    summary = tool_input.get("summary", {})
+    return requirements, summary, input_tokens, output_tokens
 
 
 def _valid_items(raw_items: list[dict]) -> tuple[list[dict], int]:
@@ -202,7 +268,7 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
     )
 
     try:
-        raw_items, input_tokens, output_tokens = _call_anthropic(model, document_text)
+        raw_items, summary, input_tokens, output_tokens = _call_anthropic(model, document_text)
     except Exception as exc:  # noqa: BLE001 — 실패도 반드시 기록(CLAUDE.md "조용한 실패 금지")
         conn.execute(
             analysis.update()
@@ -228,6 +294,7 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
             finished_at=datetime.now(timezone.utc),
             llm_tokens=analysis.c.llm_tokens + input_tokens + output_tokens,
             llm_cost=analysis.c.llm_cost + cost,
+            summary=summary or None,
         )
     )
 
@@ -262,7 +329,7 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
     A2 단계에선 의미 없는 값(항상 unknown/NULL)이라 화면에 혼동을 주지 않도록 응답에서 뺀다
     (A3가 실제 판정을 붙이기 전까지)."""
     row = conn.execute(
-        select(analysis.c.id, analysis.c.status, analysis.c.step)
+        select(analysis.c.id, analysis.c.status, analysis.c.step, analysis.c.summary)
         .where(analysis.c.notice_id == notice_id)
         .order_by(analysis.c.ver.desc())
     ).first()
@@ -286,5 +353,6 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
         "analysis_id": row.id,
         "status": row.status,
         "step": row.step,
+        "summary": row.summary,
         "requirements": [dict(r) for r in reqs],
     }

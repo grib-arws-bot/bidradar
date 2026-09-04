@@ -42,10 +42,39 @@ export interface Requirement {
   cite: string;
 }
 
+export interface AnalysisContentItem {
+  title: string;
+  summary: string;
+}
+
+export interface AnalysisEvaluationItem {
+  item: string;
+  weight: string;
+  note?: string;
+}
+
+export interface AnalysisBudgetConditions {
+  government_support_ratio: string;
+  institution_cash_burden_ratio: string;
+  tech_fee_collection: string;
+  youth_hiring_requirement: string;
+  labor_cost_basis: string;
+}
+
+export interface AnalysisSummary {
+  project_period: string;
+  project_budget: string;
+  purpose: string;
+  content_items: AnalysisContentItem[];
+  evaluation: AnalysisEvaluationItem[];
+  budget_conditions: AnalysisBudgetConditions;
+}
+
 export interface RequirementsResult {
   analysis_id: number;
   status: string;
   step: string | null;
+  summary: AnalysisSummary | null;
   requirements: Requirement[];
 }
 

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import metadata
 
@@ -32,6 +33,10 @@ analysis = Table(
     Column("confidence", Numeric(4, 3)),
     Column("llm_tokens", Integer, nullable=False, server_default="0"),
     Column("llm_cost", Numeric(10, 4), nullable=False, server_default="0"),  # USD, A2·A5·A6 호출 누계
+    # A2가 요구사양(analysis_requirement)과 별개로 뽑는 서술형 요약 — 사업개요·사업내용·평가기준처럼
+    # 항목/값/연산자로 쪼갤 수 없는 내용(2026-09-05, 공고 상세페이지 종합 요청). 판정이 아니라
+    # 추출·정리이므로 원칙 1과 무관.
+    Column("summary", JSONB, nullable=True),
     Column("created_by", String(255), nullable=False, server_default="report@grib.co.kr"),
     Column("ver", Integer, nullable=False, server_default="1"),  # 동일 공고 재분석 시 버전으로 쌓임
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),

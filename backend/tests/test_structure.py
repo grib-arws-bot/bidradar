@@ -45,10 +45,34 @@ def _any_source_id(conn) -> int:
     return conn.execute(select(source.c.id).limit(1)).scalar_one()
 
 
-def _mock_anthropic_response(requirements: list[dict], input_tokens: int = 1000, output_tokens: int = 200) -> mock.Mock:
+_SAMPLE_SUMMARY = {
+    "project_period": "5년 이내(당해 9개월 이내)",
+    "project_budget": "150억원 이내(당해 19억원)",
+    "purpose": "연안하구 시스템 변화 프로세스 규명",
+    "content_items": [{"title": "연안하구 관리기술 개발", "summary": "관측·분석기술 개발"}],
+    "evaluation": [{"item": "연구개발", "weight": "40%", "note": "계획 구체성 등"}],
+    "budget_conditions": {
+        "government_support_ratio": "국제공동연구개발비 제외 연구개발비의 75% 이하",
+        "institution_cash_burden_ratio": "기관부담연구개발비의 10% 이상",
+        "tech_fee_collection": "징수함",
+        "youth_hiring_requirement": "정부지원연구개발비 5억원당 1명, 만 18~34세, 1년 이상 고용",
+        "labor_cost_basis": "신규채용 참여연구자 등 예외 조건에서만 현금 계상 가능, 계상률 총합 100% 이내",
+    },
+}
+
+
+def _mock_anthropic_response(
+    requirements: list[dict], summary: dict | None = None, input_tokens: int = 1000, output_tokens: int = 200
+) -> mock.Mock:
     resp = mock.Mock()
     resp.json.return_value = {
-        "content": [{"type": "tool_use", "name": "extract_requirements", "input": {"requirements": requirements}}],
+        "content": [
+            {
+                "type": "tool_use",
+                "name": "extract_requirements",
+                "input": {"requirements": requirements, "summary": summary if summary is not None else _SAMPLE_SUMMARY},
+            }
+        ],
         "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
     }
     return resp
@@ -121,7 +145,10 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
         saved = conn.execute(
             select(analysis_requirement).where(analysis_requirement.c.analysis_id == done_analysis)
         ).mappings().all()
-        updated = conn.execute(select(analysis.c.status, analysis.c.step, analysis.c.llm_tokens, analysis.c.llm_cost).where(analysis.c.id == done_analysis)).first()
+        updated = conn.execute(
+            select(analysis.c.status, analysis.c.step, analysis.c.llm_tokens, analysis.c.llm_cost, analysis.c.summary)
+            .where(analysis.c.id == done_analysis)
+        ).first()
 
     assert len(saved) == 1
     assert saved[0]["req_text"] == "처리 용량 초당 30프레임 이상"
@@ -131,6 +158,7 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
     assert updated.status == "done"
     assert updated.step == "A2_structure"
     assert updated.llm_tokens == 1200
+    assert updated.summary == _SAMPLE_SUMMARY
 
 
 def test_run_structuring_rejects_duplicate_run(done_analysis, monkeypatch):
@@ -221,6 +249,7 @@ def test_structure_route_happy_path_then_requirements_visible(done_analysis, mon
 
     got = client.get(f"/api/notices/{notice_id}/requirements").json()
     assert got["analysis_id"] == done_analysis
+    assert got["summary"] == _SAMPLE_SUMMARY
     assert len(got["requirements"]) == 1
     assert got["requirements"][0]["req_text"] == "초당 30프레임 이상"
     # A2 단계는 판정을 안 하므로 judgement/matched_product_id는 응답에 아예 없어야 한다 —
