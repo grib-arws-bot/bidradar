@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Box,
   Button,
+  Checkbox,
   CircularProgress,
   Divider,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   Paper,
@@ -65,6 +67,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
   const {
     register,
     handleSubmit,
@@ -80,10 +83,11 @@ export function LoginPage() {
     navigate("/notices", { replace: true });
   };
 
-  // 이 PC에서 한 번 로그인하면 쿠키가 살아있는 한 다음부터는 비밀번호 없이 자동으로 들어가야
-  // 한다는 요청(2026-09-04) — /login에 직접 들어와도 이미 유효한 세션이 있으면 폼을 보여주지
-  // 않고 바로 넘긴다. "로그인 상태 유지" 체크박스는 없앴다: 매번 켜야 하는 옵션이 아니라
-  // 항상 이렇게 동작해야 하는 것이므로 로그인은 늘 30일짜리 세션(remember=true)으로 발급한다.
+  // /login에 직접 들어와도 이미 유효한 세션(쿠키)이 있으면 폼을 보여주지 않고 바로 넘긴다.
+  // ARWS와 동일한 방식(2026-09-04, 사용자 지시로 원복) — "로그인 상태 유지" 체크박스를 켠
+  // 채로 로그인했을 때만 30일짜리 세션이 발급되고, 그 세션이 살아있는 동안만 이 자동 진입이
+  // 일어난다. 체크 안 하면 짧은 세션(12시간, backend SESSION_TTL)이라 곧 다시 로그인 폼을
+  // 보게 된다 — "체크된 상태에서만 자동 로그인"이라는 ARWS 동작을 그대로 따른다.
   const sessionQuery = useSession();
   useEffect(() => {
     if (sessionQuery.data) navigate("/notices", { replace: true });
@@ -92,7 +96,7 @@ export function LoginPage() {
   const { enabled: autologinEnabled, active: autologinActive, retry: retryAutologin } = useDevAutologin(goToNotices);
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) => login(values.email, values.password, true),
+    mutationFn: (values: FormValues) => login(values.email, values.password, remember),
     onSuccess: goToNotices,
     onError: (error: unknown) => {
       const detail =
@@ -175,6 +179,11 @@ export function LoginPage() {
                       ),
                     },
                   }}
+                />
+                <FormControlLabel
+                  control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />}
+                  label="로그인 상태 유지"
+                  sx={{ alignSelf: "flex-start", ml: -1 }}
                 />
                 <Button type="submit" variant="contained" size="large" disabled={mutation.isPending} fullWidth>
                   로그인
