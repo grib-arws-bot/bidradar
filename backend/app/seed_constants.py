@@ -345,10 +345,15 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bidNtceNo", None),
             ("title", "$.bidNtceNm", None),
             ("org_name", "$.ntceInsttNm", None),
-            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            # 2026-09-05 — open_dt를 bidNtceDt(공고 게시일)에서 bidBeginDt(입찰 개시일)로
+            # 교체(사용자 발견) — 실측 5,000건 중 4,751건이 개시일이 게시일보다 늦음. 게시일은
+            # 항상 "지금 아니면 과거"라 open_dt로 쓰면 "입찰예정" 상태가 구조적으로 절대 안
+            # 나온다. 원래 게시일은 extra:bidNtceDt로 남긴다.
+            ("open_dt", "$.bidBeginDt", "%Y-%m-%d %H:%M:%S"),
             ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
             ("est_price", "$.presmptPrce", None),
             ("url", "$.bidNtceDtlUrl", None),
+            ("extra:bidNtceDt", "$.bidNtceDt", None),  # 공고 게시일(참고용)
             ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),  # 계약체결방법
             ("extra:opengDt", "$.opengDt", None),  # 개찰일시
         ],
@@ -367,10 +372,11 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bidNtceNo", None),
             ("title", "$.bidNtceNm", None),
             ("org_name", "$.ntceInsttNm", None),
-            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            ("open_dt", "$.bidBeginDt", "%Y-%m-%d %H:%M:%S"),  # 2026-09-05, 용역과 동일 이유
             ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
             ("est_price", "$.presmptPrce", None),
             ("url", "$.bidNtceDtlUrl", None),
+            ("extra:bidNtceDt", "$.bidNtceDt", None),
             ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),
             ("extra:opengDt", "$.opengDt", None),
             ("extra:dtilPrdctClsfcNoNm", "$.dtilPrdctClsfcNoNm", None),  # 세부품명(물품 전용)
@@ -390,10 +396,11 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bidNtceNo", None),
             ("title", "$.bidNtceNm", None),
             ("org_name", "$.ntceInsttNm", None),
-            ("open_dt", "$.bidNtceDt", "%Y-%m-%d %H:%M:%S"),
+            ("open_dt", "$.bidBeginDt", "%Y-%m-%d %H:%M:%S"),  # 2026-09-05, 용역과 동일 이유
             ("close_dt", "$.bidClseDt", "%Y-%m-%d %H:%M:%S"),
             ("est_price", "$.presmptPrce", None),
             ("url", "$.bidNtceDtlUrl", None),
+            ("extra:bidNtceDt", "$.bidNtceDt", None),
             ("extra:cntrctCnclsMthdNm", "$.cntrctCnclsMthdNm", None),
             ("extra:opengDt", "$.opengDt", None),
             ("extra:cnstrtsiteRgnNm", "$.cnstrtsiteRgnNm", None),  # 공사현장지역(공사 전용)
@@ -404,6 +411,13 @@ REAL_OPENAPI_CONFIG = {
     # 248건 전수 확인, "Y" 사례 0건) — 첨부파일을 보려면 orderPlanDtlUrl 상세페이지를 열어야
     # 하는데 g2b.go.kr이 WebSquare SPA라 정적 스크래핑이 안 됨(조사 완료). 이 소스는 목록·상세
     # 필드까지만 등록하고, 첨부파일 수집은 Playwright 도입(별도 결정) 이후로 미룬다.
+    #
+    # 2026-09-05 — open_dt(구 nticeDt) 매핑 제거(사용자 발견) — nticeDt는 "이 발주계획이
+    # 등록된 날"일 뿐 실제 발주/입찰 시작일이 아니라, open_dt로 쓰면 등록되자마자 "입찰접수
+    # 중"으로 잘못 표시됐다(발주계획 820건 중 547건). 발주계획 단계엔 정식 시작일 자체가
+    # 없는 게 맞으므로 open_dt를 비워 자연히 "입찰미정"이 되게 한다 — nticeDt는 참고용으로
+    # extra에 남긴다. date_range_params로 서버가 이미 기간을 걸러주므로 open_dt가 없어도
+    # 수집 범위 필터링엔 지장 없음.
     "나라장터 발주계획현황서비스(용역)": {
         "config": {
             "endpoint": "https://apis.data.go.kr/1230000/ao/OrderPlanSttusService/getOrderPlanSttusListServc",
@@ -419,8 +433,8 @@ REAL_OPENAPI_CONFIG = {
         "field_maps": [
             ("title", "$.bizNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.orderPlanDtlUrl", None),
+            ("extra:nticeDt", "$.nticeDt", None),  # 등록일(참고용, 입찰 시작일 아님)
             ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
             ("extra:prcrmntMethd", "$.prcrmntMethd", None),  # 조달방식
             ("extra:sumOrderAmt", "$.sumOrderAmt", None),  # 발주예정금액
@@ -438,8 +452,8 @@ REAL_OPENAPI_CONFIG = {
         "field_maps": [
             ("title", "$.bizNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.orderPlanDtlUrl", None),
+            ("extra:nticeDt", "$.nticeDt", None),
             ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
             ("extra:prcrmntMethd", "$.prcrmntMethd", None),
             ("extra:sumOrderAmt", "$.sumOrderAmt", None),
@@ -457,8 +471,8 @@ REAL_OPENAPI_CONFIG = {
         "field_maps": [
             ("title", "$.bizNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.nticeDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.orderPlanDtlUrl", None),
+            ("extra:nticeDt", "$.nticeDt", None),
             ("extra:orderPlanUntyNo", "$.orderPlanUntyNo", None),
             ("extra:prcrmntMethd", "$.prcrmntMethd", None),
             ("extra:sumOrderAmt", "$.sumOrderAmt", None),
@@ -471,6 +485,12 @@ REAL_OPENAPI_CONFIG = {
     # date_range_params 60일 요청도 에러 없이 정상 응답함을 확인(입찰공고정보서비스와 달리 이
     # 서비스엔 30일 상한이 없음) — 단 물량이 매우 많아(30일 기준 용역 4,763건·물품 4,968건·
     # 공사 246건) 초기 백필은 --max-lookback-days를 짧게 잡아서 돈다(운영 가이드, 코드 아님).
+    #
+    # open_dt/close_dt는 매핑하지 않는다(2026-09-05, 사용자 발견) — rcptDt는 "사전규격이
+    # 등록된 날", opninRgstClseDt는 "의견수렴 마감일"일 뿐 둘 다 "입찰 시작/마감"이 아니다.
+    # 매핑해두면 등록되자마자 "입찰접수 중"으로, 의견수렴이 끝나면 "입찰마감"으로 잘못
+    # 표시된다(실측: 사전규격 1,284건 중 1,272건). 정식 입찰 시작일 자체가 없는 단계이므로
+    # open_dt를 비워 자연히 "입찰미정"이 되게 하고, 원래 날짜는 참고용으로 extra에 남긴다.
     "나라장터 사전규격정보서비스(용역)": {
         "config": {
             "endpoint": "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoServc",
@@ -484,9 +504,9 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
-            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.specDocFileUrl1", None),
+            ("extra:rcptDt", "$.rcptDt", None),  # 사전규격 등록일(참고용)
+            ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),  # 의견수렴 마감일(참고용)
             ("extra:refNo", "$.refNo", None),  # 내부관리번호
             ("extra:swBizObjYn", "$.swBizObjYn", None),  # SW사업대상여부
         ],
@@ -504,9 +524,9 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
-            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.specDocFileUrl1", None),
+            ("extra:rcptDt", "$.rcptDt", None),
+            ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),
             ("extra:refNo", "$.refNo", None),
             ("extra:swBizObjYn", "$.swBizObjYn", None),
         ],
@@ -524,9 +544,9 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("open_dt", "$.rcptDt", "%Y-%m-%d %H:%M:%S"),
-            ("close_dt", "$.opninRgstClseDt", "%Y-%m-%d %H:%M:%S"),
             ("url", "$.specDocFileUrl1", None),
+            ("extra:rcptDt", "$.rcptDt", None),
+            ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),
             ("extra:refNo", "$.refNo", None),
             ("extra:swBizObjYn", "$.swBizObjYn", None),
         ],
@@ -616,17 +636,22 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.ancmNo", None),
             ("title", "$.ancmTl", None),
             ("org_name", "$.sorgnNm", None),
-            ("open_dt", "$.ancmDe", "%Y-%m-%d"),
+            # 2026-09-05 — open_dt를 ancmDe(공고 등록일)에서 rcveStrDe(접수시작일)로 교체
+            # (사용자 발견) — ancmDe는 이 공고가 IRIS에 등록된 날일 뿐이라 항상 과거값이고,
+            # "접수예정"이라는 이름과 반대로 실제로는 "입찰예정" 상태가 절대 안 나왔다.
+            # rcveStrDe(실측: "2026.09.08" 형식, 실제 미래 날짜 확인됨)가 진짜 접수 시작일 —
+            # 값이 없는 항목(구체적 시작일 미정)은 open_dt가 비어 자연히 "입찰미정"이 된다.
+            ("open_dt", "$.rcveStrDe", "%Y.%m.%d"),
             ("close_dt", "$.rcveEndDe", "%Y.%m.%d"),
             ("url", "urlfmt:https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId={ancmId}", None),
             # 2026-09-02 — 명명 컬럼에 안 들어가는 나머지 필드(공모유형·소관부처·접수상태·D-day
             # 등)를 notice.extra에 담아 화면 카드에 보여준다(전부 목록 응답에 이미 있던 값 —
             # 사업담당자·연락처 같은 개인정보는 상세페이지에만 있고 목록 응답엔 없음을 직접
             # 확인함, 그래도 mapper.validate_field_maps가 재차 걸러줌).
+            ("extra:ancmDe", "$.ancmDe", None),  # 공고 등록일(참고용, open_dt 아님)
             ("extra:dDay", "$.dDay", None),
             ("extra:rcveStt", "$.rcveStt", None),
             ("extra:rcveSttSeNmLst", "$.rcveSttSeNmLst", None),
-            ("extra:rcveStrDe", "$.rcveStrDe", None),
             ("extra:sorgnId", "$.sorgnId", None),
             ("extra:blngGovdSe", "$.blngGovdSe", None),
             ("extra:blngGovdSeNm", "$.blngGovdSeNm", None),
@@ -654,13 +679,13 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.ancmNo", None),
             ("title", "$.ancmTl", None),
             ("org_name", "$.sorgnNm", None),
-            ("open_dt", "$.ancmDe", "%Y-%m-%d"),
+            ("open_dt", "$.rcveStrDe", "%Y.%m.%d"),  # 2026-09-05, 접수예정과 동일 이유
             ("close_dt", "$.rcveEndDe", "%Y.%m.%d"),
             ("url", "urlfmt:https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId={ancmId}", None),
+            ("extra:ancmDe", "$.ancmDe", None),
             ("extra:dDay", "$.dDay", None),
             ("extra:rcveStt", "$.rcveStt", None),
             ("extra:rcveSttSeNmLst", "$.rcveSttSeNmLst", None),
-            ("extra:rcveStrDe", "$.rcveStrDe", None),
             ("extra:sorgnId", "$.sorgnId", None),
             ("extra:blngGovdSe", "$.blngGovdSe", None),
             ("extra:blngGovdSeNm", "$.blngGovdSeNm", None),
@@ -687,6 +712,13 @@ REAL_OPENAPI_CONFIG = {
             "pagination": {"page_param": "pageIndex", "total_path": "$.paginationInfo.totalPageCount", "max_pages": 65},
         },
         "field_maps": [
+            # 2026-09-05 — 다른 소스와 달리 open_dt=regDt(등록일)를 그대로 둔다. 정확히는
+            # 사전규격·발주계획과 같은 문제(regDt가 "입찰 시작일"이 아니라 등록일)가 있지만,
+            # 이 소스엔 date_range_params가 없어(위 주석 — IRIS는 날짜범위 파라미터를 안 받음)
+            # 서버가 기간을 안 걸러주고 open_dt로 클라이언트측 기간 필터링(_collection_window)
+            # 을 하고 있다. open_dt를 비우면 65페이지(591건) 전체가 매번 걸러지지 않고 들어와
+            # 버린다 — 이 소스 하나뿐인 낮은 우선순위 이슈라 지금은 상태 표시 정확도보다
+            # 수집 범위 제어를 우선한다(알려진 한계로 남김).
             ("notice_no", "$.bsnsPrntcNo", None),
             ("title", "$.ancmPrntcTl", None),
             ("org_name", "$.sorgnNm", None),

@@ -8,9 +8,12 @@ from jsonpath_ng.ext import parse as jsonpath_parse
 
 from app.collector.pii import is_pii_like_key
 
-# 필수 4개 필드가 매핑 안 되면 이 건은 버린다(설계안 04-2 "필수 4개 필드가 매핑되지 않으면
-# 다음 단계로 못 넘어갑니다" — 수집 시점에도 동일 원칙 적용).
-REQUIRED_FIELDS = ("title", "org_name", "open_dt", "url")
+# 2026-09-05 — open_dt를 필수에서 뺐다. 사전규격·발주계획·IRIS 공모예고처럼 "정식 입찰
+# 시작일"이 아예 존재하지 않는 단계(있는 건 이 레코드 자체의 등록일뿐)에서 open_dt를 억지로
+# 채우면 항상 과거값이 되어 bid_status가 "입찰접수 중"으로 잘못 표시된다(사용자 발견 —
+# 사전규격 1,284건 중 1,272건). open_dt가 없으면 compute_bid_status()가 "unscheduled"
+# (입찰미정)로 정확히 분류하므로, 필수에서 빼서 "시작일 없음"을 있는 그대로 저장한다.
+REQUIRED_FIELDS = ("title", "org_name", "url")
 _DATE_FIELDS = {"open_dt", "close_dt"}
 # 명명 컬럼에 안 들어가는 소스별 부가 필드(2026-09-02, notice.extra 도입) — target_field를
 # "extra:원본키"로 적으면 notice.extra JSONB에 {원본키: 값}으로 들어간다.

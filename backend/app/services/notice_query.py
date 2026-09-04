@@ -41,21 +41,17 @@ TABS = ("all",) + BID_STATUSES
 DEFAULT_TAB = "in_progress"
 
 
-# 2026-09-05 발견 — 사전규격/발주계획/공모예고는 아직 정식 입찰이 시작되지 않은 단계인데,
-# 이 단계의 open_dt/close_dt는 "입찰 시작/마감"이 아니라 그 레코드 자체의 등록·게시일(사전규격
-# 접수개시일, 발주계획 등록일, IRIS 공고일)이다 — 레코드가 존재하는 한 이 값은 항상 채워져
-# 있어서(REQUIRED_FIELDS가 open_dt를 강제) "입찰미정"이 한 건도 안 나오고, 실제로는 사전규격
-# 1,284건 중 1,272건이 "입찰접수 중"으로 잘못 표시되고 있었다(사용자 발견). 이 3단계는 정식
-# 입찰일 자체가 없는 게 맞으므로 open_dt/close_dt와 무관하게 항상 unscheduled로 고정한다
-# (사용자 확정) — 입찰공고·사업공고 단계로 넘어가야 비로소 실제 입찰 일정을 갖는다.
-PRE_NOTICE_STAGES = frozenset({"사전규격", "발주계획", "공모예고"})
+# 2026-09-05 — 처음엔 "사전규격/발주계획/공모예고 단계는 항상 unscheduled로 고정"하는
+# stage 기반 예외를 뒀었는데, IRIS 접수예정(stage="공모예고")이 실제로는 rcveStrDe(접수시작일)
+# 라는 진짜 미래 날짜를 갖고 있어서 그 규칙이 오히려 IRIS 접수예정의 "입찰예정" 표시를 막는
+# 역효과를 냈다(사용자 발견). 근본 원인(각 소스가 open_dt에 "레코드 등록일"을 넣어 항상
+# 과거값이 되는 것)을 field_maps 단에서 고쳤다 — 진짜 미래 시작일이 있는 소스(나라장터
+# 입찰공고의 bidBeginDt, IRIS 접수예정의 rcveStrDe)는 그 필드를 쓰고, 그런 필드 자체가 없는
+# 소스(사전규격·발주계획·IRIS 공모예고)는 open_dt를 아예 비워둔다. open_dt가 없으면 아래
+# 로직이 자연히 "unscheduled"로 분류하므로 stage 기반 특례가 더 이상 필요 없다.
 
 
-def compute_bid_status(
-    open_dt: datetime | None, close_dt: datetime | None, now: datetime, stage: str | None = None
-) -> str:
-    if stage in PRE_NOTICE_STAGES:
-        return "unscheduled"
+def compute_bid_status(open_dt: datetime | None, close_dt: datetime | None, now: datetime) -> str:
     if close_dt is not None and close_dt <= now:
         return "closed"
     if open_dt is None:
@@ -67,16 +63,15 @@ def compute_bid_status(
 
 def _bid_status_condition(bid_status: str, now: datetime):
     """compute_bid_status()와 동일한 우선순위를 SQL WHERE 조건으로 옮긴 것 — 탭 필터링에 쓴다."""
-    is_pre_notice = notice.c.stage.in_(PRE_NOTICE_STAGES)
     not_closed = notice.c.close_dt.is_(None) | (notice.c.close_dt > now)
     if bid_status == "closed":
-        return ~is_pre_notice & notice.c.close_dt.is_not(None) & (notice.c.close_dt <= now)
+        return notice.c.close_dt.is_not(None) & (notice.c.close_dt <= now)
     if bid_status == "unscheduled":
-        return is_pre_notice | (not_closed & notice.c.open_dt.is_(None))
+        return not_closed & notice.c.open_dt.is_(None)
     if bid_status == "upcoming":
-        return ~is_pre_notice & not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt > now)
+        return not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt > now)
     if bid_status == "in_progress":
-        return ~is_pre_notice & not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt <= now)
+        return not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt <= now)
     raise ValueError(f"알 수 없는 bid_status: {bid_status}")
 PAGE_SIZE = 20
 
@@ -250,9 +245,7 @@ def _normalize_row(row: dict) -> dict:
         row["est_price"] = int(row["est_price"])
     if row.get("priority") is not None:
         row["priority"] = float(row["priority"])
-    row["bid_status"] = compute_bid_status(
-        row.get("open_dt"), row.get("close_dt"), datetime.now(timezone.utc), row.get("stage")
-    )
+    row["bid_status"] = compute_bid_status(row.get("open_dt"), row.get("close_dt"), datetime.now(timezone.utc))
     return row
 
 

@@ -49,9 +49,7 @@ def get_notice_detail(conn: Connection, notice_id: int) -> dict | None:
     result = dict(row)
     if result.get("est_price") is not None:
         result["est_price"] = int(result["est_price"])
-    result["bid_status"] = compute_bid_status(
-        result.get("open_dt"), result.get("close_dt"), datetime.now(timezone.utc), result.get("stage")
-    )
+    result["bid_status"] = compute_bid_status(result.get("open_dt"), result.get("close_dt"), datetime.now(timezone.utc))
 
     scores = conn.execute(
         select(notice_score.c.interest_topic_id, interest_topic.c.name, notice_score.c.l2_score, notice_score.c.reason)

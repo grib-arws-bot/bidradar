@@ -296,52 +296,35 @@ def test_bid_status_closed_takes_priority_even_without_open_dt():
     assert compute_bid_status(None, now - timedelta(days=1), now) == "closed"
 
 
-# ---- 사전규격·발주계획·공모예고는 정식 입찰일이 없어 항상 입찰미정(2026-09-05 발견·확정) --
-# 이 3단계의 open_dt/close_dt는 "입찰 시작/마감"이 아니라 레코드 자체의 등록·게시일이다 —
-# 실측(사전규격 1,284건 중 1,272건)에서 "입찰접수 중"으로 잘못 표시되던 문제를 사용자가 발견.
+# ---- open_dt가 없는 공고는 입찰미정(2026-09-05 발견·수정) ---------------------------
+# 사전규격·발주계획·IRIS 공모예고는 정식 입찰 시작일이 아예 없는 단계인데, open_dt가 필수
+# 필드였을 때는 "레코드 등록일"을 대신 채워 넣어서 언제나 과거값이 되고 "입찰접수 중"으로
+# 잘못 표시됐다(실측: 사전규격 1,284건 중 1,272건). open_dt를 필수에서 빼고(mapper.py)
+# 이런 소스는 open_dt를 아예 안 채우도록 고쳤다 — 처음엔 stage 이름으로 강제 고정하는
+# 방식을 썼으나, IRIS 접수예정(stage="공모예고")은 실제로 rcveStrDe(접수시작일)라는 진짜
+# 미래 날짜가 있어서 그 방식이 오히려 "입찰예정" 표시를 막는 역효과를 냈다(사용자 발견) —
+# 그래서 stage 특례를 걷어내고 각 소스의 field_maps에서 진짜 날짜가 있으면 매핑하고 없으면
+# 비워두는 방식으로 근본 수정했다(seed_constants.py).
 
 
-@pytest.mark.parametrize("stage", ["사전규격", "발주계획", "공모예고"])
-def test_bid_status_pre_notice_stages_always_unscheduled_even_with_dates_in_progress(stage: str):
-    now = datetime.now(timezone.utc)
-    # open_dt가 과거, close_dt가 미래라 stage를 안 보면 "in_progress"로 잘못 판정됐을 케이스.
-    assert compute_bid_status(now - timedelta(days=5), now + timedelta(days=5), now, stage) == "unscheduled"
-
-
-@pytest.mark.parametrize("stage", ["사전규격", "발주계획", "공모예고"])
-def test_bid_status_pre_notice_stages_unscheduled_even_when_close_dt_passed(stage: str):
-    now = datetime.now(timezone.utc)
-    # close_dt가 지났어도(의견수렴 마감 등) "closed"가 아니라 여전히 "unscheduled" — 정식
-    # 입찰 자체가 없던 단계라 "마감"이라는 개념이 성립하지 않는다.
-    assert compute_bid_status(now - timedelta(days=10), now - timedelta(days=1), now, stage) == "unscheduled"
-
-
-def test_bid_status_bidding_stage_unaffected_by_pre_notice_rule():
-    # "입찰공고"·"사업공고" 등 정식 단계는 종전 로직 그대로(회귀 방지).
-    now = datetime.now(timezone.utc)
-    assert compute_bid_status(now - timedelta(days=1), now + timedelta(days=1), now, "입찰공고") == "in_progress"
-    assert compute_bid_status(now - timedelta(days=10), now - timedelta(days=1), now, "입찰공고") == "closed"
-
-
-def test_unscheduled_tab_includes_pre_notice_stage_notice_via_sql(client: TestClient):
+def test_unscheduled_tab_includes_notice_without_open_dt_via_sql(client: TestClient):
     # _bid_status_condition(SQL)이 compute_bid_status(Python)와 어긋나면 탭에서 걸러진 공고와
     # 카드 상태 라벨이 서로 다르게 보이는 사고가 난다(파일 상단 주석 참고) — 실제 API 응답으로
     # SQL 쪽도 같은 규칙을 따르는지 확인한다.
-    now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="사전규격",
-                title="[테스트] 입찰미정 고정 확인용 사전규격 공고",
-                open_dt=now - timedelta(days=5), close_dt=now + timedelta(days=5),
+                title="[테스트] 입찰미정 확인용 사전규격 공고",
+                open_dt=None, close_dt=None,
                 url="https://x/pre-notice-unscheduled-test",
             ).returning(notice.c.id)
         ).scalar_one()
     try:
         # 실데이터가 많아 페이지에 다 안 잡힐 수 있으니(2026-09-04 나라장터 대량 수집 이후)
         # 고유 제목으로 검색해 이 테스트 공고만 좁혀서 확인한다.
-        q = "입찰미정 고정 확인용"
+        q = "입찰미정 확인용"
         unscheduled = client.get("/api/notices", params={"tab": "unscheduled", "q": q, "size": 20}).json()["items"]
         in_progress = client.get("/api/notices", params={"tab": "in_progress", "q": q, "size": 20}).json()["items"]
         assert notice_id in {i["id"] for i in unscheduled}

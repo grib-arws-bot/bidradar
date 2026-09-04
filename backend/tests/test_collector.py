@@ -300,6 +300,16 @@ def test_map_item_missing_required_field_returns_none():
     assert map_item(broken, FIELD_MAPS) is None
 
 
+def test_map_item_succeeds_without_open_dt():
+    # 2026-09-05 — open_dt를 필수 필드에서 뺐다(사전규격·발주계획처럼 정식 입찰 시작일 자체가
+    # 없는 소스가 있어서). open_dt가 아예 안 매핑돼도(field_maps에 없어도) 나머지 3개
+    # (title/org_name/url)만 있으면 정상 매핑되고, open_dt는 그냥 없는 채로 결과에 남는다.
+    field_maps_without_open_dt = [fm for fm in FIELD_MAPS if fm["target_field"] != "open_dt"]
+    mapped = map_item(SAMPLE_ITEMS[0], field_maps_without_open_dt)
+    assert mapped is not None
+    assert mapped.get("open_dt") is None
+
+
 def test_map_item_const_prefix_sets_fixed_value_regardless_of_item():
     # advisory INBOX #2 — 과기정통부 사업공고처럼 발주기관이 응답 필드가 아니라 소스 전체
     # 고정값인 경우. close_dt가 아예 없는 소스도 흉내낸다(마감일 없는 공고, INBOX #1).

@@ -159,7 +159,9 @@ def run_source(
         # 날짜범위 파라미터를 안 받는 API(IRIS 등, pagination만 있고 date_range_params가 없는
         # 소스)는 서버가 기간을 안 걸러주므로 여기서 직접 자른다 — begin은 이미
         # _collection_window()가 계산해둔 값(2026-09-02, IRIS 2개월치 재수집 정확도 개선).
-        if mapped["open_dt"] < begin:
+        # open_dt가 없는 소스(2026-09-05, open_dt를 필수에서 뺌)는 판단 근거가 없어 대상 아님.
+        open_dt = mapped.get("open_dt")
+        if open_dt is not None and open_dt < begin:
             out_of_window += 1
             continue
         # 2026-09-04 — 나라장터는 공고 "게시일" 기준으로만 기간을 걸러줘서 이미 마감된 공고도
@@ -189,7 +191,7 @@ def run_source(
                     org_id=org_id,
                     est_price=mapped.get("est_price"),
                     region=mapped.get("region"),
-                    open_dt=mapped["open_dt"],
+                    open_dt=open_dt,
                     close_dt=mapped.get("close_dt"),
                     url=mapped["url"],
                     extra=mapped.get("extra"),
