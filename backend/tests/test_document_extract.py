@@ -100,6 +100,46 @@ def test_extract_hwp_preview_missing_stream_reports_failure():
     assert "PrvText" in result.error
 
 
+def test_extract_hwp_prefers_hwp5txt_full_text_over_preview():
+    # 2026-09-04 — LibreOffice는 이 배포판에서 HWP5를 아예 못 열어(구버전 필터만 등록됨,
+    # 실제 나라장터 첨부문서로 확인) pyhwp(hwp5txt)로 교체했다. hwp5txt가 성공하면 PrvText
+    # 미리보기 대신 전문을 쓴다.
+    fake_proc = mock.Mock(returncode=0, stdout="hwp5txt로 추출된 전문 텍스트".encode("utf-8"))
+    with mock.patch("app.services.document_extract.subprocess.run", return_value=fake_proc):
+        result = extract_document("공고문.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert result.method == "hwp5txt"
+    assert result.text == "hwp5txt로 추출된 전문 텍스트"
+
+
+def test_extract_hwp_falls_back_to_preview_when_hwp5txt_unavailable():
+    fake_stream = io.BytesIO("미리보기 텍스트".encode("utf-16-le"))
+    fake_ole = mock.MagicMock()
+    fake_ole.exists.return_value = True
+    fake_ole.openstream.return_value = fake_stream
+    fake_ole.__enter__.return_value = fake_ole
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=FileNotFoundError()):
+        with mock.patch("app.services.document_extract.olefile.OleFileIO", return_value=fake_ole):
+            result = extract_document("구버전공고.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert result.method == "hwp_preview"
+    assert result.text == "미리보기 텍스트"
+
+
+def test_extract_hwp_falls_back_to_preview_when_hwp5txt_returns_nonzero():
+    fake_stream = io.BytesIO("미리보기 텍스트".encode("utf-16-le"))
+    fake_ole = mock.MagicMock()
+    fake_ole.exists.return_value = True
+    fake_ole.openstream.return_value = fake_stream
+    fake_ole.__enter__.return_value = fake_ole
+    fake_proc = mock.Mock(returncode=1, stdout=b"")
+    with mock.patch("app.services.document_extract.subprocess.run", return_value=fake_proc):
+        with mock.patch("app.services.document_extract.olefile.OleFileIO", return_value=fake_ole):
+            result = extract_document("깨진HWP.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert result.method == "hwp_preview"
+
+
 def test_extract_document_unsupported_extension_reports_failure_not_silent_skip():
     result = extract_document("신청서양식.zip", b"PK\x03\x04fake")
     assert result.ok is False

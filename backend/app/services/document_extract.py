@@ -1,32 +1,40 @@
-"""S8 A1 문서 추출(파일럿, 2026-09-03) — 구현스펙 07절 "A1 문서 추출 — 폴백 사슬" 중
-지금 실제로 구현하는 부분만: PDF·HWPX 전문 추출 + HWP(구버전) 미리보기.
+"""S8 A1 문서 추출 — 구현스펙 07절 "A1 문서 추출 — 폴백 사슬" 중 PDF·HWPX·HWP 전문 추출 +
+미리보기 최종 폴백.
 
-Phase 0 실측 결과(같은 날 조사) — PDF는 텍스트 레이어 추출이 바로 성공, HWPX는 zip 안의
-Contents/section*.xml을 파싱하면 전문이 나온다(둘 다 폴백 없이 1단계 성공). 구버전 HWP(OLE
-바이너리)는 PrvText 스트림에서 "미리보기"(~1000자, 문서 전체 아님)만 뽑을 수 있고, 본문
-전체를 뽑으려면 HWP5 레코드 파서나 LibreOffice 변환이 필요하다 — 이번 파일럿 범위 밖이라
-미리보기만 제공하고 extract_method로 그 사실을 명시한다(조용히 빈/불완전 결과로 진행 금지).
+Phase 0 실측 결과(2026-09-03) — PDF는 텍스트 레이어 추출이 바로 성공, HWPX는 zip 안의
+Contents/section*.xml을 파싱하면 전문이 나온다.
 
-LibreOffice·OCR 폴백은 다음 단계(HWP 전문 추출이 실제로 필요해지면) 추가한다.
+2026-09-04 — HWP(구버전 OLE 바이너리, 실제로는 대부분 HWP5) 전문 추출을 처음엔 LibreOffice
+headless 변환으로 시도했으나, 실제 나라장터 첨부문서로 검증한 결과 이 프로젝트가 쓰는
+LibreOffice 7.4 빌드엔 "Hangul WP 97"(writer_MIZI_Hwp_97, 구버전 HWP 2~3.x 전용) 필터만
+등록돼 있고 현재 정부 사이트가 쓰는 HWP5는 아예 못 연다("source file could not be loaded",
+HWPX도 동일 — LibreOffice가 이 배포판에서 두 형식 모두 못 읾을 확인). 대신 실제 HWP5 바이너리
+레코드를 파싱하는 `pyhwp`(hwp5txt CLI)로 교체 — 나라장터 실제 첨부문서로 전문 추출 성공을
+확인함. pyhwp가 없거나 실패하는 환경에서는 PrvText 미리보기(~1000자)로 폴백한다 — 어느
+단계에서 성공했는지 extract_method에 항상 남긴다(S8 원칙: 조용한 빈 결과 금지).
 """
 
 from __future__ import annotations
 
 import io
+import subprocess
+import tempfile
 import zipfile
 from dataclasses import dataclass
+from pathlib import Path
 from xml.etree import ElementTree
 
 import olefile
 from pypdf import PdfReader
 
 _HWPX_PARAGRAPH_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+_HWP5TXT_TIMEOUT_SEC = 30
 
 
 @dataclass
 class ExtractResult:
     text: str | None
-    method: str  # pdf_text / hwpx_xml / hwp_preview
+    method: str  # pdf_text / hwpx_xml / hwp5txt / hwp_preview
     ok: bool
     error: str | None = None
 
@@ -63,6 +71,26 @@ def _extract_hwpx(content: bytes) -> ExtractResult:
     return ExtractResult(text=text, method="hwpx_xml", ok=True)
 
 
+def _extract_hwp_full(content: bytes) -> ExtractResult | None:
+    """pyhwp(hwp5txt)로 HWP5 전문 추출. 바이너리가 없거나 실패하면 None — 호출부가
+    PrvText 미리보기로 폴백한다."""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = Path(tmpdir) / "input.hwp"
+            src.write_bytes(content)
+            result = subprocess.run(
+                ["hwp5txt", str(src)], capture_output=True, timeout=_HWP5TXT_TIMEOUT_SEC
+            )
+            if result.returncode != 0:
+                return None
+            text = result.stdout.decode("utf-8", errors="replace").strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not text:
+        return None
+    return ExtractResult(text=text, method="hwp5txt", ok=True)
+
+
 def _extract_hwp_preview(content: bytes) -> ExtractResult:
     try:
         with olefile.OleFileIO(io.BytesIO(content)) as ole:
@@ -80,6 +108,8 @@ def _extract_hwp_preview(content: bytes) -> ExtractResult:
 def extract_document(filename: str, content: bytes) -> ExtractResult:
     """확장자로 추출 방법을 고른다. 지원하지 않는 형식(zip·odt 등)은 ok=False로 명시 보고 —
     조용히 건너뛰지 않는다(S8 원칙: 조용한 빈 결과 금지).
+
+    HWP는 pyhwp(hwp5txt) 전문 추출 우선 → 실패 시 PrvText 미리보기(~1000자)로 폴백.
     """
     lower = filename.lower()
     if lower.endswith(".pdf"):
@@ -87,5 +117,6 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
     if lower.endswith(".hwpx"):
         return _extract_hwpx(content)
     if lower.endswith(".hwp"):
-        return _extract_hwp_preview(content)
+        full = _extract_hwp_full(content)
+        return full if full is not None else _extract_hwp_preview(content)
     return ExtractResult(text=None, method="unsupported", ok=False, error=f"지원하지 않는 형식: {filename}")

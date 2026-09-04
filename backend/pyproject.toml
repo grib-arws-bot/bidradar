@@ -14,6 +14,10 @@ dependencies = [
     "jsonpath-ng>=1.6,<1.7",
     "pypdf>=5.0,<5.1",
     "olefile>=0.47,<0.48",
+    # HWP5(현재 정부 사이트 표준 HWP 포맷) 전문 추출 — LibreOffice엔 구버전(Hangul WP 97) 필터만
+    # 있고 HWP5는 못 열어(2026-09-04 실측) pyhwp(hwp5txt CLI)로 대체.
+    "pyhwp>=0.1b15,<0.2",
+    "six>=1.16,<2",  # pyhwp가 six를 쓰지만 자체 의존성 선언이 안 돼 있어 직접 명시
 ]
 
 [project.optional-dependencies]
