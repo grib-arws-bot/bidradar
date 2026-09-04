@@ -54,7 +54,7 @@ def list_agencies(
             org.c.abbr,
             org.c.category,
             source.c.name.label("source_name"),
-            source.c.org_name.label("channel_org_name"),
+            source.c.channel_name,
             source.c.homepage_url.label("source_homepage_url"),
             source.c.adapter_type,
             source.c.legal_tier,
@@ -100,7 +100,9 @@ def list_agencies(
                 # 링크 하나로 통일하는 게 맞다. data.go.kr 문서 페이지는 절대 여기 안 옴 —
                 # 근거 확인용 URL은 legal_verified_at 옆 배지가 아니라 license_evidence_url에만 남음.
                 "channel_url": row["source_homepage_url"],
-                "channel": row["channel_org_name"] or row["source_name"],
+                # 2026-09-05 — org_name(운영기관, 나라장터는 전부 "조달청")이 아니라 channel_name
+                # ("나라장터")을 쓴다. 공고 탐색 화면의 "데이터 소스" 채널명과 통일하기 위함.
+                "channel": row["channel_name"] or row["source_name"],
                 "adapter_label": ADAPTER_LABELS.get(row["adapter_type"], row["adapter_type"]) if row["adapter_type"] else None,
                 "status": row["row_status"],
                 "last_run_at": row["run_at"].isoformat() if row["run_at"] else None,
