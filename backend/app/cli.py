@@ -100,6 +100,30 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
           f"already_closed={result['already_closed']} auto_extracted={result['auto_extracted']}")
 
 
+_MODEL_ALIASES = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+}
+
+
+def structure(analysis_id: int, model: str) -> None:
+    """S8 A2(요구사양 구조화, LLM) 수동 1회 실행. 반드시 관리자가 analysis id를 지정해서
+    부를 때만 동작한다(CLAUDE.md S8 원칙 3 "자동 실행 금지") — auto_extract처럼 수집 파이프라인에
+    자동으로 연결하지 않는다."""
+    from app.services.analysis.structure import run_structuring
+
+    resolved_model = _MODEL_ALIASES.get(model, model)
+    with engine.begin() as conn:
+        result = run_structuring(conn, analysis_id, model=resolved_model)
+
+    print(
+        f"구조화 완료: 추출={result['extracted']} 저장={result['saved']} "
+        f"근거없음제외={result['skipped_no_cite']} 토큰(입력/출력)={result['input_tokens']}/{result['output_tokens']} "
+        f"비용=${result['cost_usd']}"
+    )
+
+
 def check_compliance(source_id: int | None) -> None:
     """분기별 준법 재확인(advisory INBOX #6) 수동 실행. 스케줄러 인프라가 아직 없어(설계안
     스택 표에만 있음) 지금은 사람이나 cron으로 이 명령을 직접 돌린다."""
@@ -146,6 +170,12 @@ def main() -> None:
     cleanup_parser = subparsers.add_parser("cleanup-closed")
     cleanup_parser.add_argument("--retention-days", type=int, default=30, help="마감 후 이 일수가 지나면 삭제(기본 30일)")
 
+    structure_parser = subparsers.add_parser("structure")
+    structure_parser.add_argument("--analysis-id", type=int, required=True)
+    structure_parser.add_argument(
+        "--model", default="haiku", help="haiku/sonnet/opus 또는 정식 모델 ID(기본 haiku — 비용 절감)"
+    )
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin()
@@ -157,6 +187,8 @@ def main() -> None:
         check_compliance(args.source_id)
     elif args.command == "cleanup-closed":
         cleanup_closed(args.retention_days)
+    elif args.command == "structure":
+        structure(args.analysis_id, args.model)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # (2026-09-03). 진짜로 필요한 경우(예: 반복 재기동이 잦은 로컬 개발 루프)에만 로컬
     # .env에 ENABLE_DEV_AUTOLOGIN=true를 직접 켠다.
     enable_dev_autologin: bool = False
+    # S8 A2·A5·A6 LLM 호출(구현스펙 07절) — Anthropic Console에서 발급한 API 키(개인 Claude
+    # Code OAuth 로그인 아님, ARWS 결정로그 78번 근거). 미설정이면 A2 등 LLM 단계는 명시적으로
+    # 거부한다(조용히 빈 결과로 진행하지 않음).
+    anthropic_api_key: str = ""
 
     @property
     def is_dev(self) -> bool:
