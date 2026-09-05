@@ -221,6 +221,10 @@ def test_notice_detail_200(client: TestClient):
     body = response.json()
     assert body["id"] == notice_id
     assert {"scores", "requirements", "org_followed"} <= body.keys()
+    # 공고유형/공고상태/업무구분(2026-09-05) — 채널에 따라 다른 분류 체계를 쓴다.
+    assert body["notice_type"] in ("공공입찰", "정부지원")
+    assert body["notice_status_label"]
+    assert body["work_type_label"]
 
 
 def test_notice_detail_404(client: TestClient):

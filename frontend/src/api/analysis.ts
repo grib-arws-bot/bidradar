@@ -56,13 +56,54 @@ export interface AnalysisBudgetConditions {
   labor_cost_basis: string;
 }
 
+export interface AnalysisTaskType {
+  execution_system: string; // 추진체계
+  development_form: string; // 개발형태
+  call_type: string; // 공모형태
+}
+
+export interface AnalysisContact {
+  department: string;
+  role: string;
+  phone: string;
+  email: string;
+}
+
+export interface AnalysisContentItem {
+  title: string;
+  summary: string;
+  period: string;
+  budget: string;
+}
+
+export interface AnalysisEligibility {
+  consortium: string;
+  lead_org: string;
+  participant_org: string;
+  demand_org: string;
+  company_size: string;
+  special_notes: string;
+}
+
+export interface AnalysisSubmission {
+  deadline: string;
+  method: string;
+  documents: string;
+}
+
 export interface AnalysisSummary {
   project_period: string;
   project_budget: string;
   purpose: string;
-  content_narrative: string;
+  sub_business: string;
+  task_type: AnalysisTaskType;
+  contact: AnalysisContact;
+  content_items: AnalysisContentItem[];
   evaluation: AnalysisEvaluationItem[];
   budget_conditions: AnalysisBudgetConditions;
+  eligibility: AnalysisEligibility;
+  submission: AnalysisSubmission;
+  other_notes: string;
 }
 
 export interface RequirementsResult {

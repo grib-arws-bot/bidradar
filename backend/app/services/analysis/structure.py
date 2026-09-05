@@ -46,18 +46,19 @@ OPS = ("gte", "lte", "eq", "contains", "manual")
 
 _MAX_DOC_CHARS = 120_000  # Haiku 컨텍스트(200k 토큰) 안에 여유 있게 들어오는 상한 — 넘으면 잘라내고 표시한다.
 
-_CATEGORIES = ("성능", "인증", "실적", "인력", "자격", "기타")
+_CATEGORIES = ("성능", "인증", "실적", "인력", "기타")
 
 _TOOL_NAME = "extract_requirements"
-_SYSTEM_PROMPT = """당신은 공공입찰 규격서를 관리자가 한눈에 읽을 수 있게 정리하는 보조 도구입니다.
-두 가지를 만듭니다 — (1) 항목/값/연산자로 쪼갤 수 있는 개별 요구사양 목록, (2) 항목으로
-쪼개지지 않는 서술형 개요(사업개요·사업내용·평가기준). 둘 다 판단이 아니라 추출·정리입니다.
+_SYSTEM_PROMPT = """당신은 공공입찰·정부지원 규격서를 관리자가 한눈에 읽을 수 있게 정리하는
+보조 도구입니다. 두 가지를 만듭니다 — (1) 항목/값/연산자로 쪼갤 수 있는 개별 요구사양 목록,
+(2) 항목으로 쪼개지지 않는 서술형 개요. 둘 다 판단이 아니라 추출·정리입니다.
 
 공통 규칙:
 - 문서에 실제로 명시된 내용만 씁니다 — 추측하거나 일반적인 상식으로 채우지 마세요.
 - 충족 여부를 판단하지 마세요. judgement 같은 필드는 절대 포함하지 마세요.
+- 찾을 수 없는 필드는 빈 문자열/빈 배열로 두세요 — 지어내지 마세요.
 
-[requirements] 개별 요구사양
+[requirements] 개별 요구사양(신청자격 제외 — 아래 eligibility에 따로 정리)
 1. 각 항목은 반드시 원문 조문 위치(cite)를 함께 답니다 — 장/절/항 번호나 표 제목처럼 문서에서
    다시 찾을 수 있는 표현으로 적으세요. 위치를 특정할 수 없으면 그 항목은 아예 추출하지 마세요.
 2. 수치 비교 가능한 항목(예: "3년 이상 유지보수 실적")은 op을 gte/lte/eq 중 하나로, req_value에
@@ -65,18 +66,23 @@ _SYSTEM_PROMPT = """당신은 공공입찰 규격서를 관리자가 한눈에 �
 3. 특정 목록에 포함되는지 여부(예: 보유해야 할 인증 목록)는 op="contains"로 넣으세요.
 4. 서술형이라 규칙으로 판정할 수 없는 항목(예: "제안서에 구축 방안을 상세히 기술할 것")은
    op="manual"로 넣고 req_value/req_unit은 비워두세요.
-5. category는 다음 중 문서 맥락에 맞는 것으로 분류하세요: 성능/인증/실적/인력/자격/기타.
-   신청자격·참여제한·참여기관 구성 요건은 "자격"으로 분류하세요.
-6. category="자격" 항목의 req_text는 **단답형 명사구**로 짧게 쓰세요(예: "산학연 컨소시엄 필수",
-   "중소기업만 해당", "동일기관 중복참여 불가") — 법조문을 그대로 옮기거나 긴 문장으로 풀어쓰지 마세요.
+5. category는 성능/인증/실적/인력/기타 중 문서 맥락에 맞는 것으로 분류하세요.
 
 [summary] 서술형 개요
 - project_period: 사업(연구개발)기간. 예: "5년 이내(당해 9개월 이내)"
 - project_budget: 사업금액(정부지원연구개발비 등). 예: "150억원 이내(당해 19억원)"
 - purpose: 사업목적 — **원문 문장을 의역하지 말고 그대로 인용**하세요.
-- content_narrative: 사업내용을 관리자가 바로 이해할 수 있도록 **10줄 내외의 자연스러운 문단**으로
-  분석·서술하세요(원문 항목을 그대로 나열하지 말고, 추진배경·목표·주요 연구내용·기대성과를
-  엮어서 풀어 쓰세요) — 이것만은 단순 추출이 아니라 종합 분석입니다.
+- sub_business: 세부사업(내역사업)명. 표에 "세부사업"·"내역사업"으로 표시된 경우가 많습니다.
+- task_type: 과제유형 {execution_system(추진체계: 예 일반형/통합형/병렬형),
+  development_form(개발형태: 예 원천기술형/혁신제품형), call_type(공모형태: 예 지정공모형/품목지정형)}.
+  문서에 정의된 표현을 그대로 쓰세요. 과제마다 다르면 대표적인 값을 쓰고 다른 경우는 무시.
+- contact: 문의처 {department(담당부서), role(직책/역할, 예: "OO PD"), phone(연락처),
+  email(이메일)}. "문의처"·"담당" 섹션의 표나 문장에서 찾으세요.
+- content_items: 사업내용을 **과제 단위로 나눠** 배열로 정리하세요(하나의 사업 안에 여러
+  RFP/품목이 있으면 각각 별도 항목으로). 각 항목: {title(과제명/품목명), summary(개념·목표·
+  개발내용을 관리자가 이해할 수 있게 종합 분석한 문단 — 원문 나열이 아니라 분석), period(그
+  과제의 연구개발기간, 없으면 사업 전체 기간), budget(그 과제의 정부지원연구개발비, 없으면
+  사업 전체 예산)}. 과제가 하나뿐이면 배열에 항목 하나만 넣으세요.
 - evaluation: 평가기준을 {item, weight, note} 목록으로. item/weight/note 모두 **원문 표현을
   그대로** 옮기세요(재구성·의역 금지) — 배점표가 있으면 항목명·비율·세부 평가내용을 원문 그대로.
 - budget_conditions: 사업비 조건(중소기업 기준). **모두 단답형으로 짧게** — 전체 문장이 아니라
@@ -86,7 +92,15 @@ _SYSTEM_PROMPT = """당신은 공공입찰 규격서를 관리자가 한눈에 �
     - tech_fee_collection: 예: "징수대상" 또는 "미징수"
     - youth_hiring_requirement: 예: "5억원당 1명"
     - labor_cost_basis: 현금 계상이 허용되는 핵심 조건만 키워드로(예: "지식서비스 분야", "신규채용자")
-찾을 수 없는 필드는 빈 문자열/빈 배열로 두세요 — 지어내지 마세요."""
+- eligibility: 신청자격 {consortium(컨소시엄 요건), lead_org(주관기관 요건),
+  participant_org(참여기관 요건), demand_org(수요기관 요건), company_size(기업규모 요건),
+  special_notes(그 외 특이사항)}. **모두 단답형으로 짧게**(예: "산학연 컨소시엄 필수",
+  "중소기업만 해당"). 동일기관 중복참여 불가·재무 부적격·참여제한·PM 발표 같은 모든 공고에
+  공통적인 당연한 사항은 적지 마세요 — 이 공고에 특징적인 요건만 남기세요.
+- submission: 제안제출 {deadline(제출기한), method(제출방법·사이트), documents(제출서류
+  핵심만 요약, 표 전체를 옮기지 말 것)}.
+- other_notes: 기타사항 — 특별한 성능·실적 요구나 위 항목에 안 들어가는 특이사항이 있으면
+  1~3문장으로. 없으면 빈 문자열."""
 
 _REQUIREMENT_SCHEMA = {
     "type": "object",
@@ -112,7 +126,39 @@ _REQUIREMENT_SCHEMA = {
                 "project_period": {"type": "string"},
                 "project_budget": {"type": "string"},
                 "purpose": {"type": "string"},
-                "content_narrative": {"type": "string", "description": "사업내용을 10줄 내외로 종합 서술"},
+                "sub_business": {"type": "string"},
+                "task_type": {
+                    "type": "object",
+                    "properties": {
+                        "execution_system": {"type": "string"},
+                        "development_form": {"type": "string"},
+                        "call_type": {"type": "string"},
+                    },
+                    "required": ["execution_system", "development_form", "call_type"],
+                },
+                "contact": {
+                    "type": "object",
+                    "properties": {
+                        "department": {"type": "string"},
+                        "role": {"type": "string"},
+                        "phone": {"type": "string"},
+                        "email": {"type": "string"},
+                    },
+                    "required": ["department", "role", "phone", "email"],
+                },
+                "content_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "period": {"type": "string"},
+                            "budget": {"type": "string"},
+                        },
+                        "required": ["title", "summary", "period", "budget"],
+                    },
+                },
                 "evaluation": {
                     "type": "array",
                     "items": {
@@ -139,8 +185,33 @@ _REQUIREMENT_SCHEMA = {
                         "youth_hiring_requirement", "labor_cost_basis",
                     ],
                 },
+                "eligibility": {
+                    "type": "object",
+                    "properties": {
+                        "consortium": {"type": "string"},
+                        "lead_org": {"type": "string"},
+                        "participant_org": {"type": "string"},
+                        "demand_org": {"type": "string"},
+                        "company_size": {"type": "string"},
+                        "special_notes": {"type": "string"},
+                    },
+                    "required": ["consortium", "lead_org", "participant_org", "demand_org", "company_size", "special_notes"],
+                },
+                "submission": {
+                    "type": "object",
+                    "properties": {
+                        "deadline": {"type": "string"},
+                        "method": {"type": "string"},
+                        "documents": {"type": "string"},
+                    },
+                    "required": ["deadline", "method", "documents"],
+                },
+                "other_notes": {"type": "string"},
             },
-            "required": ["project_period", "project_budget", "purpose", "content_narrative", "evaluation", "budget_conditions"],
+            "required": [
+                "project_period", "project_budget", "purpose", "sub_business", "task_type", "contact",
+                "content_items", "evaluation", "budget_conditions", "eligibility", "submission", "other_notes",
+            ],
         },
     },
     "required": ["requirements", "summary"],
@@ -174,7 +245,7 @@ def _call_anthropic(model: str, document_text: str) -> tuple[list[dict], dict, i
     analysis.status를 반드시 갱신해야 한다."""
     payload = {
         "model": model,
-        "max_tokens": 8000,
+        "max_tokens": 16000,  # 2026-09-05 — 과제별 content_items·문의처·신청자격 등 필드가 늘어 8000으로는 부족한 사례 발견
         "system": _SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": f"다음은 공공입찰 규격서 원문입니다.\n\n{document_text}"}],
         "tools": [

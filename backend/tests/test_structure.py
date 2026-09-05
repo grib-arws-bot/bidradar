@@ -49,7 +49,12 @@ _SAMPLE_SUMMARY = {
     "project_period": "5년 이내(당해 9개월 이내)",
     "project_budget": "150억원 이내(당해 19억원)",
     "purpose": "연안하구 시스템 변화 프로세스 규명",
-    "content_narrative": "연안하구 관리기술 개발 사업은 관측·분석기술 개발을 목표로 한다.",
+    "sub_business": "연안하구 관리기술 개발",
+    "task_type": {"execution_system": "일반형", "development_form": "원천기술형", "call_type": "지정공모형"},
+    "contact": {"department": "생명환경팀", "role": "담당자", "phone": "02-3460-0312", "email": "sm7289@kimst.re.kr"},
+    "content_items": [
+        {"title": "연안하구 관리기술 개발", "summary": "관측·분석기술 개발을 목표로 한다.", "period": "5년 이내", "budget": "150억원 이내"},
+    ],
     "evaluation": [{"item": "연구개발", "weight": "40%", "note": "계획 구체성 등"}],
     "budget_conditions": {
         "government_support_ratio": "국제공동연구개발비 제외 연구개발비의 75% 이하",
@@ -58,6 +63,12 @@ _SAMPLE_SUMMARY = {
         "youth_hiring_requirement": "정부지원연구개발비 5억원당 1명, 만 18~34세, 1년 이상 고용",
         "labor_cost_basis": "신규채용 참여연구자 등 예외 조건에서만 현금 계상 가능, 계상률 총합 100% 이내",
     },
+    "eligibility": {
+        "consortium": "산학연 컨소시엄 필수", "lead_org": "제한 없음", "participant_org": "산학연",
+        "demand_org": "해당 없음", "company_size": "중소·중견기업", "special_notes": "",
+    },
+    "submission": {"deadline": "2026.9.9 16:00", "method": "IRIS 온라인 접수", "documents": "연구개발계획서 등"},
+    "other_notes": "",
 }
 
 

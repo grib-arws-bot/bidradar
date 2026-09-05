@@ -162,6 +162,12 @@ export interface NoticeDetail {
   extra: Record<string, string | number | null> | null;
   org_id: number | null;
   org_name: string | null;
+  channel_name: string | null;
+  // 공고유형/공고상태/업무구분(2026-09-05) — 채널에 따라 다른 분류 체계를 쓴다(규칙 판정,
+  // app/services/notice_classification.py). notice_type: "공공입찰" | "정부지원".
+  notice_type: string;
+  notice_status_label: string;
+  work_type_label: string;
   scores: NoticeScore[];
   requirements: Requirement[];
   org_followed: boolean;

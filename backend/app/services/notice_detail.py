@@ -15,7 +15,9 @@ from app.models import (
     notice_score,
     org,
     requirement,
+    source,
 )
+from app.services.notice_classification import notice_status_label, notice_type_of, work_type_label
 from app.services.notice_query import NoticeFilters, compute_bid_status, grib_customer_id, ordered_ids
 
 
@@ -38,9 +40,11 @@ def get_notice_detail(conn: Connection, notice_id: int) -> dict | None:
             notice.c.extra,
             notice.c.org_id,
             org.c.name.label("org_name"),
+            source.c.channel_name,
         )
         .select_from(notice)
         .join(org, org.c.id == notice.c.org_id, isouter=True)
+        .join(source, source.c.id == notice.c.source_id, isouter=True)
         .where(notice.c.id == notice_id)
     ).mappings().first()
     if row is None:
@@ -50,6 +54,12 @@ def get_notice_detail(conn: Connection, notice_id: int) -> dict | None:
     if result.get("est_price") is not None:
         result["est_price"] = int(result["est_price"])
     result["bid_status"] = compute_bid_status(result.get("open_dt"), result.get("close_dt"), datetime.now(timezone.utc))
+    # 공고유형/공고상태/업무구분(2026-09-05, 사용자 정의) — 채널(공고기관)에 따라 분류 체계가
+    # 다르다. 규칙표라 결정론적으로 여기서 판정한다(notice_classification.py).
+    notice_type = notice_type_of(result.get("channel_name"))
+    result["notice_type"] = notice_type
+    result["notice_status_label"] = notice_status_label(notice_type, result["stage"], result["bid_status"])
+    result["work_type_label"] = work_type_label(notice_type, result.get("biz_type"))
 
     scores = conn.execute(
         select(notice_score.c.interest_topic_id, interest_topic.c.name, notice_score.c.l2_score, notice_score.c.reason)
