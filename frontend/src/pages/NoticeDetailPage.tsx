@@ -1,35 +1,14 @@
 import ArrowBackIcon from "@mui/icons-material/ArrowBackIosNewOutlined";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForwardIosOutlined";
-import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlineOutlined";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMoreOutlined";
-import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Alert,
-  Box,
-  Button,
-  Card,
-  Chip,
-  CircularProgress,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Button, Card, Chip, CircularProgress, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { fetchLatestExtraction, fetchRequirements, runExtraction, runStructuring, type LlmModel } from "@/api/analysis";
-import { followOrg } from "@/api/classification";
 import { fetchNeighbors, fetchNoticeDetail } from "@/api/notices";
 import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
 import { NoticeTopSection } from "@/components/notice-detail/NoticeTopSection";
-
-const DOC_KIND_LABEL: Record<string, string> = { pdf: "PDF", hwpx: "HWPX", hwp: "HWP", pptx: "PPTX", xlsx: "XLSX", zip: "ZIP", other: "기타" };
-const EXTRACT_STATUS_LABEL: Record<string, string> = { running: "진행 중", done: "완료", failed: "실패" };
 
 export function NoticeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -37,6 +16,7 @@ export function NoticeDetailPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [model, setModel] = useState<LlmModel>("haiku");
 
   const detailQuery = useQuery({
     queryKey: ["notice", noticeId],
@@ -48,11 +28,6 @@ export function NoticeDetailPage() {
   const neighborsQuery = useQuery({
     queryKey: ["notice-neighbors", noticeId, searchParams.toString()],
     queryFn: () => fetchNeighbors(noticeId, searchParams),
-  });
-
-  const followMutation = useMutation({
-    mutationFn: () => followOrg(noticeId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notice", noticeId] }),
   });
 
   const extractionQuery = useQuery({
@@ -71,9 +46,17 @@ export function NoticeDetailPage() {
   });
 
   const structureMutation = useMutation({
-    mutationFn: (model: LlmModel) => runStructuring(noticeId, model),
+    mutationFn: (m: LlmModel) => runStructuring(noticeId, m),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notice-requirements", noticeId] }),
   });
+
+  // "AI분석 실행" 하나로 A1(첨부문서 추출)+A2(구조화)를 순서대로 실행한다(2026-09-05 요청 —
+  // 첨부문서 추출 화면을 따로 안 보여주므로, 안 돼 있으면 여기서 먼저 조용히 실행).
+  async function runAiAnalysis() {
+    const extraction = extractionQuery.data?.status === "done" ? extractionQuery.data : await extractMutation.mutateAsync();
+    if (extraction.status !== "done") return; // 추출 실패 — extractMutation.error가 AI분석 버튼 쪽엔 안 보이지만 재시도 가능
+    structureMutation.mutate(model);
+  }
 
   if (detailQuery.isLoading) {
     return (
@@ -89,6 +72,7 @@ export function NoticeDetailPage() {
 
   const notice = detailQuery.data;
   const qs = searchParams.toString();
+  const alreadyAnalyzed = requirementsQuery.data?.step === "A2_structure";
 
   return (
     // 우측 끝까지 여백을 다 쓴다(2026-09-05 요청) — 목록 페이지처럼 maxWidth로 좁히지 않음.
@@ -126,8 +110,11 @@ export function NoticeDetailPage() {
       <NoticeTopSection
         notice={notice}
         summary={requirementsQuery.data?.summary}
-        onFollow={() => followMutation.mutate()}
-        followPending={followMutation.isPending}
+        model={model}
+        onModelChange={setModel}
+        onRunAnalysis={runAiAnalysis}
+        analysisPending={extractMutation.isPending || structureMutation.isPending}
+        analysisDone={alreadyAnalyzed}
       />
 
       {/* 시드 데이터의 참여자격 요건(requirement 테이블) — S8 이전부터 있던 별개 개념, 실제
@@ -159,121 +146,7 @@ export function NoticeDetailPage() {
         </Card>
       )}
 
-      <ExtractionCard noticeUrl={notice.url} extractionQuery={extractionQuery} extractMutation={extractMutation} />
-
-      <AnalysisTabsSection
-        notice={notice}
-        extractionStatus={extractionQuery.data?.status}
-        requirementsQuery={requirementsQuery}
-        structureMutation={structureMutation}
-      />
+      <AnalysisTabsSection requirementsQuery={requirementsQuery} />
     </Stack>
-  );
-}
-
-function ExtractionCard({
-  noticeUrl,
-  extractionQuery,
-  extractMutation,
-}: {
-  noticeUrl: string;
-  extractionQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof fetchLatestExtraction>>>>;
-  extractMutation: ReturnType<typeof useMutation<Awaited<ReturnType<typeof runExtraction>>, unknown, void>>;
-}) {
-  const isSupported = noticeUrl.includes("iris.go.kr") || noticeUrl.includes("g2b.go.kr");
-  const result = extractMutation.data ?? extractionQuery.data;
-
-  const errorDetail = (extractMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-
-  return (
-    <Card sx={{ p: 3 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
-        <Box>
-          <Typography variant="h3">심층 분석 (파일럿)</Typography>
-          <Typography variant="caption" color="text.secondary">
-            첨부문서를 다운로드해 텍스트만 추출합니다 — 충족 여부 판정은 아직 하지 않습니다. 지금은 IRIS·나라장터 입찰공고만 지원.
-          </Typography>
-        </Box>
-        <Tooltip title={isSupported ? "" : "이 파일럿은 아직 IRIS·나라장터 입찰공고 공고만 지원합니다"}>
-          <span>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<AutoAwesomeOutlinedIcon />}
-              disabled={!isSupported || extractMutation.isPending || result?.status === "running"}
-              onClick={() => extractMutation.mutate()}
-            >
-              {extractMutation.isPending ? "추출 중..." : result ? "다시 추출" : "첨부문서 추출 실행"}
-            </Button>
-          </span>
-        </Tooltip>
-      </Stack>
-
-      {errorDetail && (
-        <Alert severity="error" sx={{ mb: 1.5 }}>
-          {errorDetail}
-        </Alert>
-      )}
-
-      {result && (
-        <Stack spacing={1.5}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Chip
-              label={EXTRACT_STATUS_LABEL[result.status] ?? result.status}
-              size="small"
-              color={result.status === "done" ? "success" : result.status === "failed" ? "error" : "default"}
-            />
-            <Typography variant="body2" color="text.secondary">
-              {result.docs.length > 0 ? `첨부 ${result.docs.length}건` : "첨부문서 없음"}
-            </Typography>
-          </Stack>
-
-          {result.docs.map((doc, i) => (
-            <Accordion key={`${doc.name}-${i}`} disableGutters variant="outlined">
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, width: "100%" }}>
-                  {doc.extract_ok ? (
-                    <CheckCircleOutlineIcon fontSize="small" color="success" />
-                  ) : (
-                    <ErrorOutlineIcon fontSize="small" color="error" />
-                  )}
-                  <Chip label={DOC_KIND_LABEL[doc.kind] ?? doc.kind} size="small" />
-                  <Typography variant="body2" noWrap sx={{ flex: 1 }}>
-                    {doc.name}
-                  </Typography>
-                  {doc.extract_method && (
-                    <Typography variant="caption" color="text.secondary">
-                      {doc.extract_method}
-                    </Typography>
-                  )}
-                </Stack>
-              </AccordionSummary>
-              <AccordionDetails>
-                {doc.error && (
-                  <Alert severity={doc.extract_ok ? "warning" : "error"} sx={{ mb: 1 }}>
-                    {doc.error}
-                  </Alert>
-                )}
-                {doc.text && (
-                  <Box
-                    sx={{
-                      whiteSpace: "pre-wrap",
-                      maxHeight: 400,
-                      overflow: "auto",
-                      p: 1.5,
-                      bgcolor: "background.default",
-                      borderRadius: 1,
-                      fontSize: "0.8125rem",
-                    }}
-                  >
-                    {doc.text}
-                  </Box>
-                )}
-              </AccordionDetails>
-            </Accordion>
-          ))}
-        </Stack>
-      )}
-    </Card>
   );
 }

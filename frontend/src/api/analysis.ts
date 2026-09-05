@@ -88,7 +88,7 @@ export interface AnalysisEligibility {
 export interface AnalysisSubmission {
   deadline: string;
   method: string;
-  documents: string;
+  documents: string[];
 }
 
 export interface AnalysisSummary {

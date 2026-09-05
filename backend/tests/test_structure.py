@@ -67,7 +67,7 @@ _SAMPLE_SUMMARY = {
         "consortium": "산학연 컨소시엄 필수", "lead_org": "제한 없음", "participant_org": "산학연",
         "demand_org": "해당 없음", "company_size": "중소·중견기업", "special_notes": "",
     },
-    "submission": {"deadline": "2026.9.9 16:00", "method": "IRIS 온라인 접수", "documents": "연구개발계획서 등"},
+    "submission": {"deadline": "2026.9.9 16:00", "method": "IRIS 온라인 접수", "documents": ["연구개발계획서", "참여의사 확인서"]},
     "other_notes": "",
 }
 
