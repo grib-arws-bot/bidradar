@@ -31,6 +31,7 @@ from app.services.analysis_pilot import (
     UnsupportedSourceError,
     _discover_g2b_attachments,
     _discover_iris_attachments,
+    _should_skip_by_name,
     get_latest_extraction,
     run_extraction_pilot,
 )
@@ -40,6 +41,7 @@ _SAMPLE_HTML = """
 f_bsnsAncm_downloadAtchFile('DOC1','FILE1','공고문.pdf' ,'12345');
 f_bsnsAncm_downloadAtchFile('DOC1','FILE2','신청서 양식.zip' ,'99999');
 f_bsnsAncm_downloadAtchFile('DOC1','FILE3','안내서.hwpx' ,'54321');
+f_bsnsAncm_downloadAtchFile('DOC1','FILE4','제안요청서(RFP) 등 관련서식.zip' ,'11111');
 </script>
 """
 
@@ -64,12 +66,38 @@ def _fake_hwpx_response():
     return resp
 
 
-def test_discover_iris_attachments_filters_zip_and_parses_tuples():
+def _fake_zip_response(files: dict[str, bytes]):
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, content in files.items():
+            z.writestr(name, content)
+    resp = mock.Mock()
+    resp.content = buf.getvalue()
+    return resp
+
+
+def test_should_skip_by_name_matches_routine_document_keywords():
+    assert _should_skip_by_name("신청서 양식.hwp") is True
+    assert _should_skip_by_name("연구시설장비비 통합관리제 매뉴얼.pdf") is True
+    assert _should_skip_by_name("2026년도 로봇산업기술개발사업 공고문.hwpx") is False
+
+
+def test_should_skip_by_name_ignores_whitespace_inside_keyword():
+    # 실측(2026-09-05, 로봇산업기술개발사업 공고): "붙임 03. 관련 법령 및 규정.zip"처럼 키워드
+    # 중간에 띄어쓰기가 들어간 실제 파일명이 있다 — 그대로 부분일치하면 놓친다.
+    assert _should_skip_by_name("붙임 03. 관련 법령 및 규정.zip") is True
+
+
+def test_discover_iris_attachments_filters_by_name_keyword_not_zip():
     found = _discover_iris_attachments(_SAMPLE_HTML)
     names = [f[0] for f in found]
     assert "공고문.pdf" in names
     assert "안내서.hwpx" in names
-    assert "신청서 양식.zip" not in names  # zip은 발견 단계에서부터 제외
+    assert "신청서 양식.zip" not in names  # "양식" 키워드로 제외 — zip이라서가 아님
+    assert "제안요청서(RFP) 등 관련서식.zip" in names  # zip이라도 이름이 안 걸리면 발견됨(2026-09-05)
 
 
 # ---- 나라장터 입찰공고정보서비스(2026-09-04) — 목록 API 응답에 첨부 URL이 이미 들어있어
@@ -81,13 +109,13 @@ _G2B_SAMPLE_ITEM = {
     "ntceSpecDocUrl1": "https://www.g2b.go.kr/download1",
     "ntceSpecFileNm1": "(붙임1) 공고문.hwp",
     "ntceSpecDocUrl2": "https://www.g2b.go.kr/download2",
-    "ntceSpecFileNm2": "서식_신청서.zip",
+    "ntceSpecFileNm2": "신청서_양식.zip",
     "ntceSpecDocUrl3": "",
     "ntceSpecFileNm3": "",
 }
 
 
-def test_discover_g2b_attachments_filters_zip_and_finds_by_bidntceno():
+def test_discover_g2b_attachments_filters_by_name_keyword_and_finds_by_bidntceno():
     with engine.begin() as conn:
         source_id = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스(용역)")).scalar_one()
         conn.execute(
@@ -138,7 +166,8 @@ def test_run_extraction_pilot_end_to_end(iris_notice):
     with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
         html_resp = mock.Mock()
         html_resp.text = _SAMPLE_HTML
-        mock_fetch.side_effect = [html_resp, _fake_pdf_response(), _fake_hwpx_response()]
+        zip_resp = _fake_zip_response({"관련서식.pdf": b"%PDF-fake"})  # zip도 이제 열어서 분석
+        mock_fetch.side_effect = [html_resp, _fake_pdf_response(), _fake_hwpx_response(), zip_resp]
 
         with engine.begin() as conn:
             with mock.patch("app.services.document_extract.PdfReader") as MockReader:
@@ -148,15 +177,15 @@ def test_run_extraction_pilot_end_to_end(iris_notice):
                 result = run_extraction_pilot(conn, iris_notice)
 
     assert result["status"] == "done"
-    assert result["attachments_found"] == 2  # zip 제외
+    assert result["attachments_found"] == 3  # pdf·hwpx·zip(관련서식) — zip도 이름이 안 걸리면 포함
     kinds = {d["kind"] for d in result["docs"]}
-    assert kinds == {"pdf", "hwpx"}
+    assert kinds == {"pdf", "hwpx"}  # zip 안의 파일도 확장자 기준으로 pdf로 분류됨
     assert all(d["extract_ok"] for d in result["docs"])
 
     with engine.connect() as conn:
         latest = get_latest_extraction(conn, iris_notice)
     assert latest["status"] == "done"
-    assert len(latest["docs"]) == 2
+    assert len(latest["docs"]) == 3  # zip 안의 관련서식.pdf까지 별도 행으로
     assert any("공고문 본문" in (d["text"] or "") for d in latest["docs"])
 
 
@@ -184,7 +213,7 @@ def g2b_notice():
 
 def test_run_extraction_pilot_g2b_end_to_end_uses_raw_payload_not_html(g2b_notice):
     # g2b 경로는 HTML을 아예 안 가져온다 — fetch가 첨부파일 다운로드 1번만 호출돼야 한다
-    # (zip은 제외되므로 ntceSpecDocUrl1 하나뿐).
+    # ("신청서_양식.zip"은 이름 키워드로 발견 단계에서부터 제외되므로 나머지 1건뿐).
     with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
         mock_fetch.return_value = _fake_pdf_response()  # 파일명은 hwp지만 내용 추출은 모킹
         with engine.begin() as conn:
@@ -194,8 +223,57 @@ def test_run_extraction_pilot_g2b_end_to_end_uses_raw_payload_not_html(g2b_notic
                     result = run_extraction_pilot(conn, g2b_notice)
 
     assert mock_fetch.call_count == 1  # HTML 발견 단계 없이 첨부파일 다운로드 1건만
-    assert result["attachments_found"] == 1  # zip(서식_신청서.zip) 제외
+    assert result["attachments_found"] == 1  # 신청서_양식.zip은 이름으로 제외됨
     assert result["docs"][0]["name"] == "(붙임1) 공고문.hwp"
+
+
+# ---- zip 첨부는 안의 모든 파일을 개별 분석(2026-09-05) ------------------------------------
+
+
+@pytest.fixture
+def g2b_zip_notice():
+    """zip 첨부 하나(이름은 안 걸림) 안에 스킵 대상 1개 + 분석 대상 1개가 든 상황."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스(용역)")).scalar_one()
+        item = {
+            "bidNtceNo": "R26TEST9002",
+            "bidNtceNm": "테스트 공고(zip)",
+            "ntceSpecDocUrl1": "https://www.g2b.go.kr/download-zip",
+            "ntceSpecFileNm1": "제안요청서(RFP) 등 관련서식.zip",
+        }
+        conn.execute(insert(raw_payload).values(source_id=source_id, endpoint="test-zip", body={"items": [item]}))
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", notice_no="R26TEST9002",
+                title="[테스트] zip 첨부 검증용 임시 공고",
+                url="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26TEST9002&bidPbancOrd=000",
+            ).returning(notice.c.id)
+        ).scalar_one()
+    yield notice_id
+    with engine.begin() as conn:
+        conn.execute(delete(analysis).where(analysis.c.notice_id == notice_id))
+        conn.execute(delete(notice).where(notice.c.id == notice_id))
+        conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id, raw_payload.c.endpoint == "test-zip"))
+
+
+def test_run_extraction_pilot_expands_zip_and_skips_routine_files_inside(g2b_zip_notice):
+    zip_response = _fake_zip_response({
+        "매뉴얼.hwp": b"ignored",  # 이름 키워드로 제외돼야 함(내부 파일에도 필터 적용)
+        "제안요청서.pdf": b"%PDF-fake",
+    })
+    with mock.patch("app.services.analysis_pilot.fetch", return_value=zip_response):
+        with engine.begin() as conn:
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "제안요청서 본문"
+                MockReader.return_value.pages = [fake_page]
+                result = run_extraction_pilot(conn, g2b_zip_notice)
+
+    assert result["status"] == "done"
+    names = [d["name"] for d in result["docs"]]
+    assert names == ["제안요청서(RFP) 등 관련서식.zip :: 제안요청서.pdf"]  # 매뉴얼.hwp는 안 나옴
+    assert result["docs"][0]["extract_ok"] is True
+    assert result["docs"][0]["kind"] == "pdf"
 
 
 def test_run_extraction_pilot_rejects_duplicate_in_progress(iris_notice):

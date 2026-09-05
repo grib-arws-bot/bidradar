@@ -119,16 +119,51 @@ def test_extract_hwp_preview_missing_stream_reports_failure():
     assert "PrvText" in result.error
 
 
-def test_extract_hwp_prefers_hwp5txt_full_text_over_preview():
+def _fake_hwp5proc_xml_run(xml_body: str):
+    """subprocess.run(["hwp5proc", "xml", ..., "--output", <path>]) 모킹 — 실제로 그 경로에
+    XML을 써서 뒤이은 ElementTree.parse(dest)가 읽을 수 있게 한다."""
+
+    def _run(args, **kwargs):
+        out_path = args[args.index("--output") + 1]
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(xml_body)
+        return mock.Mock(returncode=0)
+
+    return _run
+
+
+def test_extract_hwp_prefers_hwp5xml_full_text_over_preview():
     # 2026-09-04 — LibreOffice는 이 배포판에서 HWP5를 아예 못 열어(구버전 필터만 등록됨,
-    # 실제 나라장터 첨부문서로 확인) pyhwp(hwp5txt)로 교체했다. hwp5txt가 성공하면 PrvText
-    # 미리보기 대신 전문을 쓴다.
-    fake_proc = mock.Mock(returncode=0, stdout="hwp5txt로 추출된 전문 텍스트".encode("utf-8"))
-    with mock.patch("app.services.document_extract.subprocess.run", return_value=fake_proc):
+    # 실제 나라장터 첨부문서로 확인) pyhwp로 교체했다. 처음엔 hwp5txt CLI(plaintext.xsl)를
+    # 썼는데 표(TableControl) 내용을 통째로 버리는 걸 발견해(2026-09-05, 로봇산업기술개발사업
+    # 실제 공고에서 "세부사업(내역사업)" 등 핵심 정보가 표에만 있었음) hwp5proc xml로 전체
+    # XML 모델을 뽑아 직접 걷는 방식으로 교체 — 표 내용까지 복원된다.
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>hwp5xml로 추출된 전문 텍스트</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=_fake_hwp5proc_xml_run(xml_body)):
         result = extract_document("공고문.hwp", b"\xd0\xcf\x11\xe0fake-ole")
     assert result.ok is True
-    assert result.method == "hwp5txt"
-    assert result.text == "hwp5txt로 추출된 전문 텍스트"
+    assert result.method == "hwp5xml"
+    assert result.text == "hwp5xml로 추출된 전문 텍스트"
+
+
+def test_extract_hwp_renders_table_cells_instead_of_placeholder():
+    # 실제 규격서 표 구조 재현: TableBody > TableRow > TableCell > Paragraph > LineSeg > Text.
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><TableControl><TableBody rows=\"1\" cols=\"2\">"
+        "<TableRow>"
+        "<TableCell col=\"0\" row=\"0\"><Paragraph><LineSeg><Text>세부사업</Text></LineSeg></Paragraph></TableCell>"
+        "<TableCell col=\"1\" row=\"0\"><Paragraph><LineSeg><Text>로봇산업기술개발</Text></LineSeg></Paragraph></TableCell>"
+        "</TableRow>"
+        "</TableBody></TableControl></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=_fake_hwp5proc_xml_run(xml_body)):
+        result = extract_document("공고문.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert "세부사업 | 로봇산업기술개발" in result.text
 
 
 def test_extract_hwp_falls_back_to_preview_when_hwp5txt_unavailable():

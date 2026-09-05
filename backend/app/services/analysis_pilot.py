@@ -14,14 +14,19 @@ Playwright 도입 이후 과제. 사전규격정보서비스는 애초에 미등
 
 원본 파일은 저장하지 않는다(2026-09-03 결정) — notice.url이 항상 있어 필요하면 재다운로드
 가능하고, 저장공간이 무한정 느는 것도 피한다. 추출된 텍스트만 analysis_doc.text에 남는다.
-zip(신청서 양식 등)은 건너뛴다 — 공고 "내용" 분석이 목적이라 채우는 서식 자체는 텍스트
-추출 대상이 아니다.
+
+첨부 필터링(2026-09-05, 사용자 지시) — 공고 "내용" 분석이 목적이라 서식·매뉴얼처럼 누구나
+아는 일반 안내 문서는 건너뛴다(_SKIP_NAME_KEYWORDS). zip은 더 이상 통째로 건너뛰지 않는다 —
+이름이 걸러지지 않으면(예: "제안요청서(RFP) 등 관련서식.zip") 열어서 안의 모든 파일을
+개별적으로 추출한다(내부 파일에도 같은 이름 필터 적용).
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import re
+import zipfile
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -38,6 +43,23 @@ _IRIS_ATCH_RE = re.compile(
 _MAX_DOC_BYTES = 50 * 1024 * 1024  # 문서 다운로드는 url_guard 기본 10MB보다 상향(스펙 주석과 동일 원칙)
 _G2B_ATCH_FIELD_PAIRS = 10  # ntceSpecDocUrl1~10 / ntceSpecFileNm1~10
 
+# 파일명에 이 키워드가 있으면 "누구나 아는 일반 안내" 문서로 보고 분석 대상에서 뺀다(2026-09-05
+# 사용자 지시) — 신청서 양식, 이의신청 절차, 참고 법령 원문, 사용 매뉴얼 등은 공고 "내용"과
+# 무관하다. 새 패턴이 발견되면 여기만 추가하면 된다.
+_SKIP_NAME_KEYWORDS = ("양식", "이의신청서", "관련법령", "매뉴얼", "자율성트랙", "사전지원제외", "국제공동r&d")
+
+
+def _normalize_for_match(text: str) -> str:
+    """공백을 없애고 소문자로 — 실제 파일명은 "관련 법령"처럼 키워드 중간에 띄어쓰기가
+    들어간 경우가 흔해(2026-09-05 실측, 로봇산업기술개발사업 공고 첨부) 그대로 부분일치하면
+    놓친다."""
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _should_skip_by_name(filename: str) -> bool:
+    normalized = _normalize_for_match(filename)
+    return any(_normalize_for_match(keyword) in normalized for keyword in _SKIP_NAME_KEYWORDS)
+
 
 class AnalysisInProgressError(Exception):
     """동일 공고에 이미 진행 중인 분석이 있음 — 중복 실행 거부(S8 원칙 3)."""
@@ -48,10 +70,11 @@ class UnsupportedSourceError(Exception):
 
 
 def _discover_iris_attachments(html: str) -> list[tuple[str, str]]:
-    """(fileName, downloadUrl) 목록. zip은 여기서 이미 제외한다."""
+    """(fileName, downloadUrl) 목록. 일반 안내 문서(_should_skip_by_name)만 여기서 제외 —
+    zip은 더 이상 제외하지 않는다(내부 파일까지 run_extraction_pilot에서 펼쳐서 분석)."""
     found = []
     for atch_doc_id, atch_file_id, file_name, _file_size in _IRIS_ATCH_RE.findall(html):
-        if file_name.lower().endswith(".zip"):
+        if _should_skip_by_name(file_name):
             continue
         download_url = (
             "https://www.iris.go.kr/comm/file/fileDownload.do"
@@ -79,17 +102,51 @@ def _discover_g2b_attachments(conn: Connection, source_id: int, notice_no: str |
     for i in range(1, _G2B_ATCH_FIELD_PAIRS + 1):
         url = item.get(f"ntceSpecDocUrl{i}")
         name = item.get(f"ntceSpecFileNm{i}")
-        if url and name and not name.lower().endswith(".zip"):
+        if url and name and not _should_skip_by_name(name):
             found.append((name, url))
     return found
 
 
 def _kind_from_filename(filename: str) -> str:
     lower = filename.lower()
-    for ext in ("pdf", "hwpx", "hwp"):
+    for ext in ("pdf", "hwpx", "hwp", "pptx", "xlsx", "zip"):
         if lower.endswith(f".{ext}"):
             return ext
     return "other"
+
+
+def _extract_one(name: str, content: bytes) -> dict:
+    """파일 하나(zip 안에서 나온 파일 포함)를 추출해 analysis_doc 한 행분 dict로 만든다."""
+    name = name[:255]  # analysis_doc.name 컬럼 상한(zip파일명 :: 내부경로 접두어로 길어질 수 있음)
+    doc_row = {
+        "name": name, "kind": _kind_from_filename(name), "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
+        "extract_method": None, "extract_ok": False, "error": None, "text": None,
+    }
+    try:
+        result = extract_document(name, content)
+        doc_row["extract_method"] = result.method
+        doc_row["extract_ok"] = result.ok
+        doc_row["text"] = result.text
+        doc_row["error"] = result.error
+    except Exception as exc:  # noqa: BLE001 — 폴백 사슬 마지막 보고 지점, 조용히 삼키지 않는다
+        doc_row["error"] = str(exc)
+    return doc_row
+
+
+def _iter_zip_entries(content: bytes) -> list[tuple[str, bytes]]:
+    """zip 안의 각 파일을 (내부경로, 바이트)로 펼친다 — 디렉터리 항목·일반 안내 문서(이름 필터
+    적용)는 뺀다(2026-09-05, "분석 대상 파일이 zip이면 안의 모든 파일을 분석"). 손상된 zip은
+    예외를 그대로 올려 호출부가 실패로 기록하게 한다."""
+    entries = []
+    with zipfile.ZipFile(io.BytesIO(content)) as z:
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            inner_name = info.filename
+            if _should_skip_by_name(inner_name):
+                continue
+            entries.append((inner_name, z.read(info)))
+    return entries
 
 
 def run_extraction_pilot(conn: Connection, notice_id: int) -> dict:
@@ -151,27 +208,40 @@ def run_extraction_pilot(conn: Connection, notice_id: int) -> dict:
     docs_result = []
     any_ok = False
     for file_name, download_url in attachments:
-        kind = _kind_from_filename(file_name)
-        doc_row = {"name": file_name, "kind": kind, "bytes": 0, "sha256": "", "extract_method": None, "extract_ok": False, "error": None, "text": None}
+        try:
+            content = fetch(download_url, max_bytes=_MAX_DOC_BYTES).content
+        except Exception as exc:  # noqa: BLE001 — 폴백 사슬 마지막 보고 지점, 조용히 삼키지 않는다
+            doc_row = {
+                "name": file_name, "kind": _kind_from_filename(file_name), "bytes": 0, "sha256": "",
+                "extract_method": None, "extract_ok": False, "error": str(exc), "text": None,
+            }
+            conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+            docs_result.append(doc_row)
+            continue
 
-        if kind == "other":
-            doc_row["error"] = f"지원하지 않는 형식: {file_name}"
-        else:
+        if _kind_from_filename(file_name) == "zip":
+            # "분석 대상 파일이 zip이면 안의 모든 파일을 분석"(2026-09-05) — 개별 파일마다
+            # analysis_doc 행을 따로 남긴다(이름에 zip파일명을 접두어로 붙여 출처를 남김).
             try:
-                content = fetch(download_url, max_bytes=_MAX_DOC_BYTES).content
-                doc_row["bytes"] = len(content)
-                doc_row["sha256"] = hashlib.sha256(content).hexdigest()
-                result = extract_document(file_name, content)
-                doc_row["extract_method"] = result.method
-                doc_row["extract_ok"] = result.ok
-                doc_row["text"] = result.text
-                doc_row["error"] = result.error
-                any_ok = any_ok or result.ok
-            except Exception as exc:  # noqa: BLE001 — 폴백 사슬 마지막 보고 지점, 조용히 삼키지 않는다
-                doc_row["error"] = str(exc)
-
-        conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
-        docs_result.append(doc_row)
+                inner_files = _iter_zip_entries(content)
+            except Exception as exc:  # noqa: BLE001
+                doc_row = {
+                    "name": file_name, "kind": "zip", "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
+                    "extract_method": None, "extract_ok": False, "error": f"압축 해제 실패: {exc}", "text": None,
+                }
+                conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+                docs_result.append(doc_row)
+                continue
+            for inner_name, inner_content in inner_files:
+                doc_row = _extract_one(f"{file_name} :: {inner_name}", inner_content)
+                any_ok = any_ok or doc_row["extract_ok"]
+                conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+                docs_result.append(doc_row)
+        else:
+            doc_row = _extract_one(file_name, content)
+            any_ok = any_ok or doc_row["extract_ok"]
+            conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+            docs_result.append(doc_row)
 
     final_status = "done" if (not attachments or any_ok) else "failed"
     conn.execute(
