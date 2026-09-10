@@ -23,7 +23,7 @@ from sqlalchemy import delete, insert, select
 from app.config import settings
 from app.db import engine
 from app.main import app
-from app.models import analysis, analysis_doc, analysis_requirement, notice, source
+from app.models import analysis, analysis_doc, analysis_requirement, interest_topic, notice, notice_score, source
 from app.services.analysis.structure import (
     LLMNotConfiguredError,
     StructuringInProgressError,
@@ -53,7 +53,11 @@ _SAMPLE_SUMMARY = {
     "task_type": {"execution_system": "일반형", "development_form": "원천기술형", "call_type": "지정공모형"},
     "contact": {"department": "생명환경팀", "role": "담당자", "phone": "02-3460-0312", "email": "sm7289@kimst.re.kr"},
     "content_items": [
-        {"title": "연안하구 관리기술 개발", "summary": "관측·분석기술 개발을 목표로 한다.", "period": "5년 이내", "budget": "150억원 이내"},
+        {
+            "title": "연안하구 관리기술 개발", "summary": "관측·분석기술 개발을 목표로 한다.", "period": "5년 이내", "budget": "150억원 이내",
+            "task_type": {"execution_system": "일반형", "development_form": "원천기술형", "call_type": "지정공모형"},
+            "lead_org": "제한없음",
+        },
     ],
     "evaluation": [{"item": "연구개발", "weight": "40%", "note": "계획 구체성 등"}],
     "budget_conditions": {
@@ -135,7 +139,7 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
     raw_items = [
         {
             "category": "성능", "req_text": "처리 용량 초당 30프레임 이상", "req_value": "30", "req_unit": "fps",
-            "op": "gte", "cite": "제3장 (1)",
+            "op": "gte", "cite": "제3장 (1)", "task_ref": "연안하구 관리기술 개발",
             "judgement": "ok",  # LLM이 실수로 판정을 끼워 넣어도 무시해야 함(원칙 1)
         },
         {"category": "기타", "req_text": "근거 위치를 특정 못 한 항목", "op": "manual", "cite": ""},  # cite 없음 → 제외
@@ -147,6 +151,10 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
             result = run_structuring(conn, done_analysis)
 
     assert mock_fetch.call_args.kwargs["headers"]["x-api-key"] == "sk-ant-test"
+    # topics_added는 공유 개발 DB의 실제 keyword_rule 내용에 따라 달라질 수 있어 정확한 값 대신
+    # 타입만 확인한다(2026-09-05, AI분석 후 내용 기반 관심주제 재매칭 도입 — test_structure_records_new_interest_topic_from_content 참고).
+    topics_added = result.pop("topics_added")
+    assert isinstance(topics_added, int) and topics_added >= 0
     assert result == {
         "analysis_id": done_analysis, "extracted": 2, "saved": 1, "skipped_no_cite": 1,
         "input_tokens": 1000, "output_tokens": 200, "cost_usd": round(1000 / 1e6 * 1.00 + 200 / 1e6 * 5.00, 4),
@@ -163,6 +171,7 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
 
     assert len(saved) == 1
     assert saved[0]["req_text"] == "처리 용량 초당 30프레임 이상"
+    assert saved[0]["task_ref"] == "연안하구 관리기술 개발"
     # 원칙 1 — LLM이 뭐라 보내든 judgement/matched_product_id는 항상 테이블 기본값이어야 한다.
     assert saved[0]["judgement"] == "unknown"
     assert saved[0]["matched_product_id"] is None
@@ -170,6 +179,69 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
     assert updated.step == "A2_structure"
     assert updated.llm_tokens == 1200
     assert updated.summary == _SAMPLE_SUMMARY
+
+
+def test_run_structuring_rescans_interest_topics_from_content_not_title(done_analysis, monkeypatch):
+    """AI분석 후 내용 기반 관심주제 재매칭(2026-09-05, 사용자 지시) — 제목엔 "로봇"이 없지만
+    A2가 뽑은 요약 내용에는 있으므로 새로 매칭돼야 한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.connect() as conn:
+        notice_id, notice_title = conn.execute(
+            select(analysis.c.notice_id, notice.c.title).join(notice, notice.c.id == analysis.c.notice_id).where(analysis.c.id == done_analysis)
+        ).first()
+    assert "로봇" not in notice_title  # 이 테스트의 전제 — 제목엔 없어야 "내용 기반"임이 증명됨
+
+    summary = dict(_SAMPLE_SUMMARY, content_items=[
+        {"title": "로봇 자동화 과제", "summary": "본 과제는 협동로봇 기반 자동화 기술을 개발한다.", "period": "1년", "budget": "10억원"},
+    ])
+    raw_items = [{"category": "성능", "req_text": "t", "op": "manual", "cite": "1"}]
+    with mock.patch("app.services.analysis.structure.fetch", return_value=_mock_anthropic_response(raw_items, summary=summary)):
+        with engine.begin() as conn:
+            result = run_structuring(conn, done_analysis)
+
+    assert result["topics_added"] >= 1
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(interest_topic.c.name, notice_score.c.reason)
+            .join(interest_topic, interest_topic.c.id == notice_score.c.interest_topic_id)
+            .where(notice_score.c.notice_id == notice_id)
+        ).all()
+    names = [r.name for r in rows]
+    assert "로봇/자동화" in names
+    matched_row = next(r for r in rows if r.name == "로봇/자동화")
+    assert "AI분석 내용 기반 매칭" in matched_row.reason
+
+
+def test_run_structuring_does_not_duplicate_already_matched_topic(done_analysis, monkeypatch):
+    """제목 기반 수집 시점 매칭이 이미 있는 주제는 내용 기반 재매칭에서 중복 추가하지 않는다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.connect() as conn:
+        notice_id, topic_id = conn.execute(
+            select(analysis.c.notice_id, interest_topic.c.id)
+            .join(notice, notice.c.id == analysis.c.notice_id)
+            .join(interest_topic, interest_topic.c.name == "로봇/자동화")
+            .where(analysis.c.id == done_analysis)
+        ).first()
+    with engine.begin() as conn:
+        conn.execute(
+            insert(notice_score).values(
+                notice_id=notice_id, interest_topic_id=topic_id, l2_score=4, reason="키워드 매칭: 로봇", rule_ver=1,
+            )
+        )
+
+    summary = dict(_SAMPLE_SUMMARY, content_items=[
+        {"title": "로봇 자동화 과제", "summary": "협동로봇 자동화 기술 개발", "period": "1년", "budget": "10억원"},
+    ])
+    raw_items = [{"category": "성능", "req_text": "t", "op": "manual", "cite": "1"}]
+    with mock.patch("app.services.analysis.structure.fetch", return_value=_mock_anthropic_response(raw_items, summary=summary)):
+        with engine.begin() as conn:
+            run_structuring(conn, done_analysis)
+
+    with engine.connect() as conn:
+        count = conn.execute(
+            select(notice_score.c.id).where(notice_score.c.notice_id == notice_id, notice_score.c.interest_topic_id == topic_id)
+        ).all()
+    assert len(count) == 1  # 중복 추가 안 됨
 
 
 def test_run_structuring_rejects_duplicate_run(done_analysis, monkeypatch):
@@ -208,6 +280,10 @@ def test_run_structuring_fails_cleanly_without_extracted_text(monkeypatch):
 
 
 def test_run_structuring_records_failure_on_llm_error(done_analysis, monkeypatch):
+    # 호출부 계약: try/except는 반드시 with engine.begin() **안에**(같은 트랜잭션) 둬야 한다
+    # (실제 호출부인 pending_analysis.py·notice_strategy.py가 이 형태를 따른다, 2026-09-08).
+    # 밖에 두면 run_structuring이 다시 던진 예외가 이 with 블록을 통째로 롤백시켜, 방금 conn에
+    # 기록한 "failed" 상태까지 같이 사라진다 — 아래 두 번째 테스트가 그 대조를 보여준다.
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
     with mock.patch("app.services.analysis.structure.fetch", side_effect=RuntimeError("네트워크 실패")):
         with engine.begin() as conn:
@@ -219,6 +295,29 @@ def test_run_structuring_records_failure_on_llm_error(done_analysis, monkeypatch
     assert row.status == "failed"
     assert row.step == "A2_structure"
     assert "네트워크 실패" in row.verdict
+
+
+def test_run_structuring_failure_lost_if_caller_catches_outside_transaction(done_analysis, monkeypatch):
+    """반례 — try/except를 with engine.begin() **밖에** 두면(잘못된 패턴) "failed" 기록이
+    트랜잭션 롤백으로 사라져 "시도조차 안 한 것"과 구분 불가능해진다.
+
+    2026-09-08 실측 — IRIS 접수예정 자동수집 중 공고 1건(id=39946)의 A2가 정확히 이 패턴
+    때문에 흔적도 없이 조용히 스킵됐다(CLAUDE.md S8 "조용한 실패 금지" 위반). 원인이었던
+    pending_analysis.py·notice_strategy.py 세 곳 모두 try/except를 with 블록 안으로
+    옮겨 고쳤다 — 이 테스트는 "왜 밖에 두면 안 되는지"를 남겨두는 회귀 방지용 반례다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with mock.patch("app.services.analysis.structure.fetch", side_effect=RuntimeError("네트워크 실패")):
+        try:
+            with engine.begin() as conn:
+                run_structuring(conn, done_analysis)
+        except RuntimeError:
+            pass
+
+    with engine.connect() as conn:
+        row = conn.execute(select(analysis.c.status, analysis.c.step).where(analysis.c.id == done_analysis)).first()
+    # 롤백돼 done_analysis 픽스처가 만든 원래 상태(done/A1_extract)로 남는다 — 'failed'가 아님.
+    assert row.status == "done"
+    assert row.step == "A1_extract"
 
 
 # ---- API 라우트(POST /structure, GET /requirements) -------------------------------

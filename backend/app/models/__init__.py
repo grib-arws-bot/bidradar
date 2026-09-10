@@ -7,11 +7,11 @@ from app.models.base import metadata
 from app.models.auth import auth_session, login_attempt
 from app.models.customers import (
     customer,
+    customer_document,
     customer_followed_org,
     customer_interest,
     customer_interest_term,
     interest_topic,
-    saved_search,
 )
 from app.models.notices import (
     award,
@@ -32,7 +32,7 @@ from app.models.analysis import (
     analysis_requirement,
 )
 from app.models.catalog import product, product_cert, product_reference, product_spec
-from app.models.reports import newsletter_report
+from app.models.reports import newsletter_report, notice_strategy
 from app.models.sources import (
     audit_log,
     source,
@@ -53,7 +53,7 @@ __all__ = [
     "customer_interest",
     "customer_interest_term",
     "customer_followed_org",
-    "saved_search",
+    "customer_document",
     # notices
     "raw_payload",
     "notice",
@@ -77,6 +77,7 @@ __all__ = [
     "product_reference",
     # reports
     "newsletter_report",
+    "notice_strategy",
     # sources
     "source",
     "source_config",

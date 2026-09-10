@@ -34,6 +34,12 @@ KEYWORD_SEED = {
     "산업안전/CCTV·영상보안": [
         ("지능형 CCTV", "core", 3), ("영상관제", "core", 3), ("객체인식", "core", 3),
         ("IoT 센서", "tech", 2), ("무선 AP", "tech", 2), ("구축", "ctx", 1),
+        # 2026-09-05 추가 — 실제 수집 데이터 조사 결과 "안전관리 시스템"류 표현이 CCTV/영상관제
+        # 키워드로는 전혀 안 걸려 산업안전 공고가 대량 누락되고 있었다(사용자 지적: "스마트 공원
+        # 안전관리 시스템 유지보수 용역"이 왜 분류가 안 되냐). 공백 유무 두 형태 다 추가 —
+        # score_l2가 단순 부분문자열 매칭이라 스페이싱이 다르면 안 걸린다.
+        ("안전관리시스템", "tech", 2), ("안전관리 시스템", "tech", 2),
+        ("지능형영상", "tech", 2), ("지능형 영상", "tech", 2), ("통합안전", "tech", 2),
         ("임대", "block", -5), ("렌탈", "block", -5),
     ],
     "스마트제조/팩토리": [
@@ -44,6 +50,7 @@ KEYWORD_SEED = {
     "로봇/자동화": [
         ("로봇", "core", 4), ("협동로봇", "core", 4),
         ("자동화설비", "tech", 2), ("무인이동체", "tech", 2), ("드론", "tech", 2),
+        ("로보틱스", "tech", 2),  # 2026-09-05 추가 — "로봇"과 형태소가 달라 안 걸리던 실사례 발견
         ("구축", "ctx", 1), ("도입", "ctx", 1),
         ("임대", "block", -5), ("렌탈", "block", -5),
     ],
@@ -67,6 +74,7 @@ KEYWORD_SEED = {
         ("탄소중립", "core", 4), ("온실가스", "core", 4),
         ("폐기물", "tech", 2), ("자원순환", "tech", 2), ("대기오염", "tech", 2), ("수질관리", "tech", 2),
         ("탄소배출", "tech", 2),
+        ("CO2", "tech", 2),  # 2026-09-05 추가 — 실제 공고는 "탄소" 대신 영문 약자를 쓰는 경우가 있음
         ("관리", "ctx", 1),
     ],
     "헬스케어/바이오·의료기기": [
@@ -87,7 +95,10 @@ KEYWORD_SEED = {
     "스마트시티/인프라관제": [
         ("스마트시티", "core", 4), ("통합관제센터", "core", 4),
         ("인프라관제", "tech", 2), ("시설물관리", "tech", 2),
-        ("GIS", "tech", 2), ("공간정보", "tech", 2), ("위치기반서비스", "tech", 2), ("스마트빌딩", "tech", 2),
+        ("위치기반서비스", "tech", 2), ("스마트빌딩", "tech", 2),
+        # "GIS"·"공간정보"는 2026-09-05에 뺐다 — 실측 결과 이 주제 매칭 22건 중 21건이
+        # "GIS"만으로 걸린 것이었고, 거의 전부 하수관로·노후관 개량 등 완전히 무관한 토목
+        # 측량 용역이었다(진짜 관심공고 하나가 상위 20위 밖으로 밀려나는 원인이 됨, 사용자 지적).
         ("구축", "ctx", 1),
     ],
     "국방/보안": [
@@ -133,6 +144,8 @@ KEYWORD_SEED = {
     ],
     "스마트교육/에듀테크": [
         ("스마트교실", "core", 3), ("전자칠판", "core", 3), ("AI 디지털교과서", "core", 3),
+        ("에듀테크", "core", 4),  # 2026-09-05 추가 — 주제명 자체인 핵심어가 정작 목록에 없었음
+        ("원격수업", "tech", 2), ("디지털교과서", "tech", 2),
         ("무선 AP", "tech", 2), ("보급", "ctx", 1), ("급식", "block", -5),
     ],
 }
@@ -187,11 +200,12 @@ SOURCE_SEED = [
      "https://www.g2b.go.kr/", "발주계획", "openapi", True, True, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15129462/openapi.do"),
-    # 2026-09-05 — 등록 보류를 해제(사용자 지시). g2b.go.kr 상세페이지 URL은 여전히 못 찾았으나
-    # (Playwright 이후 과제) notice.url엔 이 서비스가 실제로 제공하는 첨부파일 다운로드 URL
-    # (specDocFileUrl1, 로그인 없이 접근 확인됨)을 대신 쓴다 — 표본 100건 중 92%가 이 필드를
-    # 갖고 있음(실측). 첨부가 아예 없는 나머지 8%는 url이 빈 문자열이 돼 mapper의 필수필드
-    # 검사(REQUIRED_FIELDS)에 걸려 자동으로 건너뛰어진다(별도 예외처리 불필요).
+    # 2026-09-05 — 등록 보류를 해제(사용자 지시). notice.url은 2026-09-10까지 첨부파일 다운로드
+    # URL(specDocFileUrl1)로 대신 쓰다가, 사용자가 실제 상세페이지 URL 패턴(g2b.go.kr/link/
+    # PRVA004_02/?bfSpecRegNo=사전규격등록번호, 로그인 불필요)을 브라우저에서 직접 확인해줘서
+    # urlfmt: 템플릿으로 진짜 상세페이지 링크를 조립하도록 바뀌었다(아래 field_maps, 의사결정_로그
+    # 참고). bfSpecRgstNo 자체가 없는 항목(첨부 유무와 무관, 극히 드묾)만 url이 빈 문자열이 돼
+    # mapper의 필수필드 검사(REQUIRED_FIELDS)에 걸려 자동으로 건너뛰어진다.
     ("나라장터 사전규격정보서비스(용역)", "조달청", "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoServc",
      "https://www.g2b.go.kr/", "사전규격", "openapi", True, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
@@ -241,18 +255,19 @@ SOURCE_SEED = [
     # 진짜 데이터는 별도 JSON 엔드포인트(POST)에서 나옴. HTML 파싱이 필요 없어 openapi 어댑터를
     # 그대로 재사용한다(2026-09-01 직접 검증 — advisory 원안의 "GET·서버렌더링" 설명과 다름,
     # 새 INBOX에도 같은 원안 설명이 반복되지만 직접 검증한 이 경로를 유지한다 — 의사결정_로그 #14).
-    # stage="공모예고"(2026-09-01) — "사업공고"로 두면 이미 공식 공고된 단계(입찰공고 탭)와
-    # 섞인다. 접수예정은 아직 공식 접수 전이라 사전규격·발주계획과 같은 묶음(공고탐색 탭 2번)에
-    # 들어가야 의미가 맞는다. 법적등급 B(조건부) — INBOX #5: robots 허용·명시적 금지 없음이라
-    # 수집 자체는 되지만, 원문 미저장(요약 필드만 매핑돼 있음)·출처링크 필수·최소 수집 간격을
-    # 코드가 강제한다(app/collector/runner.py run_source).
+    # stage="접수예정"(2026-09-05 수정, 의사결정_로그 52번 — 원래 "공모예고"였다가 소스명과
+    # stage 값이 달라 사용자가 목록에서 혼동, 지금은 삭제한 "IRIS 공모예고" 소스와도 이름이
+    # 겹쳐 잔존 데이터로 오인. 정부지원 생명주기(접수예정→접수중→접수마감, notice_classification.py)
+    # 라벨과 그대로 맞춰 소스명=stage=생명주기 단계가 한눈에 일치하도록 통일). 법적등급 B(조건부)
+    # — INBOX #5: robots 허용·명시적 금지 없음이라 수집 자체는 되지만, 원문 미저장(요약 필드만
+    # 매핑돼 있음)·출처링크 필수·최소 수집 간격을 코드가 강제한다(app/collector/runner.py run_source).
     # org_name="IRIS"(2026-09-03) — "과학기술정보통신부 등(범부처, 42개 전문기관)"이라는 설명문을
     # 그대로 넣었더니 관리자 "데이터 소스" 화면의 채널 열에 그 긴 문장이 그대로 노출됐다. 이
     # 소스가 대표하는 기관 목록에 대한 설명은 안내 텍스트지 채널 이름이 아니다 — 실제 채널
     # 이름(IRIS)을 넣는다.
     ("IRIS 접수예정", "IRIS",
      "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do",
-     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "공모예고", "openapi", False, True, 1440,
+     "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do", "접수예정", "openapi", False, True, 1440,
      "B", "robots.txt 허용, 명시적 재배포 금지 문구 없음(2026-09-01 확인) — 원문 미저장·요약+링크만, 최소 수집 간격(1일) 강제",
      "https://www.iris.go.kr/robots.txt"),
     # 2026-09-05 — "접수중"(ancmPrg=ancmIng) 탭도 별도 소스로 등록(사용자 지시). 접수예정과
@@ -344,7 +359,11 @@ REAL_OPENAPI_CONFIG = {
             # (resultCode 07), 30일은 정상. 페이지당 100건 고정이라 pagination 없이는 1페이지만
             # 가져와 나머지를 놓친다(용역 30일치가 100건을 훌쩍 넘음, 실측으로 확인) — total_path
             # 없이 빈 페이지에서 멈추는 방식(어댑터 기본 동작)으로 안전하게 전량 수집.
-            "max_lookback_days": 30,
+            # 2026-09-05 — 30일치가 실제로 12,292건(직접 API 호출로 실측)이라 첫 백필이 아주
+            # 오래 걸림(50페이지 상한까지 순회) — 7일로 낮춤(사용자 지시). 정기 수집은 어차피
+            # 직전 성공 시각 기준으로 자동 좁혀지므로(_collection_window) 이 값은 "이력이 없거나
+            # 공백이 클 때"만 적용되는 상한이다.
+            "max_lookback_days": 7,
             "pagination": {"page_param": "pageNo", "max_pages": 50},
         },
         "field_maps": [
@@ -434,6 +453,9 @@ REAL_OPENAPI_CONFIG = {
             # 2026-09-04 실측 — 60일 범위는 정상(입찰공고와 달리 범위 초과 에러 없음)이나 페이지당
             # 100건 고정이라 pagination 없이는 1페이지만 가져온다(60일치 338건 확인, 100건만
             # 저장되고 나머지 238건 누락되던 버그).
+            # 2026-09-05 — 나라장터 전체를 7일로 통일(사용자 지시, 입찰공고정보서비스 12,292건
+            # 실측 계기).
+            "max_lookback_days": 7,
             "pagination": {"page_param": "pageNo", "max_pages": 50},
         },
         "field_maps": [
@@ -484,10 +506,14 @@ REAL_OPENAPI_CONFIG = {
             ("extra:sumOrderAmt", "$.sumOrderAmt", None),
         ],
     },
-    # 2026-09-05 — 사전규격 3종 등록(보류 해제, 사용자 지시). url은 이 서비스가 주는 상세페이지
-    # URL이 없어 첨부파일 다운로드 URL(specDocFileUrl1, 로그인 없이 접근 가능함을 확인함)로
-    # 대신한다 — 표본 100건 중 92%가 이 필드를 가짐(실측). 나머지 8%(첨부 자체가 없는 공고)는
-    # url이 빈 문자열이 돼 mapper.REQUIRED_FIELDS에 걸려 자동으로 skipped 처리된다.
+    # 2026-09-05 — 사전규격 3종 등록(보류 해제, 사용자 지시). 등록 당시엔 이 서비스가 주는
+    # 상세페이지 URL이 없어 첨부파일 다운로드 URL(specDocFileUrl1)로 대신했었는데, 2026-09-10
+    # 사용자가 실제 브라우저에서 진짜 상세페이지 URL 패턴을 직접 확인해줬다 —
+    # `https://www.g2b.go.kr/link/PRVA004_02/?bfSpecRegNo={사전규격등록번호}`(로그인 불필요,
+    # 발주계획의 orderPlanDtlUrl과 같은 성격). 응답 필드명은 `bfSpecRgstNo`(Rgst)인데 이
+    # URL의 쿼리 파라미터명은 `bfSpecRegNo`(Reg)로 철자가 달라 헷갈리기 쉬우니 주의(의사결정_로그
+    # 참고). urlfmt: 템플릿(mapper._resolve, IRIS·K-water에 이미 쓰던 것과 동일한 메커니즘)으로
+    # 조립한다.
     # date_range_params 60일 요청도 에러 없이 정상 응답함을 확인(입찰공고정보서비스와 달리 이
     # 서비스엔 30일 상한이 없음) — 단 물량이 매우 많아(30일 기준 용역 4,763건·물품 4,968건·
     # 공사 246건) 초기 백필은 --max-lookback-days를 짧게 잡아서 돈다(운영 가이드, 코드 아님).
@@ -504,13 +530,15 @@ REAL_OPENAPI_CONFIG = {
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",
             "biz_type": "용역",
+            # 2026-09-05 — 나라장터 전체를 7일로 통일(사용자 지시).
+            "max_lookback_days": 7,
             "pagination": {"page_param": "pageNo", "max_pages": 60},
         },
         "field_maps": [
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("url", "$.specDocFileUrl1", None),
+            ("url", "urlfmt:https://www.g2b.go.kr/link/PRVA004_02/?bfSpecRegNo={bfSpecRgstNo}", None),
             ("extra:rcptDt", "$.rcptDt", None),  # 사전규격 등록일(참고용)
             ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),  # 의견수렴 마감일(참고용)
             ("extra:refNo", "$.refNo", None),  # 내부관리번호
@@ -530,7 +558,7 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("url", "$.specDocFileUrl1", None),
+            ("url", "urlfmt:https://www.g2b.go.kr/link/PRVA004_02/?bfSpecRegNo={bfSpecRgstNo}", None),
             ("extra:rcptDt", "$.rcptDt", None),
             ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),
             ("extra:refNo", "$.refNo", None),
@@ -550,7 +578,7 @@ REAL_OPENAPI_CONFIG = {
             ("notice_no", "$.bfSpecRgstNo", None),
             ("title", "$.prdctClsfcNoNm", None),
             ("org_name", "$.orderInsttNm", None),
-            ("url", "$.specDocFileUrl1", None),
+            ("url", "urlfmt:https://www.g2b.go.kr/link/PRVA004_02/?bfSpecRegNo={bfSpecRgstNo}", None),
             ("extra:rcptDt", "$.rcptDt", None),
             ("extra:opninRgstClseDt", "$.opninRgstClseDt", None),
             ("extra:refNo", "$.refNo", None),

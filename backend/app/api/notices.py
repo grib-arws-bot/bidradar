@@ -20,9 +20,12 @@ from app.services.analysis_pilot import (
     get_latest_extraction,
     run_extraction_pilot,
 )
+from app.services import audit
 from app.services.classification import ClassificationError, record_classification
+from app.services.notice_dedup import find_and_mark_superseded
 from app.services.notice_detail import follow_org, get_neighbors, get_notice_detail
 from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
+from app.services.notice_topics import add_topic, remove_topic
 
 router = APIRouter(prefix="/api/notices", tags=["notices"])
 
@@ -42,7 +45,7 @@ def _notice_filters(
     close_in: int | None = Query(None),
     status_: str | None = Query(None, alias="status"),
     qualified: bool | None = Query(None),
-    sort: str = Query("priority"),
+    sort: str = Query("notice_date_desc"),  # 공고일 최신순 기본(2026-09-08 사용자 지시)
 ) -> NoticeFilters:
     return NoticeFilters(
         tab=tab,
@@ -68,7 +71,7 @@ def get_notices(
     _email: str = Depends(require_auth),
     filters: NoticeFilters = Depends(_notice_filters),
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: int = Query(21, ge=1, le=100),  # 3의 배수(2026-09-07) — notice_query.PAGE_SIZE와 동일
 ) -> dict:
     with engine.connect() as conn:
         filters.page, filters.size = page, size
@@ -87,6 +90,17 @@ def get_notice_counts(_email: str = Depends(require_auth)) -> dict[str, int]:
 def get_filter_options(_email: str = Depends(require_auth)) -> dict:
     with engine.connect() as conn:
         return filter_options(conn)
+
+
+@router.post("/dedup/rescan")
+def post_dedup_rescan(email: str = Depends(require_auth)) -> dict:
+    """동일 발주기관·동일 사업명이 발주계획/사전규격/입찰공고 단계에 중복 등장하면 가장 최근
+    공고만 남기고 나머지를 무효화한다(2026-09-06 사용자 지시). 관리자가 눌러서 실행 — 새로
+    묶이는 그룹을 사람이 검수할 여지를 두기 위해 자동 실행하지 않는다(S8 원칙 3과 같은 이유)."""
+    with engine.begin() as conn:
+        result = find_and_mark_superseded(conn)
+        audit.record(conn, actor=email, action="notice.dedup_rescan", target_type="notice", target_id=None, detail=result)
+    return result
 
 
 @router.get("/{notice_id}")
@@ -177,3 +191,22 @@ def post_structure(notice_id: int, payload: StructureRequest, _email: str = Depe
 def get_requirements_route(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
     with engine.connect() as conn:
         return get_requirements(conn, notice_id)
+
+
+class TopicRequest(BaseModel):
+    topic_id: int
+
+
+@router.post("/{notice_id}/topics")
+def post_notice_topic(notice_id: int, payload: TopicRequest, _email: str = Depends(require_auth)) -> dict:
+    """상세페이지에서 관심주제를 직접 추가(2026-09-05) — S1 분류검수(classification_correction,
+    감사로그용)와는 다르게 notice_score를 그 자리에서 바로 바꾼다."""
+    with engine.begin() as conn:
+        added = add_topic(conn, notice_id, payload.topic_id)
+    return {"added": added}
+
+
+@router.delete("/{notice_id}/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def delete_notice_topic(notice_id: int, topic_id: int, _email: str = Depends(require_auth)) -> None:
+    with engine.begin() as conn:
+        remove_topic(conn, notice_id, topic_id)

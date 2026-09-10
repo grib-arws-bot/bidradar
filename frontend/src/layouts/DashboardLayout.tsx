@@ -1,16 +1,11 @@
-import ApartmentIcon from "@mui/icons-material/ApartmentOutlined";
-import AutoAwesomeIcon from "@mui/icons-material/AutoAwesomeOutlined";
-import BookmarkIcon from "@mui/icons-material/BookmarkBorderOutlined";
+import AccountTreeIcon from "@mui/icons-material/AccountTreeOutlined";
 import CategoryIcon from "@mui/icons-material/CategoryOutlined";
-import DictionaryIcon from "@mui/icons-material/MenuBookOutlined";
+import DescriptionIcon from "@mui/icons-material/DescriptionOutlined";
 import HomeIcon from "@mui/icons-material/HomeOutlined";
-import InsightsIcon from "@mui/icons-material/InsightsOutlined";
-import InventoryIcon from "@mui/icons-material/Inventory2Outlined";
 import LogoutIcon from "@mui/icons-material/LogoutOutlined";
+import PeopleIcon from "@mui/icons-material/PeopleAltOutlined";
 import RadarIcon from "@mui/icons-material/RadarOutlined";
-import SettingsIcon from "@mui/icons-material/SettingsOutlined";
 import SourceIcon from "@mui/icons-material/SettingsInputAntennaOutlined";
-import ViewKanbanIcon from "@mui/icons-material/ViewKanbanOutlined";
 import {
   Avatar,
   Box,
@@ -43,8 +38,9 @@ interface NavSection {
   items: NavItem[];
 }
 
-// 구현스펙 02절 pages/ 목록 + 오늘 결정사항(S7→고객 관심주제 관리, S9 카탈로그 신설) 반영.
-// 실제 화면은 U4 이후에 채워지고, 지금은 셸+라우팅만(U3 범위).
+// 메뉴 재정리(2026-09-05 사용자 지시) — U3 시절의 구현스펙 자리채움(심층분석·파이프라인·
+// 기관프로파일·시장분석·키워드사전·제품카탈로그·감사로그)은 Phase 1 범위 밖이라 제거.
+// "고객 관심 주제"는 고객 상세(CustomerDetailPage)로 흡수, 리포트는 "보고서 관리"로 분리.
 const NAV_SECTIONS: NavSection[] = [
   {
     label: "홈",
@@ -52,28 +48,21 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "공고",
-    items: [
-      { label: "공고 탐색", to: "/notices", icon: <RadarIcon fontSize="small" /> },
-      { label: "심층 분석", to: "/analyses", icon: <AutoAwesomeIcon fontSize="small" /> },
-      { label: "파이프라인", to: "/pipeline", icon: <ViewKanbanIcon fontSize="small" /> },
-      { label: "기관 프로파일", to: "/orgs", icon: <ApartmentIcon fontSize="small" /> },
-      { label: "시장 분석", to: "/analytics", icon: <InsightsIcon fontSize="small" /> },
-    ],
+    items: [{ label: "공고 탐색", to: "/notices", icon: <RadarIcon fontSize="small" /> }],
   },
   {
-    label: "고객 관리",
+    label: "고객",
     items: [
-      { label: "고객 관심 주제", to: "/customers/interests", icon: <BookmarkIcon fontSize="small" /> },
+      { label: "고객 관리", to: "/customers", icon: <PeopleIcon fontSize="small" /> },
+      { label: "보고서 관리", to: "/customers/reports", icon: <DescriptionIcon fontSize="small" /> },
     ],
   },
   {
     label: "관리",
     items: [
-      { label: "데이터 소스", to: "/admin/sources", icon: <SourceIcon fontSize="small" /> },
+      { label: "공고데이터 수집", to: "/admin/channels", icon: <SourceIcon fontSize="small" /> },
+      { label: "발주기관 현황", to: "/admin/agencies", icon: <AccountTreeIcon fontSize="small" /> },
       { label: "관심주제 분류", to: "/admin/topics", icon: <CategoryIcon fontSize="small" /> },
-      { label: "키워드 사전", to: "/admin/keywords", icon: <DictionaryIcon fontSize="small" /> },
-      { label: "제품 카탈로그", to: "/admin/products", icon: <InventoryIcon fontSize="small" /> },
-      { label: "감사 로그", to: "/admin/audit", icon: <SettingsIcon fontSize="small" /> },
     ],
   },
 ];
@@ -123,7 +112,7 @@ export function DashboardLayout() {
                   key={item.to}
                   component={NavLink}
                   to={item.to}
-                  end={item.to === "/"}
+                  end={item.to === "/" || item.to === "/customers"}
                   sx={{
                     borderRadius: 1,
                     mb: 0.25,

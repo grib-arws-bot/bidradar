@@ -64,6 +64,16 @@ source = Table(
     # 때문. 기본 False — 나라장터처럼 물량이 많은 소스는 관리자가 명시적으로 켜기 전엔 절대
     # 자동 실행 안 됨(app/collector/runner.py run_source).
     Column("auto_extract", Boolean, nullable=False, server_default="false"),
+    # 2026-09-05 — A2(요구사양 구조화, LLM 실제 호출·비용 발생)를 이 소스의 새 공고가 auto_extract로
+    # 추출까지 성공했을 때 이어서 자동 실행할지. auto_extract와 같은 논리로 CLAUDE.md 원칙과
+    # 충돌하지 않는다고 판단(사용자 확정, 2026-09-05) — "자동 실행 금지"는 시스템이 임의로
+    # 트는 것을 막는 것이지, 관리자가 이 화면에서 미리 정해둔 설정을 막는 게 아니다. 항상
+    # Haiku(가장 저렴한 모델)로만 실행 — 모델 선택까지 자동화하지 않는다. 기본 False.
+    Column("auto_analyze", Boolean, nullable=False, server_default="false"),
+    # 2026-09-05 — "공고 업데이트 시간" 설정 UI만(사용자 지시, 실행 엔진은 나중에 별도 작업).
+    # 최대 3개, "HH:MM"(00:00~23:59) 문자열 배열, 일부만 설정 가능(빈 배열/1~2개도 허용) —
+    # 2026-09-07부터 프런트가 직접 입력(자유 분 단위)이라 5분 단위 제약은 없다.
+    Column("schedule_times", JSONB, nullable=False, server_default="[]"),
 )
 
 source_config = Table(

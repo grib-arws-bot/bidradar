@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 from sqlalchemy import insert, select
 from sqlalchemy.engine import Connection
 
+from app.collector.scorer import L2_PROMOTE_THRESHOLD, score_l2
 from app.config import settings
-from app.models import analysis, analysis_doc, analysis_requirement
+from app.models import analysis, analysis_doc, analysis_requirement, notice_score
 from app.security.url_guard import fetch
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -67,6 +68,9 @@ _SYSTEM_PROMPT = """당신은 공공입찰·정부지원 규격서를 관리자�
 4. 서술형이라 규칙으로 판정할 수 없는 항목(예: "제안서에 구축 방안을 상세히 기술할 것")은
    op="manual"로 넣고 req_value/req_unit은 비워두세요.
 5. category는 성능/인증/실적/인력/기타 중 문서 맥락에 맞는 것으로 분류하세요.
+6. category="성능"이고 그 요구사항이 summary.content_items 중 특정 과제 하나에만 해당하면,
+   task_ref에 그 과제의 title과 **정확히 동일한 문자열**을 넣으세요(화면에서 과제 하위로 묶어
+   보여주는 데 씁니다). 여러 과제 공통이거나 과제가 하나뿐이면 task_ref는 비워두세요.
 
 [summary] 서술형 개요
 - project_period: 사업(연구개발)기간. **최대한 짧게** — 과제마다 기간이 다르면 대표값(가장
@@ -74,22 +78,36 @@ _SYSTEM_PROMPT = """당신은 공공입찰·정부지원 규격서를 관리자�
   "5년 이내(당해 9개월 이내)"처럼 그 하나의 기간만.
 - project_budget: 사업금액(정부지원연구개발비 등). **최대한 짧게** — 예: "100억원(4개 과제
   대상)" 또는 과제가 하나면 "150억원 이내(당해 19억원)"처럼 그 하나의 금액만.
-- purpose: 사업목적 — **원문 문장을 의역하지 말고 그대로 인용**하세요.
+- purpose: 사업목적 — 문서의 "사업목적"(1-1 등) 항목 전체를 **글머리표(ㅇ, -)와 문단 구조를
+  그대로 유지한 원문 그대로** 옮기세요. 여러 항목을 한 문장으로 합치거나 의역하지 마세요 —
+  줄바꿈이 있으면 줄바꿈도 살리세요. 오직 이 필드만 원문 그대로 복사이고, 나머지 요약 필드는
+  분석·정리입니다.
 - sub_business: 세부사업(내역사업)명. 표에 "세부사업"·"내역사업"으로 표시된 경우가 많습니다.
-- task_type: 과제유형 — 아래 세 항목 **각각 문서에 나열된 선택지 중 이 공고(또는 대표 과제)에
-  실제로 해당하는 것 딱 하나만** 고르세요. 여러 개를 쉼표로 나열하지 마세요 — 과제마다 다르면
-  가장 대표적인(과제 수가 많거나 예산 비중이 큰) 것 하나를 선택합니다.
-    - execution_system(추진체계): 문서가 정의한 선택지 중 하나(예: 일반형/통합형/병렬형)
-    - development_form(개발형태): 문서가 정의한 선택지 중 하나(예: 원천기술형/혁신제품형)
-    - call_type(공모형태): 문서가 정의한 선택지 중 하나(예: 지정공모형/품목지정형) — 보통
-      RFP·품목개요서 첨부의 표(품목번호 옆 항목 등)에 실제 값이 있습니다.
+- task_type: 과제유형 — **과제(품목)마다 다를 수 있습니다**(예: "연구개발과제목록" 표에 과제별로
+  가/나/다 열이 있고 각각 일반·원천기술·품목지정처럼 표시된 경우). 문서가 정의한 선택지 중
+  실제로 해당하는 값 딱 하나만 고르고, 여러 개를 쉼표로 나열하지 마세요.
+    - execution_system(추진체계): 예: 일반형/통합형/병렬형
+    - development_form(개발형태): 예: 원천기술형/혁신제품형
+    - call_type(공모형태): 예: 지정공모형/품목지정형 — 보통 RFP·품목개요서 첨부의 표(품목번호
+      옆 항목 등)나 "연구개발과제목록" 요약표에 실제 값이 있습니다.
+  이 최상위 summary.task_type에는: 과제가 하나뿐이거나 모든 과제가 같은 값이면 그 값을, 과제마다
+  다르면 세 항목 모두 "과제별 상이"라고 쓰세요 — 실제 각 과제의 값은 아래 content_items마다
+  따로 채웁니다(절대 대표 과제 하나만 골라서 나머지를 숨기지 마세요).
 - contact: 문의처 {department(담당부서), role(직책/역할, 예: "OO PD"), phone(연락처),
   email(이메일)}. "문의처"·"담당" 섹션의 표나 문장에서 찾으세요.
 - content_items: 사업내용을 **과제 단위로 나눠** 배열로 정리하세요(하나의 사업 안에 여러
   RFP/품목이 있으면 각각 별도 항목으로). 각 항목: {title(과제명/품목명), summary(개념·목표·
-  개발내용을 관리자가 이해할 수 있게 종합 분석한 문단 — 원문 나열이 아니라 분석), period(그
+  개발내용을 **개조식**으로 — "ㅇ"·"-" 글머리표를 써서 항목별로 끊어 쓰세요, 문장을 이어붙인
+  줄글 문단으로 쓰지 마세요. 원문 나열이 아니라 종합 분석한 내용을 개조식으로), period(그
   과제의 연구개발기간, 없으면 사업 전체 기간), budget(그 과제의 정부지원연구개발비, 없으면
-  사업 전체 예산)}. 과제가 하나뿐이면 배열에 항목 하나만 넣으세요.
+  사업 전체 예산), task_type(그 과제의 추진체계/개발형태/공모형태 — "연구개발과제목록"류 표에
+  과제별 가/나/다 열이 있으면 그 과제 행의 값을 그대로. 문서에 과제별 구분이 없으면 위 최상위
+  task_type과 동일한 값을 반복해서 넣으세요 — 비워두지 마세요), lead_org(그 과제의 주관연구
+  개발기관 자격 제한 — "연구개발과제목록" 표의 "주관연구개발기관" 열 값 그대로, 예: "제한없음",
+  "비영리기관". **과제마다 다를 수 있으니 반드시 그 과제 행의 값**을 넣으세요 — 특정 과제만
+  기관 유형이 제한되는 경우(예: 2번 과제만 "비영리기관") 참여 판단에 결정적이므로 절대
+  누락하거나 다른 과제 값으로 대체하지 마세요. 문서에 표시가 없으면 "제한없음")}. 과제가
+  하나뿐이면 배열에 항목 하나만 넣으세요.
 - evaluation: 평가기준을 {item, weight, note} 목록으로. item/weight/note 모두 **원문 표현을
   그대로** 옮기세요(재구성·의역 금지) — 배점표가 있으면 항목명·비율·세부 평가내용을 원문 그대로.
 - budget_conditions: 사업비 조건(중소기업 기준). **모두 단답형으로 짧게** — 전체 문장이 아니라
@@ -109,6 +127,19 @@ _SYSTEM_PROMPT = """당신은 공공입찰·정부지원 규격서를 관리자�
 - other_notes: 기타사항 — 특별한 성능·실적 요구나 위 항목에 안 들어가는 특이사항이 있으면
   1~3문장으로. 없으면 빈 문자열."""
 
+# 과제유형(task_type) — 최상위 summary와 content_items 각 과제에서 같은 모양을 재사용한다
+# (2026-09-05, 과제마다 추진체계/개발형태/공모형태가 다를 수 있음이 확인됨 — "연구개발과제목록"
+# 표의 가/나/다 열).
+_TASK_TYPE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "execution_system": {"type": "string"},
+        "development_form": {"type": "string"},
+        "call_type": {"type": "string"},
+    },
+    "required": ["execution_system", "development_form", "call_type"],
+}
+
 _REQUIREMENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -123,6 +154,10 @@ _REQUIREMENT_SCHEMA = {
                     "req_unit": {"type": "string", "description": "단위(없으면 빈 문자열)"},
                     "op": {"type": "string", "enum": list(OPS)},
                     "cite": {"type": "string", "description": "문서 내 조문 위치"},
+                    "task_ref": {
+                        "type": "string",
+                        "description": "category가 성능이고 특정 과제(content_items[].title)에만 해당하면 그 title 그대로, 아니면 빈 문자열",
+                    },
                 },
                 "required": ["category", "req_text", "op", "cite"],
             },
@@ -134,15 +169,7 @@ _REQUIREMENT_SCHEMA = {
                 "project_budget": {"type": "string"},
                 "purpose": {"type": "string"},
                 "sub_business": {"type": "string"},
-                "task_type": {
-                    "type": "object",
-                    "properties": {
-                        "execution_system": {"type": "string"},
-                        "development_form": {"type": "string"},
-                        "call_type": {"type": "string"},
-                    },
-                    "required": ["execution_system", "development_form", "call_type"],
-                },
+                "task_type": _TASK_TYPE_SCHEMA,
                 "contact": {
                     "type": "object",
                     "properties": {
@@ -162,8 +189,10 @@ _REQUIREMENT_SCHEMA = {
                             "summary": {"type": "string"},
                             "period": {"type": "string"},
                             "budget": {"type": "string"},
+                            "task_type": _TASK_TYPE_SCHEMA,
+                            "lead_org": {"type": "string", "description": "이 과제의 주관연구개발기관 자격 제한(예: 제한없음/비영리기관)"},
                         },
-                        "required": ["title", "summary", "period", "budget"],
+                        "required": ["title", "summary", "period", "budget", "task_type", "lead_org"],
                     },
                 },
                 "evaluation": {
@@ -293,6 +322,18 @@ def _call_anthropic(model: str, document_text: str) -> tuple[list[dict], dict, i
     return requirements, summary, input_tokens, output_tokens
 
 
+# analysis_requirement 컬럼 길이 상한(app/models/analysis.py) — LLM이 이걸 넘는 값을 주면
+# INSERT 자체가 예외로 죽어 그 공고의 A2 결과 전체가 날아간다(2026-09-05 실측: req_unit에
+# "평(데이터팩토리) / 50대(휴머노이드)"처럼 서로 다른 단위 두 개를 붙여 써서 20자 초과 발생).
+# 자르기만 하고 버리지 않는다 — 값 자체가 아예 없어지는 것보다 잘린 채로라도 남는 게 낫다.
+_MAX_LEN = {"category": 50, "req_value": 100, "req_unit": 20}
+
+
+def _cap(value: str, field: str) -> str:
+    limit = _MAX_LEN[field]
+    return value if len(value) <= limit else value[: limit - 1] + "…"
+
+
 def _valid_items(raw_items: list[dict]) -> tuple[list[dict], int]:
     """cite 없는 항목은 근거 없는 추출이라 버린다(원칙 2). (유효 항목, 버린 개수)."""
     valid, skipped = [], 0
@@ -304,17 +345,61 @@ def _valid_items(raw_items: list[dict]) -> tuple[list[dict], int]:
         if not (category and req_text and cite and op in OPS):
             skipped += 1
             continue
+        req_value = (item.get("req_value") or "").strip() or None
+        req_unit = (item.get("req_unit") or "").strip() or None
         valid.append(
             {
-                "category": category,
+                "category": _cap(category, "category"),
                 "req_text": req_text,
-                "req_value": (item.get("req_value") or "").strip() or None,
-                "req_unit": (item.get("req_unit") or "").strip() or None,
+                "req_value": _cap(req_value, "req_value") if req_value else None,
+                "req_unit": _cap(req_unit, "req_unit") if req_unit else None,
                 "op": op,
                 "cite": cite,
+                "task_ref": (item.get("task_ref") or "").strip() or None,
             }
         )
     return valid, skipped
+
+
+def _rescan_interest_topics(conn: Connection, notice_id: int, summary: dict) -> int:
+    """AI분석(A2) 완료 후 관심주제를 내용 기반으로 재매칭한다(2026-09-05, 사용자 지시).
+
+    수집 시점의 키워드 매칭(app/collector/scorer.py)은 공고 **제목**만 본다 — 로봇 관련
+    공고가 실제로는 AI·센서 기술도 다루는데 제목에 "로봇"만 있으면 AI/데이터·IoT/센서 같은
+    관련 주제를 놓친다(사용자 발견). 같은 규칙(키워드 사전) 엔진을 그대로 재사용하되, A2가
+    뽑은 요약(제목보다 훨씬 풍부한 내용)을 입력으로 준다 — 새 LLM 호출 없이 순수 규칙
+    기반이라 비용 없음, S8 원칙과도 무관(판정이 아니라 키워드 매칭).
+
+    이미 매칭된 주제는 건드리지 않고, 새로 발견된 주제만 추가한다(중복 방지 겸 기존
+    수집 시점 판정을 덮어쓰지 않기 위함). 반환값은 새로 추가된 주제 수."""
+    parts = [summary.get("purpose") or "", summary.get("sub_business") or ""]
+    for item in summary.get("content_items") or []:
+        parts.append(item.get("title") or "")
+        parts.append(item.get("summary") or "")
+    parts.append(summary.get("other_notes") or "")
+    content = " ".join(p for p in parts if p)
+    if not content:
+        return 0
+
+    existing_topic_ids = {
+        row[0]
+        for row in conn.execute(select(notice_score.c.interest_topic_id).where(notice_score.c.notice_id == notice_id))
+    }
+    added = 0
+    for topic_id, info in score_l2(conn, content).items():
+        if topic_id in existing_topic_ids or info["score"] < L2_PROMOTE_THRESHOLD:
+            continue
+        conn.execute(
+            insert(notice_score).values(
+                notice_id=notice_id,
+                interest_topic_id=topic_id,
+                l2_score=info["score"],
+                reason=f"AI분석 내용 기반 매칭: {', '.join(info['matched_terms'])}",
+                rule_ver=1,
+            )
+        )
+        added += 1
+    return added
 
 
 def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-haiku-4-5-20251001") -> dict:
@@ -346,6 +431,12 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
     try:
         raw_items, summary, input_tokens, output_tokens = _call_anthropic(model, document_text)
     except Exception as exc:  # noqa: BLE001 — 실패도 반드시 기록(CLAUDE.md "조용한 실패 금지")
+        # 실패 기록은 반드시 같은 conn(같은 트랜잭션)에 남긴다 — 독립 커넥션으로 같은 행을
+        # 갱신하면, 방금 위에서 이 conn이 이미 이 행에 걸어둔(아직 커밋 전) 락과 서로
+        # 기다리는 데드락이 된다(2026-09-08 실측 — 수정을 시도하다 재현). 이 예외는 그대로
+        # 다시 던진다 — 호출부가 **자신의 with engine.begin() 블록 안에서** 잡아야 이
+        # "failed" 기록이 롤백 없이 커밋된다(process_new_notices 등 호출부 쪽 계약, 그쪽
+        # 주석 참고).
         conn.execute(
             analysis.update()
             .where(analysis.c.id == analysis_id)
@@ -360,6 +451,8 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
     valid_items, skipped = _valid_items(raw_items)
     for item in valid_items:
         conn.execute(insert(analysis_requirement).values(analysis_id=analysis_id, **item))
+
+    topics_added = _rescan_interest_topics(conn, row.notice_id, summary) if summary else 0
 
     conn.execute(
         analysis.update()
@@ -382,6 +475,7 @@ def run_structuring(conn: Connection, analysis_id: int, *, model: str = "claude-
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cost_usd": round(cost, 4),
+        "topics_added": topics_added,
     }
 
 
@@ -420,6 +514,7 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
             analysis_requirement.c.req_unit,
             analysis_requirement.c.op,
             analysis_requirement.c.cite,
+            analysis_requirement.c.task_ref,
         )
         .where(analysis_requirement.c.analysis_id == row.id)
         .order_by(analysis_requirement.c.id)

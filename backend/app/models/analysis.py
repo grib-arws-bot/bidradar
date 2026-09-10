@@ -70,6 +70,10 @@ analysis_requirement = Table(
     Column("req_unit", String(20)),
     Column("op", String(10), nullable=False),  # gte/lte/eq/contains/manual
     Column("cite", Text, nullable=False),  # 규격서 조문 위치 — 근거 없는 판정 금지(S8 원칙 2)
+    # 이 요구사항이 특정 과제(analysis.summary.content_items[].title)에 속하면 그 title을 그대로
+    # 담는다(2026-09-05, "성능 요구사항은 과제 개요의 각 과제 하위에" 요청) — 화면에서 과제별로
+    # 묶어 보여주기 위한 용도일 뿐, 판정 로직(match.py)엔 영향 없음.
+    Column("task_ref", String(200)),
     Column("matched_product_id", Integer, ForeignKey("product.id")),
     Column("judgement", String(10), nullable=False, server_default="unknown"),  # ok/no/unknown
     Column("note", Text),

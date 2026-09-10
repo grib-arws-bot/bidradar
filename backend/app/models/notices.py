@@ -59,7 +59,9 @@ notice = Table(
     Column("biz_type", String(20)),
     # 사업유형(개발/운영/유지보수/구축/구매/공사 등) — 제목 키워드 기반 근사 추정(2026-09-01
     # 요청). 첨부파일까지 봐야 정확해지는 건 S8 심층분석의 몫 — 여기는 전체 공고에 자동으로
-    # 도는 가벼운 1차 추정치일 뿐이라 오판 가능성을 인지하고 쓴다.
+    # 도는 가벼운 1차 추정치일 뿐이라 오판 가능성을 인지하고 쓴다. (2026-09-06 — A2 구조화
+    # 결과 기반으로 연구/개발/유지보수/운영/공사/임대 등을 정확히 분류하는 후속 기능 예정,
+    # 구현스펙 07절 참고. 아직 미착수.)
     Column("work_type", String(20)),
     Column("title", Text, nullable=False),
     Column("org_id", Integer, ForeignKey("org.id")),
@@ -76,6 +78,11 @@ notice = Table(
     # PII_BANNED_TARGET_FIELDS가 "extra:"로 시작하는 target_field에도 동일하게 적용됨.
     Column("extra", JSONB),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # 같은 사업이 발주계획→사전규격→입찰공고로 단계 진행되면 여러 notice 행으로 각각 수집된다
+    # (2026-09-06, 사용자 지시). "동일 발주기관+동일 사업명"으로 묶어 가장 최근 공고만 남기고
+    # 나머지는 이 컬럼에 최신 건의 id를 채워 무효화 표시한다 — 하드 삭제는 안 함(감사·추적
+    # 가능성 유지). NULL이면 아직 유효(최신)한 공고. app/services/notice_dedup.py.
+    Column("superseded_by_notice_id", Integer, ForeignKey("notice.id", ondelete="SET NULL")),
 )
 
 notice_version = Table(

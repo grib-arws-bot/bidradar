@@ -34,7 +34,6 @@ from app.models import (
     product_spec,
     raw_payload,
     requirement,
-    saved_search,
     source,
     source_config,
     source_credential,
@@ -82,6 +81,25 @@ def run_seed(engine: Engine) -> None:
         _seed_audit_log(conn, source_ids)
 
 
+def run_seed_prod(engine: Engine) -> None:
+    """prod 전용 최소 시드(2026-09-10, 사용자 지시 — "기업 관리 부분은 비워둬, 내가 직접
+    채울꺼고"). run_seed()는 U2("빈 화면으로 개발하면 레이아웃이 틀어진다") 목적의 로컬 개발용
+    데모 픽스처라 가짜 고객("(주)그립" 1건)·가짜 공고·가짜 낙찰·가짜 제품·가짜 분석까지 전부
+    같이 만든다 — prod에 그대로 실행하면 이 데모 데이터가 실제 화면에 섞여 나온다.
+
+    prod가 실제로 필요한 건 수집 파이프라인이 돌아가는 데 필요한 참조 데이터뿐이다:
+    관심주제·키워드 규칙(_seed_topics), 소스·소스설정·필드매핑(_seed_sources, 실제 운영
+    OpenAPI 설정), 발주기관(_seed_orgs). 고객(customer)은 하나도 만들지 않는다 — 사용자가
+    관리자 화면에서 그립(AI/IoT/Robot)·그립(Safety/Factory)·그립(AX/Service) 3개 기관으로
+    직접 등록할 계획이다.
+    """
+    with engine.begin() as conn:
+        _seed_topics(conn)
+        source_ids, _source_config_ids = _seed_sources(conn)
+        source_id_by_name = dict(zip((s[0] for s in SOURCE_SEED), source_ids))
+        _seed_orgs(conn, source_id_by_name)
+
+
 def _seed_topics(conn) -> dict[str, int]:
     ids: dict[str, int] = {}
     # 번호는 1부터 시작(2026-09-02 요청) — 관리자 화면에 "0번"이 보이면 사람이 세는 방식과
@@ -102,20 +120,21 @@ def _seed_topics(conn) -> dict[str, int]:
 
 
 def _seed_customers(conn, topic_ids: dict[str, int]) -> dict[str, int]:
+    # 2026-09-05까지는 "예시고객 A/B"라는 가짜 예시 고객도 시드했었는데(빈 상태·격리 테스트용),
+    # 사용자 지시로 제거 — 실제 고객이 생기기 전까지는 "(주)그립" 하나만으로 충분하고, 가짜
+    # 데이터가 실제 관리 화면에 계속 보이는 게 오히려 혼란스럽다.
     rows = [
         {"name": "(주)그립", "plan_tier": "internal", "contact_email": "report@grib.co.kr"},
-        {"name": "예시고객 A", "plan_tier": "standard", "contact_email": "customer-a@example.com"},
-        {"name": "예시고객 B", "plan_tier": "standard", "contact_email": "customer-b@example.com"},
     ]
     ids: dict[str, int] = {}
     for row in rows:
         result = conn.execute(insert(customer).values(**row).returning(customer.c.id)).one()
         ids[row["name"]] = result.id
 
-    # 그립·고객A는 관심주제 설정, 고객B는 비움(빈 상태 확인용 — 11절)
-    for name in ("(주)그립", "예시고객 A"):
-        for topic_name in ("산업안전/CCTV·영상보안", "스마트교육/에듀테크", "IoT/센서"):
-            conn.execute(insert(customer_interest).values(customer_id=ids[name], interest_topic_id=topic_ids[topic_name]))
+    for topic_name in ("산업안전/CCTV·영상보안", "스마트교육/에듀테크", "IoT/센서"):
+        conn.execute(
+            insert(customer_interest).values(customer_id=ids["(주)그립"], interest_topic_id=topic_ids[topic_name])
+        )
     return ids
 
 
@@ -293,14 +312,9 @@ def _seed_awards(conn, notice_ids: list[int], org_ids: list[int]) -> None:
 
 
 def _seed_customer_extras(conn, customer_ids: dict[str, int], org_ids: list[int]) -> None:
-    for name in ("(주)그립", "예시고객 A"):
-        conn.execute(insert(customer_interest_term).values(customer_id=customer_ids[name], term="영상관제"))
-        conn.execute(insert(customer_followed_org).values(customer_id=customer_ids[name], org_id=_RNG.choice(org_ids)))
+    conn.execute(insert(customer_interest_term).values(customer_id=customer_ids["(주)그립"], term="영상관제"))
     conn.execute(
-        insert(saved_search).values(
-            customer_id=customer_ids["(주)그립"], name="이번 주 CCTV 공고",
-            query_params={"q": "CCTV", "stage": "사전규격"},
-        )
+        insert(customer_followed_org).values(customer_id=customer_ids["(주)그립"], org_id=_RNG.choice(org_ids))
     )
 
 
