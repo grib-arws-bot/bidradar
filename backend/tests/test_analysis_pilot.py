@@ -25,13 +25,11 @@ import pytest
 from sqlalchemy import delete, insert, select
 
 from app.db import engine
-from app.models import analysis, analysis_doc, notice, source
+from app.models import analysis, analysis_doc, interest_topic, keyword_rule, notice, notice_score, source
 from app.models import interest_topic, keyword_rule, notice_score
 from app.services.analysis_pilot import (
     AnalysisInProgressError,
     UnsupportedSourceError,
-    L2_ATTACHMENT_PROMOTE_THRESHOLD,
-    _classify_from_attachments,
     _decode_zip_name,
     _discover_iris_attachments,
     _filename_from_content_disposition,
@@ -428,91 +426,50 @@ def test_run_extraction_pilot_rejects_non_iris_source():
             conn.execute(delete(notice).where(notice.c.id == notice_id))
 
 
-# ---- 첨부문서 원문으로도 관심주제(L2) 채점(2026-09-07) ----------------------------------
+# ---- 첨부문서 원문 관심주제 재채점 ------------------------------------------------------
+# 2026-09-07에 처음 만든 _classify_from_attachments()가 실제로는 어디서도 호출되지 않는 죽은
+# 코드였음을 2026-09-10에 발견 — run_extraction_pilot()에 배선하는 걸 빠뜨린 채였다. 이번에
+# app/services/notice_topic_scoring.py의 rescan_notice_topics_from_documents()로 교체하면서
+# 실제로 run_extraction_pilot() 안에서 호출되도록 배선했다. 순수 채점 로직(제목 가중치·상위
+# 3개 제한 등) 단위 테스트는 tests/test_notice_topic_scoring.py 참고 — 여기서는 "A1이 실제로
+# 끝나면 재채점이 같이 호출된다"는 배선 자체만 확인한다.
 
 
 @pytest.fixture
-def attachment_classify_topic():
-    """제목이 아니라 본문에서만 매칭되는 걸 확인해야 하므로 실제 시드 키워드와 안 겹치는
-    전용 임시 주제·키워드를 쓴다."""
+def topic_scoring_keyword():
+    """실제 시드 키워드와 안 겹치는 전용 임시 주제·키워드 — 문서 본문에서만 매칭되는지 확인."""
     with engine.begin() as conn:
         topic_id = conn.execute(
-            insert(interest_topic).values(name="[테스트] 첨부분류용 주제", sort_order=9999).returning(interest_topic.c.id)
+            insert(interest_topic).values(name="[테스트] A1재채점용 주제", sort_order=9999).returning(interest_topic.c.id)
         ).scalar_one()
         conn.execute(insert(keyword_rule).values(interest_topic_id=topic_id, term="스마트팩토리", weight_class="core", weight=4))
-        conn.execute(insert(keyword_rule).values(interest_topic_id=topic_id, term="약한신호", weight_class="ctx", weight=1))
     yield topic_id
     with engine.begin() as conn:
         conn.execute(delete(keyword_rule).where(keyword_rule.c.interest_topic_id == topic_id))
         conn.execute(delete(interest_topic).where(interest_topic.c.id == topic_id))
 
 
-@pytest.fixture
-def classify_test_notice():
-    with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
-        notice_id = conn.execute(
-            insert(notice).values(
-                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 첨부분류 대상 임시 공고",
-                url="https://example.grib-test.kr/notice/classify-attachments-test",
-            ).returning(notice.c.id)
-        ).scalar_one()
-    yield notice_id
-    with engine.begin() as conn:
-        conn.execute(delete(notice_score).where(notice_score.c.notice_id == notice_id))
-        conn.execute(delete(notice).where(notice.c.id == notice_id))
+def test_run_extraction_pilot_rescans_topics_from_extracted_documents(topic_scoring_keyword, iris_notice):
+    # 픽스처 순서 주의: iris_notice가 나중에 요청돼야 먼저 teardown(notice 삭제 → notice_score
+    # cascade 삭제)돼서, topic_scoring_keyword teardown이 interest_topic을 지울 때 아직 그
+    # 주제를 참조하는 notice_score 행이 남아있지 않다(2026-09-10 실제로 FK 위반으로 재현됨).
+    with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
+        html_resp = mock.Mock()
+        html_resp.text = _SAMPLE_HTML
+        zip_resp = _fake_zip_response({"관련서식.pdf": b"%PDF-fake"})
+        mock_fetch.side_effect = [html_resp, _fake_pdf_response(), _fake_hwpx_response(), zip_resp]
 
+        with engine.begin() as conn:
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "이 사업은 스마트팩토리 구축을 목표로 한다."
+                MockReader.return_value.pages = [fake_page]
+                result = run_extraction_pilot(conn, iris_notice)
 
-def test_classify_from_attachments_adds_new_topic_when_threshold_met(attachment_classify_topic, classify_test_notice):
-    docs = [{"extract_ok": True, "text": "이 사업은 스마트팩토리 구축을 목표로 한다."}]
-    with engine.begin() as conn:
-        _classify_from_attachments(conn, classify_test_notice, docs)
+    assert result["status"] == "done"
+    with engine.connect() as conn:
         rows = conn.execute(
-            select(notice_score.c.interest_topic_id, notice_score.c.reason)
-            .where(notice_score.c.notice_id == classify_test_notice)
+            select(notice_score.c.interest_topic_id, notice_score.c.rule_ver)
+            .where(notice_score.c.notice_id == iris_notice)
         ).all()
-    assert any(r.interest_topic_id == attachment_classify_topic for r in rows)
-    assert any("첨부문서" in r.reason for r in rows)
-
-
-def test_classify_from_attachments_skips_below_threshold(attachment_classify_topic, classify_test_notice):
-    # "약한신호"는 weight=1 — L2_ATTACHMENT_PROMOTE_THRESHOLD(4)에 못 미쳐 통과 못 해야 한다.
-    assert L2_ATTACHMENT_PROMOTE_THRESHOLD == 4
-    docs = [{"extract_ok": True, "text": "이 문서엔 약한신호만 있다."}]
-    with engine.begin() as conn:
-        _classify_from_attachments(conn, classify_test_notice, docs)
-        rows = conn.execute(
-            select(notice_score.c.id).where(
-                notice_score.c.notice_id == classify_test_notice, notice_score.c.interest_topic_id == attachment_classify_topic
-            )
-        ).all()
-    assert rows == []
-
-
-def test_classify_from_attachments_ignores_failed_extraction_docs(attachment_classify_topic, classify_test_notice):
-    docs = [{"extract_ok": False, "text": None, "error": "추출 실패"}]
-    with engine.begin() as conn:
-        _classify_from_attachments(conn, classify_test_notice, docs)
-        rows = conn.execute(select(notice_score.c.id).where(notice_score.c.notice_id == classify_test_notice)).all()
-    assert rows == []
-
-
-def test_classify_from_attachments_does_not_duplicate_existing_topic(attachment_classify_topic, classify_test_notice):
-    # rescan_notice_scores()와 같은 원칙 — 이미 사람이 검토·확정한 분류(또는 제목 매칭으로
-    # 먼저 붙은 분류)를 자동 재계산이 덮어쓰거나 중복 추가하면 안 됨.
-    with engine.begin() as conn:
-        conn.execute(
-            insert(notice_score).values(
-                notice_id=classify_test_notice, interest_topic_id=attachment_classify_topic, l2_score=4,
-                reason="제목 매칭(사전)", rule_ver=1,
-            )
-        )
-    docs = [{"extract_ok": True, "text": "스마트팩토리 스마트팩토리 스마트팩토리"}]
-    with engine.begin() as conn:
-        _classify_from_attachments(conn, classify_test_notice, docs)
-        rows = conn.execute(
-            select(notice_score.c.id).where(
-                notice_score.c.notice_id == classify_test_notice, notice_score.c.interest_topic_id == attachment_classify_topic
-            )
-        ).all()
-    assert len(rows) == 1
+    assert any(r.interest_topic_id == topic_scoring_keyword and r.rule_ver == 2 for r in rows)

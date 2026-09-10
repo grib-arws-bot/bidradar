@@ -26,49 +26,14 @@ import zipfile
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
-from sqlalchemy import insert, select
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
-from app.collector.scorer import score_l2
-from app.models import analysis, analysis_doc, notice, notice_score
+from app.models import analysis, analysis_doc, notice
 from app.security.url_guard import fetch
-from app.services.g2b_attachments import _discover_g2b_attachments, _should_skip_by_name
-
-# 첨부문서 원문에서도 관심주제(L2)를 채점한다(2026-09-07 사용자 지시 — "우리 사업과 관련된
-# 공고가 추천에 안 뜨는 것 같다"는 지적, 제목만 보던 기존 채점의 사각지대). 본문은 제목보다
-# 훨씬 길어 법률 조항·표준 문구에 키워드가 우연히 섞여 들어갈 오탐 위험이 커서, 제목 채점
-# (L2_PROMOTE_THRESHOLD=2, scorer.py)보다 엄격한 기준만 통과시킨다 — 2026-09-05 이전에 쓰던
-# 원래 기본값(4, "강한 신호 단독 또는 중간 신호 2개 이상")을 그대로 재사용.
-L2_ATTACHMENT_PROMOTE_THRESHOLD = 4
-
-
-def _classify_from_attachments(conn: Connection, notice_id: int, docs: list[dict]) -> None:
-    """기존 notice_score는 절대 안 건드리고, 첨부문서 원문으로 새로 통과하는 (공고,관심주제)
-    조합만 추가한다(rescan_notice_scores()와 같은 원칙 — 이미 사람이 검토·확정한 분류를
-    자동 재계산이 덮어쓰면 안 됨)."""
-    text = "\n".join(d["text"] for d in docs if d.get("extract_ok") and d.get("text"))
-    if not text.strip():
-        return
-
-    existing_topic_ids = set(
-        conn.execute(
-            select(notice_score.c.interest_topic_id).where(notice_score.c.notice_id == notice_id)
-        ).scalars()
-    )
-
-    for topic_id, info in score_l2(conn, text).items():
-        if topic_id in existing_topic_ids or info["score"] < L2_ATTACHMENT_PROMOTE_THRESHOLD:
-            continue
-        conn.execute(
-            insert(notice_score).values(
-                notice_id=notice_id,
-                interest_topic_id=topic_id,
-                l2_score=info["score"],
-                reason=f"첨부문서 키워드 매칭: {', '.join(info['matched_terms'])}",
-                rule_ver=1,
-            )
-        )
 from app.services.document_extract import extract_document
+from app.services.g2b_attachments import _discover_g2b_attachments, _should_skip_by_name
+from app.services.notice_topic_scoring import rescan_notice_topics_from_documents
 
 _IRIS_ATCH_RE = re.compile(
     r"f_bsnsAncm_downloadAtchFile\('([^']+)','([^']+)','([^']+)'\s*,'(\d+)'\)"
@@ -332,6 +297,13 @@ def run_extraction_pilot(conn: Connection, notice_id: int, *, prefetched_raw_ite
         .where(analysis.c.id == analysis_id)
         .values(status=final_status, step="A1_extract", finished_at=datetime.now(timezone.utc))
     )
+
+    # 첨부문서 원문이 실제로 나온 경우에만 관심주제를 재채점한다(2026-09-10 사용자 지시) —
+    # 첨부가 아예 없는 공고(any_ok=False, attachments=0)는 제목 기반 L2(수집 시점) 결과를
+    # 그대로 둔다. 같은 트랜잭션에서 실행해 A1 성공과 재채점이 항상 같이 커밋되거나 같이
+    # 롤백된다.
+    if final_status == "done" and any_ok:
+        rescan_notice_topics_from_documents(conn, notice_id, analysis_id)
 
     return {
         "analysis_id": analysis_id,

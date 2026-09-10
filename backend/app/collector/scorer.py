@@ -49,3 +49,44 @@ def score_l2(conn: Connection, title: str, *, rules: list[tuple[int, str, int]] 
             bucket["score"] += weight
             bucket["matched_terms"].append(term)
     return scores
+
+
+# 제목에 나온 용어는 첨부문서 본문에 우연히 몇 번 더 나오는 것보다 훨씬 의도적인 신호다 —
+# 제목 1회 등장을 본문 5회 등장과 동급으로 친다(2026-09-10 사용자 확정 — "제목에서의 키워드는
+# 가중치를 높여서 산정해"). 값 자체는 조정 가능한 상수.
+TITLE_OCCURRENCE_WEIGHT = 5
+
+
+def score_topics_weighted(
+    conn: Connection | None = None,
+    *,
+    title: str,
+    document_text: str = "",
+    rules: list[tuple[int, str, int]] | None = None,
+) -> dict[int, dict]:
+    """제목 + 첨부문서 본문에서 키워드가 **몇 번** 나오는지로 관심주제별 점수를 계산한다
+    (2026-09-10 사용자 지시 — "추출된 텍스트에서 키워드들이 얼마나 나오는지를 검출"). score_l2는
+    제목 전용이라 용어가 있는지(0/1)만 보면 충분했지만, 첨부문서는 분량이 훨씬 커서 등장
+    횟수 자체가 실제 관련도를 더 잘 드러낸다는 판단 — 여전히 규칙 기반이고 LLM은 쓰지 않는다
+    (CLAUDE.md S8 원칙 1과 같은 방향, app/services/notice_topic_scoring.py에서 첨부분석(A1)
+    성공 직후 호출). rules를 직접 넘기면 conn 없이도(단위 테스트 등) 순수 함수로 쓸 수 있다."""
+    if rules is None:
+        if conn is None:
+            raise ValueError("rules를 안 주면 conn이 있어야 keyword_rule을 조회할 수 있습니다.")
+        rules = fetch_active_rules(conn)
+
+    title_lower = title.lower()
+    doc_lower = document_text.lower()
+    scores: dict[int, dict] = {}
+    for topic_id, term, weight in rules:
+        term_lower = term.lower()
+        title_count = title_lower.count(term_lower)
+        doc_count = doc_lower.count(term_lower)
+        total_count = title_count + doc_count
+        if total_count == 0:
+            continue
+        occurrence = title_count * TITLE_OCCURRENCE_WEIGHT + doc_count
+        bucket = scores.setdefault(topic_id, {"score": 0, "matched_terms": []})
+        bucket["score"] += weight * occurrence
+        bucket["matched_terms"].append(f"{term}×{total_count}")
+    return scores
