@@ -41,11 +41,30 @@ services:
       - SESSION_SECRET=${SESSION_SECRET}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-report@grib.co.kr}
       - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+      # 앱 인증 로직은 ADMIN_PASSWORD_HASH만 쓴다 — 이 평문 값은 scripts/deploy-to-production.ps1의
+      # 배포 후 로그인 스모크 테스트 전용(컨테이너 안에서 실제 로그인 API를 호출해보는 용도,
+      # ARWS deploy-to-production.ps1과 동일 패턴). stg는 보통 비워둬도 무방.
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     ports:
       # 브라우저는 이 포트를 직접 호출하지 않음(nginx가 /api를 리버스 프록시, U3에서 추가) —
       # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출.
       - "127.0.0.1:13000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # backend와 같은 이미지, 별도 프로세스(CLAUDE.md 기술스택) — source.schedule_times에 지정된
+  # 시각(Asia/Seoul 기준)마다 app/scheduler.py가 해당 소스를 자동 수집한다(2026-09-10 도입).
+  # API 서버(backend)와 완전히 분리된 컨테이너라 uvicorn 재시작·스케일링과 무관하게 스케줄이
+  # 정확히 한 번씩만 등록된다.
+  scheduler:
+    build: ../backend
+    command: ["python", "-m", "app.scheduler"]
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-bidradar}:${POSTGRES_PASSWORD:-bidradar}@db:5432/${POSTGRES_DB:-bidradar}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     depends_on:
       db:
         condition: service_healthy

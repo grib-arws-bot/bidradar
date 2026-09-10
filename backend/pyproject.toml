@@ -18,6 +18,8 @@ dependencies = [
     # 있고 HWP5는 못 열어(2026-09-04 실측) pyhwp(hwp5txt CLI)로 대체.
     "pyhwp>=0.1b15,<0.2",
     "six>=1.16,<2",  # pyhwp가 six를 쓰지만 자체 의존성 선언이 안 돼 있어 직접 명시
+    "python-multipart>=0.0.12,<0.1",  # 고객 소개서 다중 파일 업로드(FastAPI UploadFile)에 필요
+    "apscheduler>=3.10,<3.11",  # app/scheduler.py — 소스별 schedule_times 실행 엔진(별도 프로세스)
 ]
 
 [project.optional-dependencies]

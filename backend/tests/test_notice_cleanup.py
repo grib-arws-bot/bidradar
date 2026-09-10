@@ -19,17 +19,17 @@ from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.models import analysis, award, notice, source
-from app.services.notice_cleanup import delete_expired_notices
+from app.services.notice_cleanup import NO_CLOSE_RETENTION_DAYS, delete_expired_notices
 
 _NOW = datetime.now(timezone.utc)
 
 
-def _make_notice(conn, source_id: int, *, close_dt, title: str) -> int:
+def _make_notice(conn, source_id: int, *, close_dt, title: str, open_dt=None, extra=None) -> int:
     return conn.execute(
         insert(notice).values(
             source_id=source_id, source_ver=1, stage="입찰공고", title=title,
-            open_dt=_NOW - timedelta(days=10), close_dt=close_dt,
-            url=f"https://x/{title}",
+            open_dt=open_dt if open_dt is not None else _NOW - timedelta(days=10), close_dt=close_dt,
+            url=f"https://x/{title}", extra=extra,
         ).returning(notice.c.id)
     ).scalar_one()
 
@@ -94,3 +94,36 @@ def test_delete_expired_notices_cleans_up_non_cascading_analysis_and_award_rows(
     assert deleted >= 1
     assert notice_gone is True
     assert analysis_gone is True
+
+
+def test_delete_expired_notices_removes_no_close_dt_past_notice_date_retention():
+    """마감일이 없는 공고(발주계획·사전규격·IRIS 등)는 close_dt 대신 "공고일"
+    (extra.ancmDe/nticeDt, 둘 다 없으면 open_dt)이 no_close_retention_days를 넘으면 삭제된다."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        old_ancm = _make_notice(
+            conn, source_id, close_dt=None, title="IRIS_공고일오래됨_삭제대상",
+            open_dt=_NOW - timedelta(days=200), extra={"ancmDe": "2020-01-01"},
+        )
+        recent_ancm = _make_notice(
+            conn, source_id, close_dt=None, title="IRIS_공고일최근_보존",
+            open_dt=_NOW - timedelta(days=200), extra={"ancmDe": (_NOW - timedelta(days=5)).strftime("%Y-%m-%d")},
+        )
+        old_open_dt_only = _make_notice(
+            conn, source_id, close_dt=None, title="사전규격_공고일필드없음_게시일로판단_삭제대상",
+            open_dt=_NOW - timedelta(days=NO_CLOSE_RETENTION_DAYS + 10), extra=None,
+        )
+
+    ids = [old_ancm, recent_ancm, old_open_dt_only]
+    try:
+        with engine.begin() as conn:
+            deleted = delete_expired_notices(conn)
+
+        with engine.connect() as conn:
+            remaining_ids = {row.id for row in conn.execute(select(notice.c.id).where(notice.c.id.in_(ids)))}
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id.in_(ids)))
+
+    assert deleted >= 2
+    assert remaining_ids == {recent_ancm}
