@@ -44,6 +44,31 @@ def _xml_element_to_dict(elem: ElementTree.Element):
     return result
 
 
+def _raise_if_error_envelope(payload: Any) -> None:
+    """data.go.kr류 API는 요청 포맷(json/xml)과 무관하게 공통 에러 응답 봉투
+    (OpenAPI_ServiceResponse.cmmMsgHeader.errMsg)를 쓴다 — 이 구조는 items_path가 가리키는
+    정상 응답과 안 겹치므로 그냥 두면 jsonpath가 조용히 빈 리스트를 돌려주고, 이게 "새로
+    수집된 공고 없음"과 구분이 안 된다(2026-09-08 실측 — 사전규격정보서비스 일일 요청한도
+    초과(LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR)가 조용히 0건 수집으로 처리됨,
+    CLAUDE.md S8 "조용한 빈 결과 금지")."""
+    if not isinstance(payload, dict):
+        return
+    gate_header = (payload.get("OpenAPI_ServiceResponse") or {}).get("cmmMsgHeader")
+    if gate_header and gate_header.get("errMsg"):
+        raise RuntimeError(f"공공데이터포털 API 오류: {gate_header['errMsg']} ({gate_header.get('returnAuthMsg', '')})")
+
+    # 포털 게이트를 통과한 뒤에도(위 cmmMsgHeader 봉투와는 별개로) 각 서비스 자체가
+    # response.header.resultCode로 성공/실패를 알린다(2026-09-08, 조달청 3개 서비스 명세서
+    # 심층분석으로 확인 — "00"=정상, "03"=데이터 없음(정상, 에러 아님), 그 외 01/02/04~12/
+    # 20/22/30~32는 전부 에러). 이것도 안 걸러내면 items_path와 안 겹쳐 조용히 빈 리스트가
+    # 된다(위와 같은 CLAUDE.md S8 위반 패턴).
+    service_header = (payload.get("response") or {}).get("header")
+    if isinstance(service_header, dict):
+        result_code = service_header.get("resultCode")
+        if result_code is not None and result_code not in ("00", "03"):
+            raise RuntimeError(f"공공데이터포털 API 오류(resultCode={result_code}): {service_header.get('resultMsg', '')}")
+
+
 def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict) -> Any:
     if method == "POST":
         response = fetch(endpoint, method="POST", data=params)
@@ -51,8 +76,11 @@ def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict
         response = fetch(endpoint, params=params)
     if config.get("format") == "xml":
         root = ElementTree.fromstring(response.content)
-        return {root.tag: _xml_element_to_dict(root)}
-    return response.json()
+        payload = {root.tag: _xml_element_to_dict(root)}
+    else:
+        payload = response.json()
+    _raise_if_error_envelope(payload)
+    return payload
 
 
 def fetch_openapi_items(config: dict[str, Any], service_key: str | None, *, begin: datetime, end: datetime) -> list[dict]:

@@ -77,3 +77,35 @@ def test_allows_data_go_kr(monkeypatch):
 
     assert target.resolved_ip == "121.78.106.15"
     assert target.hostname == "apis.data.go.kr"
+
+
+def test_dns_transient_failure_recovers_on_retry(monkeypatch):
+    # 2026-09-09 실측 — 입찰공고 첨부 재처리 배치(363건)에서 859건이 "DNS 조회 실패"였는데,
+    # 실패 직후 같은 호스트를 단발 조회하면 바로 성공했다(리졸버 순간 실패, 대상이 진짜 없는
+    # 게 아님). 첫 두 번은 실패하고 세 번째에 성공하면 예외 없이 넘어가야 한다.
+    monkeypatch.setattr("app.security.url_guard.time.sleep", lambda _: None)  # 테스트 속도
+    calls = {"n": 0}
+
+    def _flaky(host, port, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise socket.gaierror("일시적 리졸버 실패")
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("121.78.106.15", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _flaky)
+
+    target = validate_url("https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadFile.do")
+
+    assert target.resolved_ip == "121.78.106.15"
+    assert calls["n"] == 3
+
+
+def test_dns_permanent_failure_still_raises_after_retries(monkeypatch):
+    # 재시도로도 안 되면 진짜 실패 — 존재하지 않는 도메인까지 성공한 것처럼 넘기면 안 된다.
+    monkeypatch.setattr("app.security.url_guard.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", mock.Mock(side_effect=socket.gaierror("존재하지 않는 호스트"))
+    )
+
+    with pytest.raises(SSRFBlockedError, match="DNS 조회 실패"):
+        validate_url("https://does-not-exist.example.invalid/")

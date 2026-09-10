@@ -82,9 +82,17 @@ def _parse_date(value: object, format_hint: str | None) -> datetime | None:
     try:
         # 일부 API는 날짜를 따옴표 없는 JSON 숫자로 준다(예: 20260903) — K-water 3종,
         # 2026-09-03 실측. strptime은 str만 받으므로 여기서 항상 str로 맞춘다.
-        return datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
+        parsed = datetime.strptime(str(value), fmt).replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+    # IRIS는 접수기간이 "미정"인 공고에 빈 문자열 대신 "9999.12.31" 같은 연도 9999 sentinel을
+    # 준다(2026-09-08 실측 — "장애인·노인 자립생활 보조기기" 공고, rcveStrDe=rcveEndDe=
+    # "9999.12.31", dDay도 약 800만으로 같이 깨짐). 실제 공고가 연도 9999일 수는 없으니
+    # 이 값은 "미정"(빈 값)으로 취급 — 소스마다 sentinel 표기가 다를 수 있어 특정 문자열이
+    # 아니라 파싱된 연도로 판정해 일반화한다.
+    if parsed.year >= 9999:
+        return None
+    return parsed
 
 
 def _parse_price(value: str | None) -> int | None:

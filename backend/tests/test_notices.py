@@ -22,8 +22,8 @@ from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
-from app.models import analysis, notice, source
-from app.services.notice_query import SORT_OPTIONS, TABS, compute_bid_status
+from app.models import analysis, notice, notice_score, source
+from app.services.notice_query import SORT_OPTIONS, TABS, NoticeFilters, compute_bid_status, list_notices
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -52,7 +52,11 @@ def test_notices_list_shape(client: TestClient):
     assert body["total"] >= len(body["items"])
     if body["items"]:
         item = body["items"][0]
-        assert {"id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt", "analysis_summary", "channel_name"} <= item.keys()
+        assert {
+            "id", "title", "org_name", "stage", "bid_status", "est_price", "close_dt", "analysis_summary",
+            "channel_name", "scores", "notice_type", "notice_status_label", "work_type_label",
+        } <= item.keys()
+        assert item["notice_type"] in ("공공입찰", "정부지원")
 
 
 def test_notices_list_includes_latest_analysis_summary(client: TestClient):
@@ -124,6 +128,18 @@ def test_pagination_pages_do_not_overlap(client: TestClient):
     assert ids1.isdisjoint(ids2)
 
 
+def test_default_page_size_is_multiple_of_three(client: TestClient):
+    # 2026-09-07 사용자 지시 — 3열 그리드 보기에서 총 건수가 3의 배수가 아니면 마지막 줄에
+    # 빈 칸이 생겨 카드가 빠진 것처럼 보였다. size를 생략하면 3의 배수(21건)가 기본이어야 한다.
+    total = client.get("/api/notices", params={"tab": "all", "size": 1}).json()["total"]
+    response = client.get("/api/notices", params={"tab": "all"})
+    assert response.status_code == 200
+    body = response.json()
+    expected = min(21, total)
+    assert len(body["items"]) == expected
+    assert 21 % 3 == 0
+
+
 def test_search_filters_by_title(client: TestClient):
     response = client.get("/api/notices", params={"tab": "all", "q": "CCTV", "size": 50})
     assert response.status_code == 200
@@ -151,12 +167,27 @@ def test_stage_filter(client: TestClient):
 
 
 def test_biz_type_filter(client: TestClient):
-    response = client.get("/api/notices", params={"tab": "all", "biz_type[]": ["물품"], "size": 50})
-    assert response.status_code == 200
-    items = response.json()["items"]
-    assert len(items) > 0
-    for item in items:
-        assert item["biz_type"] == "물품"
+    # 나라장터 물품·공사는 2026-09-05 사용자 지시로 수집 대상에서 완전히 제외(소스 비활성화+
+    # 기존 데이터 삭제)돼 실데이터에 biz_type="물품"인 공고가 더 이상 없다 — 필터 자체의
+    # 동작만 검증하기 위해 격리된 임시 공고를 하나 넣어서 확인한다.
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", biz_type="물품",
+                title="[테스트] biz_type 필터 검증용", url="https://example.grib-test.kr/notice/biz-type-test",
+            ).returning(notice.c.id)
+        ).scalar_one()
+    try:
+        response = client.get("/api/notices", params={"tab": "all", "biz_type[]": ["물품"], "size": 50})
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) > 0
+        for item in items:
+            assert item["biz_type"] == "물품"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id == notice_id))
 
 
 def test_work_type_filter(client: TestClient):
@@ -178,6 +209,42 @@ def test_sort_close_asc_is_ascending(client: TestClient):
     response = client.get("/api/notices", params={"tab": "all", "sort": "close_asc", "status": "open", "size": 50})
     close_dates = [item["close_dt"] for item in response.json()["items"] if item["close_dt"]]
     assert close_dates == sorted(close_dates)
+
+
+def test_sort_open_desc_is_descending_with_nulls_last(client: TestClient):
+    # 2026-09-07 — PostgreSQL DESC 기본은 NULLS FIRST라 nulls_last()를 안 붙이면 open_dt가
+    # 없는 공고(발주계획 등, 의도적으로 비워둠)가 "최신순" 맨 위에 뜨는 반대 결과가 난다.
+    response = client.get("/api/notices", params={"tab": "all", "sort": "open_desc", "size": 100})
+    items = response.json()["items"]
+    open_dates = [item["open_dt"] for item in items]
+    non_null = [d for d in open_dates if d]
+    assert non_null == sorted(non_null, reverse=True)
+    # null이 하나라도 섞여 있으면 전부 non-null 값들 뒤에 와야 한다(앞에 끼어들면 안 됨).
+    if None in open_dates and non_null:
+        first_null_index = open_dates.index(None)
+        assert first_null_index >= len(non_null) - 1 or all(d is not None for d in open_dates[:first_null_index])
+
+
+def test_default_sort_is_notice_date_desc(client: TestClient):
+    # 2026-09-08 사용자 지시 — 공고 탐색 기본 정렬을 게시일 최신순에서 공고일 최신순으로.
+    default_response = client.get("/api/notices", params={"tab": "all", "size": 20})
+    explicit_response = client.get("/api/notices", params={"tab": "all", "sort": "notice_date_desc", "size": 20})
+    default_ids = [item["id"] for item in default_response.json()["items"]]
+    explicit_ids = [item["id"] for item in explicit_response.json()["items"]]
+    assert default_ids == explicit_ids
+
+
+def test_sort_notice_date_desc_is_descending_with_nulls_last():
+    # "공고일"은 소스별로 extra.ancmDe(IRIS) 또는 extra.nticeDt(발주계획)에 있다(open_dt와는
+    # 다른 필드, 2026-09-07 발견) — 둘 다 없는 공고(사전규격 등)는 정렬 맨 뒤로 가야 한다.
+    with engine.connect() as conn:
+        items, _ = list_notices(conn, NoticeFilters(tab="all", sort="notice_date_desc", size=200))
+    notice_dates = [item.get("extra", {}).get("ancmDe") or item.get("extra", {}).get("nticeDt") for item in items]
+    non_null = [d for d in notice_dates if d]
+    assert non_null == sorted(non_null, reverse=True)
+    if None in notice_dates and non_null:
+        first_null_index = notice_dates.index(None)
+        assert first_null_index >= len(non_null) - 1 or all(d is not None for d in notice_dates[:first_null_index])
 
 
 def test_notice_counts_shape(client: TestClient):
@@ -277,6 +344,39 @@ def test_classification_unknown_action_rejected(client: TestClient):
     notice_id = _any_notice_id(client)
     response = client.post(f"/api/notices/{notice_id}/classification", json={"action": "bogus"})
     assert response.status_code == 422
+
+
+def test_add_notice_topic_then_appears_in_detail(client: TestClient):
+    notice_id = _any_notice_id(client)
+    topic_id = client.get("/api/notices/filter-options").json()["topics"][0]["id"]
+    try:
+        response = client.post(f"/api/notices/{notice_id}/topics", json={"topic_id": topic_id})
+        assert response.status_code == 200
+        assert response.json()["added"] is True
+
+        detail = client.get(f"/api/notices/{notice_id}").json()
+        assert any(s["interest_topic_id"] == topic_id for s in detail["scores"])
+
+        # 이미 붙어있으면 added=False(중복 추가 안 됨)
+        again = client.post(f"/api/notices/{notice_id}/topics", json={"topic_id": topic_id})
+        assert again.json()["added"] is False
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                delete(notice_score).where(notice_score.c.notice_id == notice_id, notice_score.c.interest_topic_id == topic_id)
+            )
+
+
+def test_remove_notice_topic(client: TestClient):
+    notice_id = _any_notice_id(client)
+    topic_id = client.get("/api/notices/filter-options").json()["topics"][0]["id"]
+    client.post(f"/api/notices/{notice_id}/topics", json={"topic_id": topic_id})
+
+    response = client.delete(f"/api/notices/{notice_id}/topics/{topic_id}")
+    assert response.status_code == 204
+
+    detail = client.get(f"/api/notices/{notice_id}").json()
+    assert all(s["interest_topic_id"] != topic_id for s in detail["scores"])
 
 
 def test_neighbors_preserve_filter_and_sort(client: TestClient):

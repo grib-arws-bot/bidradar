@@ -1,15 +1,34 @@
+import { useState } from "react";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
+import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import OpenInNewIcon from "@mui/icons-material/OpenInNewOutlined";
-import { Box, Button, Card, Chip, Divider, IconButton, Link, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  FormControlLabel,
+  Link,
+  Radio,
+  RadioGroup,
+  Stack,
+  Typography,
+} from "@mui/material";
 
 import type { AnalysisSummary, LlmModel } from "@/api/analysis";
-import type { NoticeDetail } from "@/api/notices";
+import type { FilterOptions, NoticeDetail } from "@/api/notices";
+import { TopicEditor } from "@/components/notice-detail/TopicEditor";
+import { isAttachmentDownloadUrl } from "@/utils/noticeLinks";
 
-// opus는 여기 화면에서 선택지로 노출하지 않는다(비용이 커 CLI 수동 실행 전용으로 남김) —
-// LlmModel 타입 자체엔 여전히 있어 Record 전체를 못 쓰고 필요한 2개만 배열로 나열.
 const SELECTABLE_MODELS: { value: LlmModel; label: string }[] = [
-  { value: "haiku", label: "Haiku (기본)" },
-  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku (기본, 저렴)" },
+  { value: "sonnet", label: "Sonnet (고품질, 비용↑)" },
 ];
 
 // 달력 날짜 기준 D-day — 시각까지 포함한 순수 ms 차이로 계산하면 "오늘 마감"인데 아직 자정을
@@ -21,6 +40,8 @@ function daysUntil(target: Date, now: Date): number {
   return Math.round((startOfTarget.getTime() - startOfNow.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// 마감이 임박하지 않아도(예: D-6) 다른 outlined 칩들 사이에 묻혀 눈에 안 띈다는 지적(2026-09-05)
+// — D-day는 항상 채워진 색으로 강조하고, 임박(3일 이내)할 때만 색을 error로 바꾼다.
 function ddayInfo(closeDt: string | null): { label: string; urgent: boolean } | null {
   if (!closeDt) return null;
   const days = daysUntil(new Date(closeDt), new Date());
@@ -39,56 +60,62 @@ function formatSourceDate(raw: string | null): string {
 export function NoticeTopSection({
   notice,
   summary,
-  model,
-  onModelChange,
   onRunAnalysis,
   analysisPending,
   analysisDone,
+  analysisError,
+  allTopics,
 }: {
   notice: NoticeDetail;
   summary: AnalysisSummary | null | undefined;
-  model: LlmModel;
-  onModelChange: (model: LlmModel) => void;
-  onRunAnalysis: () => void;
+  onRunAnalysis: (model: LlmModel) => void;
   analysisPending: boolean;
   analysisDone: boolean;
+  analysisError?: string | null;
+  allTopics: FilterOptions["topics"];
 }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogModel, setDialogModel] = useState<LlmModel>("haiku");
   const dday = ddayInfo(notice.close_dt);
   const isGovSupport = notice.notice_type === "정부지원";
-  const announceDate = notice.extra?.ancmDe ? String(notice.extra.ancmDe) : null;
+  // "공고일" 참고용 등록일 — 소스마다 원본 필드명이 다르다(IRIS는 ancmDe, 나라장터
+  // 발주계획현황서비스는 nticeDt). 둘 다 "입찰 시작일이 아닌 단순 등록일"이라 open_dt로는
+  // 안 쓰고 extra에만 참고용으로 남겨뒀는데(2026-09-05 결정), 발주계획 공고는 nticeDt를
+  // 안 봐서 "공고일"이 항상 비어 보이던 문제(2026-09-07 발견) — 두 필드명 다 확인한다.
+  const announceDate = notice.extra?.ancmDe ?? notice.extra?.nticeDt;
+  const announceDateStr = announceDate ? String(announceDate) : null;
   const supervisingDept = notice.extra?.blngGovdSeNm ? String(notice.extra.blngGovdSeNm) : notice.channel_name;
   const taskType = summary?.task_type;
   const hasTaskType = taskType && (taskType.execution_system || taskType.development_form || taskType.call_type);
   const contact = summary?.contact;
   const hasContact = contact && (contact.department || contact.role || contact.phone || contact.email);
 
+  function confirmRunAnalysis() {
+    setDialogOpen(false);
+    onRunAnalysis(dialogModel);
+  }
+
   return (
     <Card sx={{ p: 3 }}>
       <Stack spacing={2}>
-        {/* 관심주제 — 사업명 위(2026-09-05 요청). 매칭 점수 표기는 뺀다(내부 키워드 가중치라
-            업무 사용자에게 의미가 크지 않음 — 채팅에서 설명). */}
-        {notice.scores.length > 0 && (
-          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-            {notice.scores.map((s) => (
-              <Chip key={s.interest_topic_id} label={s.name} size="small" color="primary" variant="outlined" />
-            ))}
-          </Stack>
-        )}
+        {/* 공고유형/상태/업무구분 한 줄로(2026-09-05 요청) — 관심주제(TopicEditor)는 왼쪽
+            컬럼의 공고일 아래로 옮겼다(2026-09-07 재배치, 카드의 분류검수 4버튼을 없애면서
+            유일하게 남긴 기능). */}
+        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap alignItems="center">
+          <Chip label={notice.notice_type} size="small" color="secondary" variant="outlined" />
+          <Chip
+            label={notice.notice_status_label}
+            size="small"
+            color={notice.bid_status === "in_progress" ? "success" : "default"}
+            variant="outlined"
+          />
+          <Chip label={notice.work_type_label} size="small" variant="outlined" />
+        </Stack>
 
         {/* 가운데 세로줄로 좌/우 분할(2026-09-05 요청) — 내용에 비해 상단이 너무 넓어 보이던 문제 해소 */}
         <Stack direction="row" spacing={4} divider={<Divider orientation="vertical" flexItem />}>
           {/* 왼쪽: 공고 자체 정보 */}
           <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap alignItems="center">
-              <Chip label={notice.notice_type} size="small" color="secondary" variant="outlined" />
-              <Chip
-                label={notice.notice_status_label}
-                size="small"
-                color={notice.bid_status === "in_progress" ? "success" : "default"}
-                variant="outlined"
-              />
-              <Chip label={notice.work_type_label} size="small" variant="outlined" />
-            </Stack>
 
             <Typography variant="h2">{notice.title}</Typography>
 
@@ -105,58 +132,65 @@ export function NoticeTopSection({
             </Stack>
 
             <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
-              <Field label="공고일" value={formatSourceDate(announceDate)} />
+              <Field label="공고일" value={formatSourceDate(announceDateStr)} />
               <Field label={isGovSupport ? "제안시작일" : "입찰시작일"} value={notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "—"} />
+              {/* 마감일은 참여 판단 마지노선이라 사업비와 같은 강조(주황·큰 폰트)로(2026-09-05 요청) */}
               <Field
                 label={isGovSupport ? "제안마감일" : "입찰마감일"}
                 value={notice.close_dt ? new Date(notice.close_dt).toLocaleString("ko-KR") : "—"}
+                large
               />
             </Stack>
+
+            {/* 관심주제를 공고일 아래로(2026-09-07 요청) — 예전엔 AI분석 버튼 옆에 있었음 */}
+            <TopicEditor noticeId={notice.id} scores={notice.scores} allTopics={allTopics} />
           </Stack>
 
-          {/* 오른쪽: D-day·공고원문·AI분석(눈에 띄게) + 부가 정보 */}
-          <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
+          {/* 오른쪽: D-day·공고원문·AI분석·관심주제를 한 덩어리로(2026-09-05 "일관된 UI로"
+              요청) — 전부 한 줄(래핑 허용)에 같은 높이(size="medium")로 맞춘다. */}
+          <Stack spacing={1.5} sx={{ flex: 1, minWidth: 0 }}>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
               {dday && (
                 <Chip
                   label={dday.label}
-                  color={dday.urgent ? "error" : "default"}
-                  variant={dday.urgent ? "filled" : "outlined"}
-                  sx={{ fontWeight: 700, fontSize: "0.9rem", height: 32 }}
+                  size="medium"
+                  color={dday.urgent ? "error" : "warning"}
+                  variant="filled"
+                  sx={{ fontWeight: 700, fontSize: "0.9rem" }}
                 />
               )}
-              <Tooltip title="공고원문 보기">
-                <IconButton
-                  component={Link}
-                  href={notice.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  color="primary"
-                  sx={{ border: "1px solid", borderColor: "primary.main" }}
-                >
-                  <OpenInNewIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <TextField size="small" select value={model} onChange={(e) => onModelChange(e.target.value as LlmModel)} disabled={analysisDone} sx={{ minWidth: 120 }}>
-                {SELECTABLE_MODELS.map((m) => (
-                  <MenuItem key={m.value} value={m.value}>
-                    {m.label}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <Tooltip title={analysisDone ? "이미 분석이 완료됐습니다(중복 실행·LLM 비용 재발생 방지)" : "AI분석 실행"}>
-                <span>
-                  <Button
-                    variant="contained"
-                    startIcon={<AutoAwesomeOutlinedIcon />}
-                    disabled={analysisPending || analysisDone}
-                    onClick={onRunAnalysis}
-                  >
-                    {analysisPending ? "분석 중..." : analysisDone ? "분석 완료됨" : "AI분석"}
-                  </Button>
-                </span>
-              </Tooltip>
+              <Button
+                size="medium"
+                variant="outlined"
+                startIcon={
+                  isAttachmentDownloadUrl(notice.url) ? (
+                    <DownloadOutlinedIcon fontSize="small" />
+                  ) : (
+                    <OpenInNewIcon fontSize="small" />
+                  )
+                }
+                component={Link}
+                href={notice.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {isAttachmentDownloadUrl(notice.url) ? "규격서 파일 다운로드" : "공고원문보기"}
+              </Button>
+              <Button
+                size="medium"
+                variant="contained"
+                startIcon={<AutoAwesomeOutlinedIcon />}
+                disabled={analysisPending}
+                onClick={() => setDialogOpen(true)}
+              >
+                {analysisPending ? "분석 중..." : analysisDone ? "재분석" : "AI분석"}
+              </Button>
             </Stack>
+
+            {/* 2026-09-06 — 추출(A1) 실패는 예외 없이 정상 응답(status:"failed")으로 오기 때문에
+                예전엔 버튼을 눌러도 아무 반응이 없는 것처럼 보였다("AI분석이 다시 실행되지
+                않는 것 같다" 문의로 발견). 실패 사유를 그대로 보여준다. */}
+            {analysisError && <Alert severity="error">AI분석 실패: {analysisError}</Alert>}
 
             {hasTaskType && (
               <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap>
@@ -182,6 +216,26 @@ export function NoticeTopSection({
           </Stack>
         </Stack>
       </Stack>
+
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>{analysisDone ? "재분석 실행" : "AI분석 실행"}</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            LLM 호출 비용이 발생합니다{analysisDone ? " — 재분석하면 이 페이지에 보이는 내용이 새 결과로 전부 바뀝니다(이전 결과를 다시 볼 수 있는 화면은 없습니다)" : ""}.
+          </Alert>
+          <RadioGroup value={dialogModel} onChange={(e) => setDialogModel(e.target.value as LlmModel)}>
+            {SELECTABLE_MODELS.map((m) => (
+              <FormControlLabel key={m.value} value={m.value} control={<Radio />} label={m.label} />
+            ))}
+          </RadioGroup>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDialogOpen(false)}>취소</Button>
+          <Button variant="contained" onClick={confirmRunAnalysis}>
+            확인
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }

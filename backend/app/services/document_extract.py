@@ -31,6 +31,7 @@ _HWPX_PARAGRAPH_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 _HWP5TXT_TIMEOUT_SEC = 30
 _DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
@@ -107,6 +108,28 @@ def _extract_pptx(content: bytes) -> ExtractResult:
     if not text:
         return ExtractResult(text=None, method="pptx_xml", ok=False, error="추출된 텍스트가 비어 있음")
     return ExtractResult(text=text, method="pptx_xml", ok=True)
+
+
+def _extract_docx(content: bytes) -> ExtractResult:
+    """OOXML(zip+XML) — hwpx·pptx와 같은 구조. word/document.xml의 문단(<w:p>)마다 텍스트
+    런(<w:t>)을 이어붙이고, 문단 사이엔 줄바꿈을 넣어 원문 문단 구조를 살린다(2026-09-05,
+    고객 소개서 파일이 흔히 .docx라 추가 — 지금까지는 명시적으로 지원하지 않던 형식)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            if "word/document.xml" not in z.namelist():
+                return ExtractResult(text=None, method="docx_xml", ok=False, error="word/document.xml을 찾을 수 없음")
+            root = ElementTree.fromstring(z.read("word/document.xml"))
+            paragraphs = []
+            for p in root.iter(f"{{{_WORDPROCESSINGML_NS}}}p"):
+                para_text = "".join(t.text or "" for t in p.iter(f"{{{_WORDPROCESSINGML_NS}}}t"))
+                if para_text.strip():
+                    paragraphs.append(para_text.strip())
+        text = "\n".join(paragraphs).strip()
+    except Exception as exc:  # noqa: BLE001
+        return ExtractResult(text=None, method="docx_xml", ok=False, error=str(exc))
+    if not text:
+        return ExtractResult(text=None, method="docx_xml", ok=False, error="추출된 텍스트가 비어 있음")
+    return ExtractResult(text=text, method="docx_xml", ok=True)
 
 
 def _extract_xlsx(content: bytes) -> ExtractResult:
@@ -235,7 +258,7 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
     건너뛰지 않는다(S8 원칙: 조용한 빈 결과 금지).
 
     HWP는 pyhwp(hwp5txt) 전문 추출 우선 → 실패 시 PrvText 미리보기(~1000자)로 폴백.
-    pptx/xlsx는 hwpx와 같은 OOXML(zip+XML) 구조라 같은 방식으로 직접 파싱한다.
+    pptx/xlsx/docx는 hwpx와 같은 OOXML(zip+XML) 구조라 같은 방식으로 직접 파싱한다.
     이미지(png/jpg 등)는 OCR 파이프라인이 아직 없어(구현스펙 07절 폴백 사슬의 마지막 단계,
     미구현) 지원하지 않음을 명시 보고한다 — 나중에 OCR을 붙이면 이 분기만 바꾸면 됨.
     """
@@ -251,6 +274,8 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
         return _extract_pptx(content)
     if lower.endswith(".xlsx"):
         return _extract_xlsx(content)
+    if lower.endswith(".docx"):
+        return _extract_docx(content)
     if lower.endswith(_IMAGE_EXTENSIONS):
         return ExtractResult(text=None, method="unsupported", ok=False, error=f"이미지 파일은 OCR 미구현으로 아직 지원하지 않음: {filename}")
     if lower.endswith(_LEGACY_OFFICE_EXTENSIONS):

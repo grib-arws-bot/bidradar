@@ -71,6 +71,16 @@ def seed() -> None:
     print("시드 완료.")
 
 
+def seed_prod() -> None:
+    """prod 전용 최소 시드(2026-09-10) — 관심주제·키워드·소스·발주기관만 채우고 고객(customer)은
+    비워둔다. 관리자가 직접 실제 고객(그립 AI/IoT/Robot, Safety/Factory, AX/Service 3개 기관)을
+    등록할 계획이라 가짜 데모 데이터를 넣지 않는다(app/seed_data.py의 run_seed_prod 참고)."""
+    from app.seed_data import run_seed_prod
+
+    run_seed_prod(engine)
+    print("prod 최소 시드 완료(관심주제·키워드·소스·발주기관만 — 고객은 비워둠).")
+
+
 def collect(source_id: int, service_key: str | None, force: bool, max_lookback_days: int | None) -> None:
     """수동 1회 수집(U11). 공공데이터포털 인증키가 아직 없으면 --service-key 없이 호출해도
     되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도).
@@ -78,26 +88,51 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
     --force는 B등급 소스의 최소 수집 간격을 관리자가 의도적으로 우회할 때만 쓴다(INBOX #5).
     --max-lookback-days는 데이터를 전부 지우고 특정 기간치를 재수집할 때만 쓴다 — 직전 성공
     수집 이력이 남아있으면 거기서부터 이어받으므로(runner.py의 _collection_window), 이 옵션이
-    실제로 먹으려면 그 소스의 source_run 이력도 같이 비워야 한다."""
+    실제로 먹으려면 그 소스의 source_run 이력도 같이 비워야 한다.
+
+    수집 뒤 중복체크·첨부분석(A1)·AI분석(A2)까지 한 번에 이어진다(2026-09-07,
+    run_source_and_process_pending) — 첨부분석·AI분석은 그 소스의 auto_extract/auto_analyze
+    설정을 그대로 따르므로 꺼져 있으면 자연히 건너뛴다."""
     from sqlalchemy import update
 
-    from app.collector.runner import DEFAULT_MAX_LOOKBACK_DAYS, run_source
+    from app.collector.runner import CollectionInProgressError, DEFAULT_MAX_LOOKBACK_DAYS, run_source_and_process_pending
     from app.models import source_credential
 
-    with engine.begin() as conn:
-        if service_key:
+    if service_key:
+        with engine.begin() as conn:
             conn.execute(
                 update(source_credential)
                 .where(source_credential.c.source_id == source_id, source_credential.c.kind == "service_key")
                 .values(value=service_key)
             )
-        result = run_source(
-            conn, source_id, force=force, max_lookback_days=max_lookback_days or DEFAULT_MAX_LOOKBACK_DAYS
+
+    try:
+        result = run_source_and_process_pending(
+            source_id, force=force, max_lookback_days=max_lookback_days or DEFAULT_MAX_LOOKBACK_DAYS
         )
+    except CollectionInProgressError as exc:
+        print(f"수집 건너뜀: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     print(f"수집 완료: fetched={result['fetched']} inserted={result['inserted']} "
           f"skipped={result['skipped']} scored={result['scored']} out_of_window={result['out_of_window']} "
-          f"already_closed={result['already_closed']} auto_extracted={result['auto_extracted']}")
+          f"already_closed={result['already_closed']}")
+    print(f"중복 무효화: {result['dedup_notices_updated']}건(그룹 {result['dedup_groups_with_duplicates']}개)")
+    print(f"첨부 자동추출: 대상 {result['extraction_candidates']}건 중 {result['auto_extracted']}건 처리, "
+          f"AI 자동분석: 대상 {result['analyze_candidates']}건 중 {result['auto_analyzed']}건 처리")
+
+
+def process_pending(source_id: int | None) -> None:
+    """첨부문서 자동 추출(A1)·AI 자동분석(A2)을 목록 수집과 분리한 후속 패스(2026-09-05) —
+    공고 단위로 각각 짧은 트랜잭션을 써서, 신규 건이 많을 때 하나의 긴 트랜잭션이 DB 락을
+    오래 쥐는 문제(스키마 마이그레이션까지 막았던 실사고)를 피한다."""
+    from app.services.pending_analysis import run_pending_analysis
+
+    result = run_pending_analysis(source_id)
+    print(
+        f"후속 처리 완료: 추출대상={result['extraction_candidates']} 추출성공={result['auto_extracted']} "
+        f"분석대상={result['analyze_candidates']} 분석성공={result['auto_analyzed']}"
+    )
 
 
 def structure(analysis_id: int, model: str) -> None:
@@ -113,7 +148,20 @@ def structure(analysis_id: int, model: str) -> None:
     print(
         f"구조화 완료: 추출={result['extracted']} 저장={result['saved']} "
         f"근거없음제외={result['skipped_no_cite']} 토큰(입력/출력)={result['input_tokens']}/{result['output_tokens']} "
-        f"비용=${result['cost_usd']}"
+        f"비용=${result['cost_usd']} 관심주제추가={result['topics_added']}"
+    )
+
+
+def reprocess_attachments(source_id: int) -> None:
+    """이미 A1을 시도했지만 첨부 0건으로 남은 공고를 캐시된 raw_payload로 재시도한다
+    (2026-09-08, 의사결정 로그 82번 버그의 과거 잔여분 백필). 라이브 API를 호출하지 않으므로
+    apis.data.go.kr 상태와 무관하게 안전하게 여러 번 실행해도 된다."""
+    from app.services.reprocess_attachments import reprocess_empty_extractions
+
+    result = reprocess_empty_extractions(source_id)
+    print(
+        f"재처리 완료: 대상={result['candidates']} 캐시없음(건너뜀)={result['no_cache_match']} "
+        f"재시도={result['reprocessed']} 첨부발견={result['found_docs']}"
     )
 
 
@@ -133,14 +181,16 @@ def check_compliance(source_id: int | None) -> None:
         print(f"[{r['source_id']}] {r['name']}: {status}")
 
 
-def cleanup_closed(retention_days: int) -> None:
-    """마감 후 retention_days일 지난 공고 삭제(2026-09-04 사용자 결정). 스케줄러 인프라가
-    아직 없어 지금은 사람이나 cron으로 이 명령을 직접 돌린다."""
+def cleanup_closed(retention_days: int, no_close_retention_days: int) -> None:
+    """마감(close_dt) 후 retention_days일, 또는 마감일이 없는 공고는 공고일 기준
+    no_close_retention_days일 지난 공고를 삭제한다(2026-09-04 결정, 2026-09-10 기준 변경).
+    2026-09-10부터 매 수집(run_source) 직후 자동으로도 실행되므로(app/collector/runner.py),
+    이 명령은 수집 자체가 오래 안 도는 소스를 수동으로 정리하고 싶을 때 쓴다."""
     from app.services.notice_cleanup import delete_expired_notices
 
     with engine.begin() as conn:
-        deleted = delete_expired_notices(conn, retention_days=retention_days)
-    print(f"삭제 완료: {deleted}건 (마감 후 {retention_days}일 경과 기준)")
+        deleted = delete_expired_notices(conn, retention_days=retention_days, no_close_retention_days=no_close_retention_days)
+    print(f"삭제 완료: {deleted}건 (마감 후 {retention_days}일 경과, 또는 마감일 없이 공고일 기준 {no_close_retention_days}일 경과)")
 
 
 def main() -> None:
@@ -148,6 +198,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("create-admin")
     subparsers.add_parser("seed")
+    subparsers.add_parser("seed-prod")
 
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--source-id", type=int, required=True)
@@ -161,7 +212,10 @@ def main() -> None:
     compliance_parser.add_argument("--source-id", type=int, default=None, help="생략하면 B·C등급 전체 재확인")
 
     cleanup_parser = subparsers.add_parser("cleanup-closed")
-    cleanup_parser.add_argument("--retention-days", type=int, default=30, help="마감 후 이 일수가 지나면 삭제(기본 30일)")
+    cleanup_parser.add_argument("--retention-days", type=int, default=3, help="마감 후 이 일수가 지나면 삭제(기본 3일)")
+    cleanup_parser.add_argument(
+        "--no-close-retention-days", type=int, default=60, help="마감일이 없는 공고는 공고일 기준 이 일수가 지나면 삭제(기본 60일)"
+    )
 
     structure_parser = subparsers.add_parser("structure")
     structure_parser.add_argument("--analysis-id", type=int, required=True)
@@ -169,19 +223,33 @@ def main() -> None:
         "--model", default="haiku", help="haiku/sonnet/opus 또는 정식 모델 ID(기본 haiku — 비용 절감)"
     )
 
+    process_pending_parser = subparsers.add_parser("process-pending")
+    process_pending_parser.add_argument(
+        "--source-id", type=int, default=None, help="생략하면 auto_extract/auto_analyze가 켜진 모든 소스 대상"
+    )
+
+    reprocess_parser = subparsers.add_parser("reprocess-attachments")
+    reprocess_parser.add_argument("--source-id", type=int, required=True)
+
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin()
     elif args.command == "seed":
         seed()
+    elif args.command == "seed-prod":
+        seed_prod()
     elif args.command == "collect":
         collect(args.source_id, args.service_key, args.force, args.max_lookback_days)
     elif args.command == "check-compliance":
         check_compliance(args.source_id)
     elif args.command == "cleanup-closed":
-        cleanup_closed(args.retention_days)
+        cleanup_closed(args.retention_days, args.no_close_retention_days)
     elif args.command == "structure":
         structure(args.analysis_id, args.model)
+    elif args.command == "process-pending":
+        process_pending(args.source_id)
+    elif args.command == "reprocess-attachments":
+        reprocess_attachments(args.source_id)
 
 
 if __name__ == "__main__":

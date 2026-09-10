@@ -14,13 +14,34 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import pytest
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
 
-from app.collector.runner import run_source
+from app.collector.runner import CollectionInProgressError, run_source
+from app.collector.scorer import L2_PROMOTE_THRESHOLD
 from app.db import engine
 from app.models import (
     analysis, notice, notice_score, org, raw_payload, source, source_config, source_field_map, source_run,
 )
+
+# run_source()가 매 수집 직후 notice_dedup.find_and_mark_superseded를 자동 호출하게 되면서
+# (2026-09-06) 반환값에 dedup_* 키가 추가됨 — 실제 공유 DB 전체를 재계산한 결과라 값을
+# 하드코딩할 수 없으므로, 기존 고정 필드 비교에서는 이 키들만 떼어내고 별도로 타입만 확인한다.
+_DEDUP_RESULT_KEYS = {"dedup_groups_with_duplicates", "dedup_notices_updated"}
+# 이번 실행에서 새로 들어온 공고 id 목록(2026-09-07, run_source_and_process_pending이 소비) —
+# 값 자체가 테스트마다 다른 id라 정확히 비교할 수 없어 타입(list[int])만 확인한다.
+_NOTICE_IDS_KEY = "inserted_notice_ids"
+# notice_id -> 원본 API 항목(2026-09-08, g2b 첨부분석 재조회 없애는 데 씀) — 마찬가지로
+# 내용을 정확히 비교할 수 없어 타입(dict)만 확인한다.
+_RAW_ITEMS_KEY = "inserted_raw_items"
+
+
+def _assert_run_result(result: dict, expected: dict) -> None:
+    dedup_part = {k: result[k] for k in _DEDUP_RESULT_KEYS}
+    assert all(isinstance(v, int) and v >= 0 for v in dedup_part.values())
+    assert isinstance(result[_NOTICE_IDS_KEY], list) and all(isinstance(i, int) for i in result[_NOTICE_IDS_KEY])
+    assert isinstance(result[_RAW_ITEMS_KEY], dict)
+    ignored_keys = _DEDUP_RESULT_KEYS | {_NOTICE_IDS_KEY, _RAW_ITEMS_KEY}
+    assert {k: v for k, v in result.items() if k not in ignored_keys} == expected
 
 # 2026-09-04 — 날짜를 고정 문자열이 아니라 "지금부터 며칠"로 계산한다. 예전엔 하드코딩된
 # 2026-09-01 등을 썼는데 시간이 지나 오늘 날짜가 그 값을 지나가버리면 out_of_window로 걸러져
@@ -79,6 +100,8 @@ def _bid_service_source_id() -> int:
 
 @pytest.fixture(autouse=True)
 def _clean_collector_side_effects():
+    # 2026-09-05부터 run_source()는 목록 수집만 한다(A1/A2는 app/services/pending_analysis.py로
+    # 분리) — 이 소스의 auto_extract 설정과 완전히 무관해졌으므로 더 이상 손댈 필요 없음.
     source_id = _bid_service_source_id()
     yield
     with engine.begin() as conn:
@@ -88,6 +111,7 @@ def _clean_collector_side_effects():
         ]
         if test_notice_ids:
             conn.execute(delete(notice_score).where(notice_score.c.notice_id.in_(test_notice_ids)))
+            conn.execute(delete(analysis).where(analysis.c.notice_id.in_(test_notice_ids)))
             conn.execute(delete(notice).where(notice.c.id.in_(test_notice_ids)))
         conn.execute(
             delete(source_run).where(
@@ -105,19 +129,38 @@ def test_run_source_end_to_end(monkeypatch):
     with engine.begin() as conn:
         result = run_source(conn, source_id)
 
-    assert result == {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 0, "auto_extracted": 0}
+    _assert_run_result(result, {"fetched": 2, "inserted": 2, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 0})
 
     with engine.connect() as conn:
         cctv_notice = conn.execute(select(notice.c.id, notice.c.title).where(notice.c.notice_no == "R26TEST0001")).first()
         assert cctv_notice is not None
         scores = conn.execute(select(notice_score.c.l2_score).where(notice_score.c.notice_id == cctv_notice[0])).all()
         assert len(scores) == 1
-        assert scores[0][0] >= 4
+        # 정확한 점수는 관리자가 키워드를 추가/삭제하면 달라질 수 있다(2026-09-05, 키워드
+        # 관리 CRUD 신설) — 승급 문턱을 넘는지만 검증한다.
+        assert scores[0][0] >= L2_PROMOTE_THRESHOLD
 
         run_row = conn.execute(
             select(source_run.c.status, source_run.c.items_fetched).where(source_run.c.source_id == source_id).order_by(source_run.c.id.desc())
         ).first()
         assert run_row == ("ok", 2)
+
+
+def test_run_source_returns_raw_item_per_inserted_notice(monkeypatch):
+    # 2026-09-08 — process_new_notices가 첨부분석 시 목록 API를 다시 재조회하지 않도록,
+    # 방금 수집한 원본 API 항목을 notice_id별로 그대로 돌려줘야 한다.
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", _paginated_mock_fetch(SAMPLE_ITEMS))
+
+    source_id = _bid_service_source_id()
+    with engine.begin() as conn:
+        result = run_source(conn, source_id)
+        cctv_notice_id = conn.execute(
+            select(notice.c.id).where(notice.c.notice_no == "R26TEST0001")
+        ).scalar_one()
+
+    raw_items = result["inserted_raw_items"]
+    assert set(raw_items.keys()) == set(result["inserted_notice_ids"])
+    assert raw_items[cctv_notice_id]["bidNtceNo"] == "R26TEST0001"
 
 
 def test_run_source_is_idempotent_on_rerun(monkeypatch):
@@ -281,7 +324,7 @@ def test_run_source_filters_items_older_than_collection_window(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
 
-    assert result == {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1, "already_closed": 0, "auto_extracted": 0}
+    _assert_run_result(result, {"fetched": 2, "inserted": 1, "skipped": 0, "scored": 0, "out_of_window": 1, "already_closed": 0})
 
 
 # ---- 이미 마감된 공고는 수집 단계에서 제외(2026-09-04, 나라장터 82% 마감건 혼입 발견) -------
@@ -338,7 +381,7 @@ def test_run_source_skips_items_already_past_close_date(monkeypatch):
             conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
             conn.execute(delete(source).where(source.c.id == source_id))
 
-    assert result == {"fetched": 3, "inserted": 2, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 1, "auto_extracted": 0}
+    _assert_run_result(result, {"fetched": 3, "inserted": 2, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 1})
     assert titles == {"아직 진행중인 공고", "마감일 없는 공고"}
 
 
@@ -359,72 +402,134 @@ def test_run_source_records_failure_and_reraises(monkeypatch):
     assert run_row == ("fail",)
 
 
-# ---- 소스별 첨부문서 자동 분석 토글(2026-09-04, IRIS는 ON·나라장터는 OFF) -------------------
+# 첨부문서 자동 추출(A1)·AI 자동분석(A2) 트리거 검증은 test_pending_analysis.py로 옮겼다
+# (2026-09-05, run_source에서 분리 — app/services/pending_analysis.py 참고).
 
 
-_AUTO_EXTRACT_FIELD_MAP = [("title", "$.title", None), ("org_name", "$.org", None), ("url", "$.url", None)]
+def test_run_source_and_process_pending_chains_and_merges_results(monkeypatch):
+    """파이프라인 전체(수집→중복체크→첨부분석→AI분석) 연결 검증(2026-09-07) — run_source와
+    process_new_notices 자체 동작은 각각 다른 테스트가 이미 검증하므로, 여기선 두 호출이
+    실제로 순서대로 이어지고(이번에 새로 수집된 공고 id만 다음 단계로 넘어감) 결과가 하나로
+    합쳐지는지만 목으로 확인한다."""
+    from app.collector import runner
+
+    raw_items = {555: {"bidNtceNo": "TEST"}}
+    collect_result = {
+        "fetched": 3, "inserted": 1, "skipped": 0, "scored": 1, "out_of_window": 0, "already_closed": 2,
+        "dedup_groups_with_duplicates": 0, "dedup_notices_updated": 0, "inserted_notice_ids": [555],
+        "inserted_raw_items": raw_items,
+    }
+    pending_result = {"extraction_candidates": 1, "auto_extracted": 1, "analyze_candidates": 0, "auto_analyzed": 0}
+
+    # 2026-09-08 — 'running' 행 시작/마감(_start_run·_finish_run)과 중복실행 거부
+    # (_reject_if_already_running)는 이 테스트의 관심사(오케스트레이션 순서·결과 병합)가
+    # 아니라 목으로 대체한다. source_id=999는 실제 소스가 아니라 source_run에 진짜로 쓰면
+    # FK 위반이 난다.
+    with mock.patch.object(runner, "run_source", return_value=collect_result) as mock_collect, \
+         mock.patch.object(runner, "process_new_notices", return_value=pending_result) as mock_pending, \
+         mock.patch.object(runner, "_reject_if_already_running") as mock_reject, \
+         mock.patch.object(runner, "_start_run", return_value=4242) as mock_start, \
+         mock.patch.object(runner, "_finish_run") as mock_finish:
+        result = runner.run_source_and_process_pending(999, force=True)
+
+    mock_reject.assert_called_once_with(999)
+    mock_start.assert_called_once_with(999)
+    mock_collect.assert_called_once()
+    assert mock_collect.call_args.args[1] == 999
+    assert mock_collect.call_args.kwargs["force"] is True
+    assert mock_collect.call_args.kwargs["run_id"] == 4242
+    mock_pending.assert_called_once_with(999, [555], raw_items_by_notice_id=raw_items)
+    mock_finish.assert_called_once_with(4242, status="ok", items_fetched=3)
+    # 내부 처리용 — 최종 결과엔 노출 안 함
+    assert "inserted_notice_ids" not in result
+    assert "inserted_raw_items" not in result
+    assert result == {**collect_result, **pending_result}
 
 
-def _auto_extract_item(url: str) -> dict:
-    return {"title": "자동분석 대상 공고", "org": "테스트발주기관_자동분석", "url": url}
+# ---- "지금 수집" 중복 실행 방지 + 진행 중 표시(2026-09-08, 사용자 발견 — 클릭 후 다른
+# 메뉴로 갔다 돌아오면 이미 끝난 것처럼 보이던 문제) ----------------------------------------
 
 
-def test_run_source_auto_extract_on_triggers_pilot_for_new_notice(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"items": [_auto_extract_item("https://www.iris.go.kr/test/TESTAUTOEXTRACT1")]}
-    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
-    # analysis_pilot 쪽 fetch(상세페이지 HTML)는 별도 호출부라 따로 목 처리해야 실제 iris.go.kr에 안 나간다.
-    html_response = mock.Mock()
-    html_response.text = "<html>첨부파일 없음</html>"
-    monkeypatch.setattr("app.services.analysis_pilot.fetch", mock.Mock(return_value=html_response))
+def test_run_source_and_process_pending_rejects_when_already_running(monkeypatch):
+    from app.collector import runner
 
+    source_id = _bid_service_source_id()
     with engine.begin() as conn:
-        source_id = _make_temp_source(conn, legal_tier="A", field_maps=_AUTO_EXTRACT_FIELD_MAP, auto_extract=True)
+        run_id = conn.execute(
+            insert(source_run).values(source_id=source_id, status="running", items_fetched=0).returning(source_run.c.id)
+        ).scalar_one()
+
     try:
+        with mock.patch.object(runner, "run_source") as mock_collect:
+            with pytest.raises(CollectionInProgressError):
+                runner.run_source_and_process_pending(source_id)
+        mock_collect.assert_not_called()  # 거부됐으면 실제 수집 자체가 시도되면 안 됨
+    finally:
         with engine.begin() as conn:
-            result = run_source(conn, source_id, max_lookback_days=60)
+            conn.execute(delete(source_run).where(source_run.c.id == run_id))
+
+
+def test_run_source_and_process_pending_allows_after_stale_running_row(monkeypatch):
+    # RUNNING_STALE_MINUTES를 넘긴 'running' 행은 죽은 프로세스로 보고 실패 마감한 뒤 새
+    # 시도를 허용해야 한다 — 안 그러면 서버가 한 번 죽었을 때 그 소스가 영원히 잠긴다.
+    from app.collector import runner
+
+    source_id = _bid_service_source_id()
+    stale_at = datetime.now(timezone.utc) - timedelta(minutes=runner.RUNNING_STALE_MINUTES + 5)
+    with engine.begin() as conn:
+        stale_run_id = conn.execute(
+            insert(source_run)
+            .values(source_id=source_id, status="running", items_fetched=0, run_at=stale_at)
+            .returning(source_run.c.id)
+        ).scalar_one()
+
+    collect_result = {
+        "fetched": 0, "inserted": 0, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 0,
+        "dedup_groups_with_duplicates": 0, "dedup_notices_updated": 0, "inserted_notice_ids": [], "inserted_raw_items": {},
+    }
+    pending_result = {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
+    new_run_id = None
+    try:
+        with mock.patch.object(runner, "run_source", return_value=collect_result), \
+             mock.patch.object(runner, "process_new_notices", return_value=pending_result):
+            runner.run_source_and_process_pending(source_id)  # 예외 없이 통과해야 함
 
         with engine.connect() as conn:
-            analysis_row = conn.execute(
-                select(analysis.c.status).join(notice, notice.c.id == analysis.c.notice_id)
-                .where(notice.c.source_id == source_id)
-            ).first()
+            stale_status = conn.execute(select(source_run.c.status).where(source_run.c.id == stale_run_id)).scalar_one()
+            new_run_id = conn.execute(
+                select(func.max(source_run.c.id)).where(source_run.c.source_id == source_id)
+            ).scalar_one()
+        assert stale_status == "fail"  # 오래된 running 행은 실패로 마감됨
+        assert new_run_id != stale_run_id  # 새 시도는 별도 행
     finally:
+        ids_to_delete = [stale_run_id] + ([new_run_id] if new_run_id else [])
         with engine.begin() as conn:
-            notice_ids = [row[0] for row in conn.execute(select(notice.c.id).where(notice.c.source_id == source_id))]
-            if notice_ids:
-                conn.execute(delete(analysis).where(analysis.c.notice_id.in_(notice_ids)))
-            conn.execute(delete(notice).where(notice.c.source_id == source_id))
-            conn.execute(delete(org).where(org.c.name == "테스트발주기관_자동분석"))
-            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
-            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
-            conn.execute(delete(source).where(source.c.id == source_id))
-
-    assert result["inserted"] == 1
-    assert result["auto_extracted"] == 1
-    assert analysis_row == ("done",)
+            conn.execute(delete(source_run).where(source_run.c.id.in_(ids_to_delete)))
 
 
-def test_run_source_auto_extract_off_does_not_trigger_pilot(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"items": [_auto_extract_item("https://www.iris.go.kr/test/TESTAUTOEXTRACT2")]}
-    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
-    pilot_fetch = mock.Mock()
-    monkeypatch.setattr("app.services.analysis_pilot.fetch", pilot_fetch)
+def test_run_source_and_process_pending_marks_running_then_ok(monkeypatch):
+    # 'running' 행이 실제로 남았다가 성공 시 'ok'로 바뀌는지 실제 DB로 확인(위 테스트들은
+    # 오케스트레이션·거부 로직만 목으로 봄 — 여기선 run_source 자체는 실행시키되 fetch만 목).
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", _paginated_mock_fetch(SAMPLE_ITEMS))
+    from app.collector import runner
 
-    with engine.begin() as conn:
-        source_id = _make_temp_source(conn, legal_tier="A", field_maps=_AUTO_EXTRACT_FIELD_MAP, auto_extract=False)
-    try:
-        with engine.begin() as conn:
-            result = run_source(conn, source_id, max_lookback_days=60)
-    finally:
-        with engine.begin() as conn:
-            conn.execute(delete(notice).where(notice.c.source_id == source_id))
-            conn.execute(delete(org).where(org.c.name == "테스트발주기관_자동분석"))
-            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
-            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
-            conn.execute(delete(source).where(source.c.id == source_id))
+    source_id = _bid_service_source_id()
+    with mock.patch.object(runner, "process_new_notices", return_value={
+        "extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0,
+    }):
+        runner.run_source_and_process_pending(source_id, force=True)
 
-    assert result["inserted"] == 1
-    assert result["auto_extracted"] == 0
-    pilot_fetch.assert_not_called()
+    with engine.connect() as conn:
+        run_row = conn.execute(
+            select(source_run.c.status, source_run.c.items_fetched)
+            .where(source_run.c.source_id == source_id)
+            .order_by(source_run.c.id.desc())
+            .limit(1)
+        ).first()
+    assert run_row == ("ok", 2)  # 성공적으로 마감됐고, 중간에 'running'으로 남는 별도 행이 안 생김(같은 행을 갱신)
+
+    with engine.connect() as conn:
+        running_count = conn.execute(
+            select(func.count()).select_from(source_run).where(source_run.c.source_id == source_id, source_run.c.status == "running")
+        ).scalar_one()
+    assert running_count == 0  # 끝난 뒤엔 'running' 상태로 남는 행이 없어야 함

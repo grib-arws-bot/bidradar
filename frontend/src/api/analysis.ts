@@ -18,6 +18,7 @@ export interface ExtractionResult {
   finished_at?: string | null;
   attachments_found?: number;
   docs: AnalysisDoc[];
+  error?: string | null; // status가 failed일 때 사유(2026-09-06 — 조용히 실패하지 않도록 화면에 노출)
 }
 
 export async function fetchLatestExtraction(noticeId: number): Promise<ExtractionResult | null> {
@@ -40,6 +41,7 @@ export interface Requirement {
   req_unit: string | null;
   op: "gte" | "lte" | "eq" | "contains" | "manual";
   cite: string;
+  task_ref: string | null; // 성능 요구사항이 특정 과제(content_items[].title)에 속하면 그 title
 }
 
 export interface AnalysisEvaluationItem {
@@ -74,6 +76,8 @@ export interface AnalysisContentItem {
   summary: string;
   period: string;
   budget: string;
+  task_type: AnalysisTaskType; // 과제마다 추진체계/개발형태/공모형태가 다를 수 있음(2026-09-05)
+  lead_org: string; // 이 과제만의 주관연구개발기관 제한(예: "비영리기관") — 참여 판단에 결정적일 수 있음
 }
 
 export interface AnalysisEligibility {

@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
@@ -25,6 +26,13 @@ DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10MB. 문서 다운로드는 호출부에서 50MB로 상향
 
 _REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
+# DNS 조회 재시도(2026-09-09 실측) — 입찰공고 첨부 재처리 배치(363건)에서 859건이 "DNS 조회
+# 실패"로 실패했는데, 실패 직후 같은 호스트를 단발로 조회하면 바로 성공했다 — 대상 도메인이
+# 실제로 없는 게 아니라 리졸버(Docker 내장 DNS 등)가 대량 순차 조회 중 순간적으로 실패하는
+# 패턴으로 판단. 영구히 없는 도메인까지 오래 붙잡지 않도록 횟수·대기를 짧게 제한한다.
+_DNS_RETRY_ATTEMPTS = 3
+_DNS_RETRY_DELAY_SECONDS = 0.5
 
 # 리졸브된 IP가 이 대역 중 하나라도 걸리면 거부.
 BLOCKED_NETWORKS = [
@@ -70,6 +78,23 @@ def _is_blocked_ip(ip_str: str) -> bool:
     return any(ip in network for network in BLOCKED_NETWORKS)
 
 
+def _resolve_with_retry(hostname: str, port: int) -> set[str]:
+    """socket.getaddrinfo가 순간적으로 실패해도(위 _DNS_RETRY_ATTEMPTS 주석 참고) 짧게
+    재시도한 뒤에만 포기한다. 마지막 시도까지 실패하면 원래 예외를 그대로 올려 validate_url이
+    "DNS 조회 실패"로 기록하게 한다 — 재시도로도 안 되면 진짜 실패로 봐야 하므로 삼키지 않는다."""
+    last_exc: socket.gaierror | None = None
+    for attempt in range(_DNS_RETRY_ATTEMPTS):
+        try:
+            addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+            return {info[4][0] for info in addr_infos}
+        except socket.gaierror as exc:
+            last_exc = exc
+            if attempt < _DNS_RETRY_ATTEMPTS - 1:
+                time.sleep(_DNS_RETRY_DELAY_SECONDS)
+    assert last_exc is not None
+    raise last_exc
+
+
 def validate_url(url: str) -> ValidatedTarget:
     """URL을 검증하고, 연결에 고정해서 쓸 IP를 포함한 대상을 반환한다.
 
@@ -92,11 +117,10 @@ def validate_url(url: str) -> ValidatedTarget:
 
     # 리터럴 IP(예: http://169.254.169.254/)도 getaddrinfo로 통일 처리된다.
     try:
-        addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+        resolved_ips = _resolve_with_retry(hostname, port)
     except socket.gaierror as exc:
         raise SSRFBlockedError(url, f"DNS 조회 실패: {exc}") from exc
 
-    resolved_ips = {info[4][0] for info in addr_infos}
     if not resolved_ips:
         raise SSRFBlockedError(url, "DNS 조회 결과가 없음")
 

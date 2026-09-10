@@ -1,26 +1,45 @@
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutlined";
-import DriveFileMoveOutlinedIcon from "@mui/icons-material/DriveFileMoveOutlined";
-import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
-import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
-import { Box, Button, Card, Chip, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
-import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { Box, Card, Chip, Stack, Typography } from "@mui/material";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 
-import { submitClassification, type ClassificationAction } from "@/api/classification";
-import {
-  BID_STATUS_LABELS,
-  EXTRA_FIELD_LABELS,
-  formatExtraValue,
-  type FilterOptions,
-  type NoticeItem,
-} from "@/api/notices";
-import { ClassificationDialog } from "@/components/ClassificationDialog";
+import { BID_STATUS_LABELS, type NoticeItem } from "@/api/notices";
+
+// 사업목적 원문은 개조식 전문을 그대로 옮기다 보니 길어질 수 있어(2026-09-05) 카드에서는
+// 300자로 자른다 — 전체는 상세 페이지("공고 상세분석" 섹션)에서 확인.
+const MAX_PURPOSE_CHARS = 300;
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+// 사업기간을 "N년 M개월"로만 보여준다(2026-09-05 요청) — AI 요약이 "43개월(당해 9개월),
+// 과제별 상이"처럼 날짜범위·단서를 덧붙이는 경우가 많아, 괄호 앞부분(총량)만 취해 년/개월
+// 숫자로 환산한다. 못 알아들으면(숫자 자체가 없으면) 원문을 그대로 보여준다(조용한 손실 방지).
+function simplifyPeriod(raw: string): string {
+  const prefix = raw.split("(")[0];
+  const years = prefix.match(/(\d+)\s*년/);
+  const months = prefix.match(/(\d+)\s*개월/);
+  if (!years && !months) return raw;
+  const totalMonths = (years ? parseInt(years[1], 10) * 12 : 0) + (months ? parseInt(months[1], 10) : 0);
+  if (totalMonths === 0) return raw;
+  const y = Math.floor(totalMonths / 12);
+  const m = totalMonths % 12;
+  return [y > 0 ? `${y}년` : "", m > 0 ? `${m}개월` : ""].filter(Boolean).join(" ");
+}
 
 function formatPrice(value: number | null): string {
   if (value === null) return "미공개";
   const eok = value / 100_000_000;
   return eok >= 1 ? `${eok.toFixed(1)}억원` : `${(value / 10_000).toFixed(0)}만원`;
+}
+
+// "공고일"(등록·게시 통지일, 참고용) — 소스마다 원본 필드명이 달라(IRIS는 ancmDe, 나라장터
+// 발주계획현황서비스는 nticeDt) extra에서 둘 다 확인한다(NoticeTopSection.tsx와 동일 로직,
+// 2026-09-07). open_dt(입찰 시작일)와는 다른 값 — 발주계획처럼 open_dt가 없는 단계에서도
+// "언제 공고됐는지"를 보여줄 수 있다.
+function formatAnnounceDate(extra: Record<string, string | number | null> | null): string {
+  const raw = extra?.ancmDe ?? extra?.nticeDt;
+  if (!raw) return "미상";
+  const parsed = new Date(String(raw));
+  return Number.isNaN(parsed.getTime()) ? String(raw) : parsed.toLocaleDateString("ko-KR");
 }
 
 // 달력 날짜 기준으로 며칠 남았는지 계산 — 시각까지 포함한 순수 ms 차이를 24시간으로 나누면
@@ -33,54 +52,65 @@ function daysUntil(target: Date, now: Date): number {
   return Math.round((startOfTarget.getTime() - startOfNow.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-// 공고 생명주기 상태(2026-09-03, 입찰미정→입찰예정→입찰접수→입찰마감) 칩 — "입찰접수"이면서
-// 마감일이 있으면 D-day까지 같이 보여준다(예: "입찰접수 · D-3"), 그 외엔 상태 라벨만.
 function formatBidStatus(notice: NoticeItem): { label: string; urgent: boolean } {
-  if (notice.bid_status === "in_progress" && notice.close_dt) {
-    const days = daysUntil(new Date(notice.close_dt), new Date());
-    const dday = days === 0 ? "D-Day" : `D-${days}`;
-    return { label: `입찰접수 · ${dday}`, urgent: days <= 3 };
-  }
-  return { label: BID_STATUS_LABELS[notice.bid_status], urgent: false };
+  const urgent = notice.bid_status === "in_progress" && !!notice.close_dt && daysUntil(new Date(notice.close_dt), new Date()) <= 3;
+  return { label: BID_STATUS_LABELS[notice.bid_status], urgent };
+}
+
+// D-day를 별도 칩으로 분리(2026-09-05 요청, 상세페이지와 동일한 강조 방식) — 마감이 임박하지
+// 않아도 항상 채워진 색으로 표시해 다른 outlined 칩들 사이에서 눈에 띄게 한다.
+function ddayInfo(closeDt: string | null): { label: string; urgent: boolean } | null {
+  if (!closeDt) return null;
+  const days = daysUntil(new Date(closeDt), new Date());
+  if (days < 0) return null;
+  return { label: days === 0 ? "D-Day" : `D-${days}`, urgent: days <= 3 };
 }
 
 interface Props {
   notice: NoticeItem;
   highlight?: string;
-  topics: FilterOptions["topics"];
-  classifiedAs: ClassificationAction | null;
-  onClassified: (noticeId: number, action: ClassificationAction) => void;
   // 가로형(list, 기본) — 한 줄에 하나, 정보를 옆으로 펼쳐 보여준다.
   // 세로형(grid) — 한 줄에 3개, 좁은 폭에 맞춰 위→아래로 쌓는다(2026-09-05 보기 스타일 추가).
   variant?: "list" | "grid";
 }
 
-// U5 인수조건: "카드만 갱신(목록 리로드 없음)" — 분류검수 액션은 목록을 다시 안 부르고
-// 이 카드의 로컬 상태(classifiedAs, 부모가 들고 있음)만 바꾼다.
-export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassified, variant = "list" }: Props) {
+// 분류검수 4버튼(카테고리 맞음/재분류/완전무관/심층분석)은 카드에서 제거했다(2026-09-05
+// 사용자 지시) — 심층분석은 제목 클릭으로 이미 충분히 갈 수 있고, 나머지는 실사용 가치가
+// 낮다고 판단. 유일하게 남긴 "관심주제 변경"은 상세페이지 AI분석 버튼 옆(TopicEditor)으로.
+export function NoticeCard({ notice, highlight, variant = "list" }: Props) {
   const isGrid = variant === "grid";
   const bidStatus = formatBidStatus(notice);
   const [searchParams] = useSearchParams();
-  const [dialogAction, setDialogAction] = useState<Extract<ClassificationAction, "recategorize" | "irrelevant"> | null>(
-    null,
-  );
-
-  const mutation = useMutation({
-    mutationFn: (payload: { action: ClassificationAction; categories?: number[]; reason?: string }) =>
-      submitClassification(notice.id, payload),
-    onSuccess: (_, variables) => {
-      onClassified(notice.id, variables.action);
-      setDialogAction(null);
-    },
-  });
 
   const summary = notice.analysis_summary;
   // 사업비는 est_price(대부분 R&D 공고는 비어 있음)보다 A2 요약(summary.project_budget,
   // "150억원 이내(당해 19억원)"처럼 더 정확한 문구)이 있으면 그쪽을 우선한다(2026-09-05).
   const budgetLabel = summary?.project_budget || formatPrice(notice.est_price);
+  const dday = ddayInfo(notice.close_dt);
 
   return (
-    <Card sx={{ p: isGrid ? 2 : 2.5, opacity: classifiedAs ? 0.7 : 1, height: isGrid ? "100%" : "auto", display: isGrid ? "flex" : "block", flexDirection: "column" }}>
+    <Card sx={{ p: isGrid ? 2 : 2.5, height: isGrid ? "100%" : "auto", display: isGrid ? "flex" : "block", flexDirection: "column" }}>
+      {/* 관심주제 + 공고유형/공고상태/업무구분을 한 줄로, 생명주기 상태 칩은 우측 최상단에
+          고정(2026-09-05 요청) — "IRIS · 입찰공고"처럼 의미 없는 채널·stage 조합 대신 상세
+          페이지와 같은 분류 체계(notice_classification.py)를 쓴다. */}
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1} sx={{ mb: 1 }}>
+        <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ flex: 1, minWidth: 0 }}>
+          {notice.scores.map((s) => (
+            <Chip key={s.interest_topic_id} label={s.name} size="small" color="primary" variant="outlined" />
+          ))}
+          <Chip label={notice.notice_type} size="small" color="secondary" variant="outlined" />
+          <Chip label={notice.notice_status_label} size="small" variant="outlined" />
+          <Chip label={notice.work_type_label} size="small" variant="outlined" />
+          {notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
+        </Stack>
+        <Chip
+          label={bidStatus.label}
+          size="small"
+          color={bidStatus.urgent ? "error" : "default"}
+          variant={bidStatus.urgent ? "filled" : "outlined"}
+          sx={{ fontWeight: 700, flexShrink: 0 }}
+        />
+      </Stack>
       <Stack
         direction={isGrid ? "column" : "row"}
         justifyContent={isGrid ? "flex-start" : "space-between"}
@@ -88,29 +118,16 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
         spacing={isGrid ? 1 : 2}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }} flexWrap="wrap" useFlexGap>
-            {/* 공고기관(채널)과 단계를 한 칩에 — "나라장터 · 입찰공고"처럼(2026-09-05 요청) */}
-            <Chip
-              label={notice.channel_name ? `${notice.channel_name} · ${notice.stage}` : notice.stage}
-              size="small"
-              color="secondary"
-              variant="outlined"
-            />
-            {notice.biz_type && <Chip label={notice.biz_type} size="small" variant="outlined" />}
-            {!isGrid && notice.work_type && <Chip label={notice.work_type} size="small" variant="outlined" />}
-            {!isGrid && notice.assignee_name && <Chip label={`담당: ${notice.assignee_name}`} size="small" />}
-            {classifiedAs && <Chip label={CLASSIFIED_LABEL[classifiedAs]} size="small" color="success" />}
-          </Stack>
           <Typography
             variant="h3"
             component={RouterLink}
             to={`/notices/${notice.id}?${searchParams.toString()}`}
             sx={{
               mb: 0.5,
-              display: isGrid ? "-webkit-box" : "block",
-              WebkitLineClamp: isGrid ? 2 : undefined,
-              WebkitBoxOrient: isGrid ? "vertical" : undefined,
-              overflow: isGrid ? "hidden" : undefined,
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
               color: "text.primary",
               "&:hover": { color: "primary.main" },
             }}
@@ -120,12 +137,20 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
           <Typography variant="body2" color="text.secondary">
             {notice.org_name ?? "발주기관 미상"}
             {notice.region ? ` · ${notice.region}` : ""}
-            {!isGrid && notice.notice_no ? ` · 공고번호 ${notice.notice_no}` : ""}
+            {notice.notice_no ? ` · ${notice.notice_no}` : ""}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }} className="tnum">
-            게시 {notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "미상"} · 마감{" "}
+          {/* 세부사업(내역사업) — 발주기관명과 같은 폰트 크기로(2026-09-05 요청, 이전엔 caption
+              이라 너무 작아 보였음) */}
+          {summary?.sub_business && (
+            <Typography variant="body2" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+              세부사업: {summary.sub_business}
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ display: "block", mt: 0.25 }} className="tnum">
+            공고 {formatAnnounceDate(notice.extra)} · 게시{" "}
+            {notice.open_dt ? new Date(notice.open_dt).toLocaleDateString("ko-KR") : "미상"} · 마감{" "}
             {notice.close_dt ? new Date(notice.close_dt).toLocaleDateString("ko-KR") : "미상"}
-            {!isGrid && summary?.project_period ? ` · 총사업기간 ${summary.project_period}` : ""}
+            {summary?.project_period ? ` · 총사업기간 ${simplifyPeriod(summary.project_period)}` : ""}
           </Typography>
         </Box>
         {/* 사업비·D-day는 참여 판단에 가장 먼저 눈에 들어와야 하는 값이라 다른 텍스트보다
@@ -140,154 +165,44 @@ export function NoticeCard({ notice, highlight, topics, classifiedAs, onClassifi
           <Typography variant="h3" className="tnum" fontWeight={700} color="primary.main" sx={{ whiteSpace: "nowrap" }}>
             {budgetLabel}
           </Typography>
-          <Chip
-            label={bidStatus.label}
-            size="medium"
-            color={bidStatus.urgent ? "error" : "default"}
-            variant={bidStatus.urgent ? "filled" : "outlined"}
-            sx={{ fontWeight: 700 }}
-          />
+          {dday && (
+            <Chip
+              label={dday.label}
+              size="medium"
+              color={dday.urgent ? "error" : "warning"}
+              variant="filled"
+              sx={{ fontWeight: 700 }}
+            />
+          )}
         </Stack>
       </Stack>
 
-      {summary && (summary.purpose || summary.content_narrative) && (
-        <Box sx={{ mt: 1.5 }}>
-          {summary.purpose && (
-            <Typography
-              variant="body2"
-              sx={
-                isGrid
-                  ? { fontWeight: 600, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }
-                  : { fontWeight: 600 }
-              }
-            >
-              과제목표 — {summary.purpose}
-            </Typography>
-          )}
-          {summary.content_narrative && (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={
-                isGrid
-                  ? { mt: 0.25, whiteSpace: "pre-wrap" } // 세로형은 과제내용을 전체 표시(2026-09-05 요청)
-                  : { mt: 0.25, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }
-              }
-            >
-              과제내용 — {summary.content_narrative}
-            </Typography>
-          )}
+      {summary?.purpose && (
+        // minHeight:0 — 이 Box가 세로형 카드의 flex(column) 컨테이너 안 자식이라, 기본값
+        // (min-height:auto)이면 line-clamp를 넣어도 flex가 내용 높이만큼 억지로 늘려 카드
+        // 밖으로 텍스트가 넘치는 문제가 있었다(2026-09-05 지적) — 0으로 줘야 line-clamp가 실제로 먹는다.
+        <Box sx={{ mt: 1.5, p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "action.hover", minHeight: 0, overflow: "hidden" }}>
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              display: "-webkit-box",
+              WebkitLineClamp: 6,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            과제목표 — {truncate(summary.purpose, MAX_PURPOSE_CHARS)}
+          </Typography>
         </Box>
       )}
 
-      {!isGrid && notice.extra && Object.keys(notice.extra).length > 0 && (
-        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
-          {Object.entries(notice.extra).map(([key, value]) => {
-            const formatted = formatExtraValue(key, value);
-            // 카드는 공간이 좁아 긴 요약 텍스트(사업내용 등)는 잘라서 보여준다 — 전체는 상세
-            // 페이지에서 확인.
-            const shown = formatted.length > 40 ? `${formatted.slice(0, 40)}…` : formatted;
-            return (
-              <Tooltip key={key} title={formatted.length > 40 ? formatted : ""} disableHoverListener={formatted.length <= 40}>
-                <Chip size="small" variant="outlined" label={`${EXTRA_FIELD_LABELS[key] ?? key}: ${shown}`} />
-              </Tooltip>
-            );
-          })}
-        </Stack>
-      )}
 
-      <Box sx={{ flexGrow: isGrid ? 1 : undefined }} />
-      <Divider sx={{ my: 1.5 }} />
-
-      {isGrid ? (
-        // 좁은 폭에서는 라벨 텍스트 대신 아이콘 버튼으로 — 4개 버튼이 한 줄에 다 들어가야 함.
-        <Stack direction="row" spacing={0.5} justifyContent="space-between">
-          <Tooltip title="카테고리 맞음">
-            <span>
-              <IconButton size="small" disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "confirm" })}>
-                <CheckCircleOutlineIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="카테고리 재분류">
-            <span>
-              <IconButton size="small" disabled={mutation.isPending} onClick={() => setDialogAction("recategorize")}>
-                <DriveFileMoveOutlinedIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="완전 무관">
-            <span>
-              <IconButton size="small" color="error" disabled={mutation.isPending} onClick={() => setDialogAction("irrelevant")}>
-                <BlockOutlinedIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title="심층 분석">
-            <IconButton size="small" color="primary" component={RouterLink} to={`/notices/${notice.id}?${searchParams.toString()}`}>
-              <AutoAwesomeOutlinedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      ) : (
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <Button
-            size="small"
-            startIcon={<CheckCircleOutlineIcon fontSize="small" />}
-            disabled={mutation.isPending}
-            onClick={() => mutation.mutate({ action: "confirm" })}
-          >
-            카테고리 맞음
-          </Button>
-          <Button
-            size="small"
-            startIcon={<DriveFileMoveOutlinedIcon fontSize="small" />}
-            disabled={mutation.isPending}
-            onClick={() => setDialogAction("recategorize")}
-          >
-            카테고리 재분류
-          </Button>
-          <Button
-            size="small"
-            color="error"
-            startIcon={<BlockOutlinedIcon fontSize="small" />}
-            disabled={mutation.isPending}
-            onClick={() => setDialogAction("irrelevant")}
-          >
-            완전 무관
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
-            component={RouterLink}
-            to={`/notices/${notice.id}?${searchParams.toString()}`}
-            sx={{ ml: "auto" }}
-          >
-            심층 분석
-          </Button>
-        </Stack>
-      )}
-
-      {dialogAction && (
-        <ClassificationDialog
-          open
-          action={dialogAction}
-          topics={topics}
-          submitting={mutation.isPending}
-          onClose={() => setDialogAction(null)}
-          onSubmit={(payload) => mutation.mutate({ action: dialogAction, ...payload })}
-        />
-      )}
     </Card>
   );
 }
-
-const CLASSIFIED_LABEL: Record<ClassificationAction, string> = {
-  confirm: "확인됨",
-  recategorize: "재분류됨",
-  irrelevant: "무관 처리됨",
-};
 
 function HighlightedText({ text, highlight }: { text: string; highlight?: string }) {
   if (!highlight) return <>{text}</>;

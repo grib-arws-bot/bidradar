@@ -67,6 +67,41 @@ def test_extract_hwpx_no_sections_reports_failure_not_silent_empty():
     assert result.error  # 조용한 빈 결과 금지 — 이유가 남아야 한다
 
 
+_DOCX_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _make_docx(paragraphs: list[str]) -> bytes:
+    xml = (
+        f'<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="{_DOCX_NS}"><w:body>'
+        + "".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paragraphs)
+        + "</w:body></w:document>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
+def test_extract_docx_joins_paragraph_text():
+    """2026-09-05 추가 — 고객 소개서 업로드용, 지금까지 .docx는 아예 지원 목록에 없었다."""
+    content = _make_docx(["회사 소개 문단입니다.", "제품 소개 문단입니다."])
+    result = extract_document("회사소개서.docx", content)
+    assert result.ok is True
+    assert result.method == "docx_xml"
+    assert "회사 소개 문단입니다." in result.text
+    assert "제품 소개 문단입니다." in result.text
+
+
+def test_extract_docx_no_document_xml_reports_failure_not_silent_empty():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("unrelated.txt", "x")
+    result = extract_document("빈파일.docx", buf.getvalue())
+    assert result.ok is False
+    assert result.text is None
+    assert result.error
+
+
 def test_extract_pdf_success_uses_pypdf_text_layer():
     fake_page = mock.Mock()
     fake_page.extract_text.return_value = "추출된 공고문 내용"

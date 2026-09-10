@@ -17,9 +17,10 @@ from dataclasses import dataclass, field
 from sqlalchemy import Select, and_, exists, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import analysis, customer, notice, notice_score, org, requirement, source
+from app.models import analysis, customer, interest_topic, notice, notice_score, org, requirement, source
+from app.services.notice_classification import notice_status_label, notice_type_of, work_type_label
 
-SORT_OPTIONS = ("priority", "close_asc", "open_desc", "price_desc", "price_asc")
+SORT_OPTIONS = ("notice_date_desc", "open_desc", "close_asc", "priority", "price_desc")
 
 # notice.stage는 "어느 수집 단계(소스)에서 왔는가"만 나타낸다 — 사전규격/발주계획/공모예고로
 # 들어온 공고도 시간이 지나면 접수가 시작되고 마감되지만, stage 자체는 안 바뀐다(수집 시점에
@@ -73,7 +74,11 @@ def _bid_status_condition(bid_status: str, now: datetime):
     if bid_status == "in_progress":
         return not_closed & notice.c.open_dt.is_not(None) & (notice.c.open_dt <= now)
     raise ValueError(f"알 수 없는 bid_status: {bid_status}")
-PAGE_SIZE = 20
+
+
+# 3의 배수로(2026-09-07 사용자 지시) — 세로형 카드 보기(3열 그리드)에서 총 건수가 3의 배수가
+# 아니면 마지막 줄에 빈 칸이 생겨 카드 하나가 빠진 것처럼 보였다(20÷3=6줄+2건).
+PAGE_SIZE = 21
 
 
 @dataclass
@@ -92,7 +97,9 @@ class NoticeFilters:
     close_in: int | None = None  # 이 안(일)에 마감
     status: str | None = None  # open/closed
     qualified: bool | None = None
-    sort: str = "priority"
+    # 기본 정렬은 공고일 최신순(2026-09-08 사용자 지시 — "공고일"·"게시일"이 서로 다른
+    # 개념임을 재확인, _apply_sort 주석 참고). 이전 기본값은 게시일(open_dt) 최신순이었음.
+    sort: str = "notice_date_desc"
     page: int = 1
     size: int = PAGE_SIZE
 
@@ -170,6 +177,11 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
     conditions = []
     now = datetime.now(timezone.utc)
 
+    # 같은 사업이 발주계획→사전규격→입찰공고로 단계 진행돼 여러 행으로 중복 수집된 경우
+    # 이전 단계는 항상 목록·건수에서 뺀다(2026-09-06, notice_dedup.find_and_mark_superseded) —
+    # 필터 옵션이 아니라 무조건 적용(하드 삭제는 안 하지만 탐색 화면엔 최신 건만 보여야 함).
+    conditions.append(notice.c.superseded_by_notice_id.is_(None))
+
     if filters.tab in BID_STATUSES:
         conditions.append(_bid_status_condition(filters.tab, now))
     # tab == "all" → 조건 없음
@@ -234,18 +246,30 @@ def _apply_sort(stmt: Select, sort: str, priority_sq) -> Select:
     # 대량 수집(수천 건)으로 close_dt·priority 등이 동일한 행이 흔해지면서, id 없이 정렬하면
     # Postgres가 동점 행의 순서를 매 쿼리마다 다르게 줄 수 있어(정렬 안정성 미보장) 페이지네이션
     # 시 같은 공고가 두 페이지에 겹쳐 나오는 문제가 실측으로 드러났다(20,000여 건 규모에서 재현).
+    if sort == "notice_date_desc":
+        # "공고일"(등록/게시 공지일 — NoticeCard·상세페이지의 "공고일" 필드와 동일 개념)은
+        # open_dt/close_dt와 다른 소스별 부가필드다(2026-09-07 발견, 의사결정_로그 75-1번) —
+        # IRIS는 extra.ancmDe("2024-05-03"), 발주계획은 extra.nticeDt("2026-03-13 15:35:42")
+        # 형식. 둘 다 "YYYY-MM-DD"로 시작하는 zero-padded 문자열이라 텍스트 그대로 내림차순
+        # 정렬해도 날짜 순서와 일치한다(별도 캐스팅 불필요). 둘 다 없으면(사전규격 등) 맨 뒤.
+        notice_date = func.coalesce(notice.c.extra["ancmDe"].astext, notice.c.extra["nticeDt"].astext)
+        return stmt.order_by(notice_date.desc().nulls_last(), notice.c.id.asc())
     if sort == "close_asc":
         return stmt.order_by(notice.c.close_dt.asc().nulls_last(), notice.c.id.asc())
     if sort == "open_desc":
-        return stmt.order_by(notice.c.open_dt.desc(), notice.c.id.asc())
+        # nulls_last 필수(2026-09-07 발견) — PostgreSQL은 DESC 정렬 시 기본이 NULLS FIRST라,
+        # 안 붙이면 open_dt가 없는 공고(예: 발주계획 단계, 의도적으로 비워둠)가 "최신순" 맨
+        # 위에 뜨는 정반대 결과가 나온다.
+        return stmt.order_by(notice.c.open_dt.desc().nulls_last(), notice.c.id.asc())
     if sort == "price_desc":
         return stmt.order_by(notice.c.est_price.desc().nulls_last(), notice.c.id.asc())
-    if sort == "price_asc":
-        return stmt.order_by(notice.c.est_price.asc().nulls_last(), notice.c.id.asc())
-    # 기본값 "priority"
-    return stmt.order_by(
-        priority_sq.c.priority.desc().nulls_last(), notice.c.close_dt.asc().nulls_last(), notice.c.id.asc()
-    )
+    if sort == "priority":
+        return stmt.order_by(
+            priority_sq.c.priority.desc().nulls_last(), notice.c.close_dt.asc().nulls_last(), notice.c.id.asc()
+        )
+    # 기본값 "notice_date_desc"(2026-09-08 사용자 지시 — 공고일 최신순).
+    notice_date = func.coalesce(notice.c.extra["ancmDe"].astext, notice.c.extra["nticeDt"].astext)
+    return stmt.order_by(notice_date.desc().nulls_last(), notice.c.id.asc())
 
 
 def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:
@@ -262,7 +286,35 @@ def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], 
     stmt = stmt.offset((page - 1) * size).limit(size)
 
     rows = conn.execute(stmt).mappings().all()
-    return [_normalize_row(dict(row)) for row in rows], total
+    items = [_normalize_row(dict(row)) for row in rows]
+    _attach_scores(conn, items)
+    return items, total
+
+
+def _attach_scores(conn: Connection, items: list[dict]) -> None:
+    """목록 카드에도 상세페이지와 같은 관심주제 칩을 보여준다(2026-09-05 요청) — 페이지당
+    한 번의 추가 쿼리로 붙인다(공고마다 따로 조회하는 N+1 방지)."""
+    ids = [item["id"] for item in items]
+    if not ids:
+        return
+    score_rows = conn.execute(
+        select(
+            notice_score.c.notice_id,
+            notice_score.c.interest_topic_id,
+            interest_topic.c.name,
+            notice_score.c.l2_score,
+            notice_score.c.reason,
+        )
+        .join(interest_topic, interest_topic.c.id == notice_score.c.interest_topic_id)
+        .where(notice_score.c.notice_id.in_(ids))
+    ).all()
+    by_notice: dict[int, list[dict]] = {}
+    for r in score_rows:
+        by_notice.setdefault(r.notice_id, []).append(
+            {"interest_topic_id": r.interest_topic_id, "name": r.name, "l2_score": r.l2_score, "reason": r.reason}
+        )
+    for item in items:
+        item["scores"] = by_notice.get(item["id"], [])
 
 
 def _normalize_row(row: dict) -> dict:
@@ -273,6 +325,12 @@ def _normalize_row(row: dict) -> dict:
     if row.get("priority") is not None:
         row["priority"] = float(row["priority"])
     row["bid_status"] = compute_bid_status(row.get("open_dt"), row.get("close_dt"), datetime.now(timezone.utc))
+    # 공고유형/공고상태/업무구분(2026-09-05) — 상세페이지(notice_detail.py)와 동일한 규칙을
+    # 목록 카드에도 적용한다("IRIS · 입찰공고"처럼 의미 없는 채널·stage 조합 대신 표시하기 위함).
+    notice_type = notice_type_of(row.get("channel_name"))
+    row["notice_type"] = notice_type
+    row["notice_status_label"] = notice_status_label(notice_type, row["stage"], row["bid_status"])
+    row["work_type_label"] = work_type_label(notice_type, row.get("biz_type"))
     return row
 
 

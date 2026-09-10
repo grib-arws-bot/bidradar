@@ -3,17 +3,37 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.collector.runner import CollectionInProgressError, run_source_and_process_pending
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
 from app.services.agency_registry import DEFAULT_PAGE_SIZE, list_agencies, list_agency_categories
-from app.services.source_registry import list_sources, set_auto_extract
+from app.services.source_registry import (
+    ScheduleTimesError,
+    list_sources,
+    set_active,
+    set_auto_analyze,
+    set_auto_extract,
+    set_schedule_times,
+)
 
 router = APIRouter(prefix="/api/admin/sources", tags=["sources"])
 
 
 class AutoExtractUpdate(BaseModel):
     auto_extract: bool
+
+
+class ActiveUpdate(BaseModel):
+    active: bool
+
+
+class AutoAnalyzeUpdate(BaseModel):
+    auto_analyze: bool
+
+
+class ScheduleTimesUpdate(BaseModel):
+    schedule_times: list[str]
 
 
 @router.get("")
@@ -38,6 +58,82 @@ def update_auto_extract_route(
             detail={"auto_extract": payload.auto_extract},
         )
     return {"id": source_id, "auto_extract": payload.auto_extract}
+
+
+@router.patch("/{source_id}/active")
+def update_active_route(source_id: int, payload: ActiveUpdate, email: str = Depends(require_auth)) -> dict:
+    """공고 자동 수집 on/off(2026-09-05) — 실제 수집 관문(app/collector/runner.py run_source)이
+    이 값을 확인해서 꺼진 소스는 수집을 거부한다(체크박스로 안 끝나는 강제)."""
+    with engine.begin() as conn:
+        found = set_active(conn, source_id, payload.active)
+        if not found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="소스를 찾을 수 없습니다.")
+        audit.record(
+            conn, actor=email, action="source.active", target_type="source", target_id=source_id,
+            detail={"active": payload.active},
+        )
+    return {"id": source_id, "active": payload.active}
+
+
+@router.patch("/{source_id}/auto-analyze")
+def update_auto_analyze_route(
+    source_id: int, payload: AutoAnalyzeUpdate, email: str = Depends(require_auth)
+) -> dict:
+    """S8 A2(요구사양 구조화, LLM 실제 호출·비용 발생) 자동 실행 여부 — auto_extract가 실제로
+    성공했을 때만, 항상 Haiku로만 이어서 실행한다(app/collector/runner.py run_source). 관리자가
+    이 화면에서 소스별로 명시적으로 켜는 설정이라 CLAUDE.md 원칙 3("자동 실행 금지")과 충돌하지
+    않는다고 판단(2026-09-05 사용자 확정, auto_extract와 같은 논리)."""
+    with engine.begin() as conn:
+        found = set_auto_analyze(conn, source_id, payload.auto_analyze)
+        if not found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="소스를 찾을 수 없습니다.")
+        audit.record(
+            conn, actor=email, action="source.auto_analyze", target_type="source", target_id=source_id,
+            detail={"auto_analyze": payload.auto_analyze},
+        )
+    return {"id": source_id, "auto_analyze": payload.auto_analyze}
+
+
+@router.patch("/{source_id}/schedule")
+def update_schedule_route(source_id: int, payload: ScheduleTimesUpdate, email: str = Depends(require_auth)) -> dict:
+    """공고 업데이트 시간(최대 3개, "HH:MM", 00:00~23:59) 설정 UI만(2026-09-05·07 사용자 지시) —
+    실제로 그 시각에 자동 실행하는 스케줄러(APScheduler)는 아직 없고, 설정값만 저장한다."""
+    with engine.begin() as conn:
+        try:
+            found = set_schedule_times(conn, source_id, payload.schedule_times)
+        except ScheduleTimesError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        if not found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="소스를 찾을 수 없습니다.")
+        audit.record(
+            conn, actor=email, action="source.schedule_times", target_type="source", target_id=source_id,
+            detail={"schedule_times": payload.schedule_times},
+        )
+    return {"id": source_id, "schedule_times": payload.schedule_times}
+
+
+@router.post("/{source_id}/collect-now")
+def collect_now_route(source_id: int, email: str = Depends(require_auth)) -> dict:
+    """관리자가 스케줄과 무관하게 임의 시점에 즉시 1회 수집한다(2026-09-07 사용자 지시) —
+    지금까진 python -m app.cli collect로만 가능했다. force=True로 실행해 법적 등급 B의
+    최소 수집 간격만 우회한다(CLI --force와 동일한 의미 — "관리자가 명시적으로 지금 누른
+    것"이라 CLAUDE.md S8 원칙 3과 충돌 없음). 비활성 소스·법적 등급 C는 force로도 여전히
+    거부된다. 수집→중복체크→첨부분석(A1)→AI분석(A2)까지 한 번에 이어진다(같은 날 사용자
+    지시) — 첨부분석·AI분석은 그 소스의 auto_extract/auto_analyze 설정을 그대로 따른다."""
+    try:
+        result = run_source_and_process_pending(source_id, force=True)
+    except CollectionInProgressError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — 외부 API 실패(타임아웃 등)도 사용자에게 그대로 알려야 함
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"수집 중 오류가 발생했습니다: {exc}") from exc
+
+    with engine.begin() as conn:
+        audit.record(
+            conn, actor=email, action="source.collect_now", target_type="source", target_id=source_id, detail=result,
+        )
+    return {"id": source_id, **result}
 
 
 @router.get("/agencies")

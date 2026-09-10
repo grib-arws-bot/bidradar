@@ -1,11 +1,5 @@
 import CloseIcon from "@mui/icons-material/Close";
-import {
-  Autocomplete,
-  Chip,
-  MenuItem,
-  Stack,
-  TextField,
-} from "@mui/material";
+import { Autocomplete, Chip, MenuItem, Stack, TextField } from "@mui/material";
 
 import type { FilterOptions } from "@/api/notices";
 
@@ -62,7 +56,7 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
 
   return (
     <Stack spacing={1.5}>
-      <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
+      <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
         <Autocomplete
           multiple
           size="small"

@@ -62,7 +62,7 @@ export interface NoticeAnalysisSummary {
   project_period: string;
   project_budget: string;
   purpose: string;
-  content_narrative: string;
+  sub_business: string;
 }
 
 export interface NoticeItem {
@@ -88,6 +88,11 @@ export interface NoticeItem {
   channel_name: string | null;
   priority: number | null;
   analysis_summary: NoticeAnalysisSummary | null;
+  scores: NoticeScore[];
+  // 공고유형/공고상태/업무구분(2026-09-05) — 상세페이지와 같은 분류 체계를 목록 카드에도.
+  notice_type: string;
+  notice_status_label: string;
+  work_type_label: string;
 }
 
 export interface NoticeListResponse {
@@ -113,7 +118,7 @@ export interface FilterOptions {
 // 2026-09-03 재구성 — stage(어느 소스에서 왔는가) 기준 2분류 대신 bid_status(생명주기) 기준
 // 4단계로. "all"만 그대로 유지.
 export type NoticeTab = "all" | BidStatus;
-export type NoticeSort = "priority" | "close_asc" | "open_desc" | "price_desc" | "price_asc";
+export type NoticeSort = "notice_date_desc" | "open_desc" | "close_asc" | "priority" | "price_desc";
 
 export async function fetchNotices(params: URLSearchParams): Promise<NoticeListResponse> {
   const { data } = await apiClient.get<NoticeListResponse>("/notices", { params });
@@ -127,6 +132,18 @@ export async function fetchNoticeCounts(): Promise<Record<NoticeTab, number>> {
 
 export async function fetchFilterOptions(): Promise<FilterOptions> {
   const { data } = await apiClient.get<FilterOptions>("/notices/filter-options");
+  return data;
+}
+
+export interface DedupRescanResult {
+  groups_with_duplicates: number;
+  notices_updated: number;
+}
+
+// 동일 발주기관·동일 사업명이 발주계획/사전규격/입찰공고 단계에 중복 등장하면 가장 최근
+// 공고만 남기고 나머지를 무효화(2026-09-06). 관리자가 눌러서 실행.
+export async function rescanNoticeDedup(): Promise<DedupRescanResult> {
+  const { data } = await apiClient.post<DedupRescanResult>("/notices/dedup/rescan");
   return data;
 }
 
@@ -176,6 +193,16 @@ export interface NoticeDetail {
 export async function fetchNoticeDetail(id: number): Promise<NoticeDetail> {
   const { data } = await apiClient.get<NoticeDetail>(`/notices/${id}`);
   return data;
+}
+
+// 관심주제 직접 추가/삭제(2026-09-05) — 상세페이지 AI분석 버튼 옆에서 쓴다.
+export async function addNoticeTopic(noticeId: number, topicId: number): Promise<{ added: boolean }> {
+  const { data } = await apiClient.post(`/notices/${noticeId}/topics`, { topic_id: topicId });
+  return data;
+}
+
+export async function removeNoticeTopic(noticeId: number, topicId: number): Promise<void> {
+  await apiClient.delete(`/notices/${noticeId}/topics/${topicId}`);
 }
 
 export async function fetchNeighbors(
