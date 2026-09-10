@@ -1,0 +1,31 @@
+<!-- BidRadar 보고서 메일 헤더 — 테이블 기반(Outlook 호환).
+     ⚠️ Gmail·Outlook은 SVG를 차단한다. 반드시 PNG를 쓸 것.
+     이미지는 절대 URL로 호스팅하고 {{BASE}}를 치환한다.
+     어두운 바 + 흰색 마크 조합이라 수신자가 다크 모드여도 동일하게 보인다. -->
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="max-width:600px;margin:0 auto;border-collapse:collapse;">
+  <tr>
+    <td style="background:#161C24;padding:16px 22px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td width="30" style="vertical-align:middle;">
+            <img src="{{BASE}}/email/mark-dark-30@2x.png" width="30" height="30" alt="BidRadar"
+                 style="display:block;border:0;outline:none;text-decoration:none;">
+          </td>
+          <td style="padding-left:10px;vertical-align:middle;
+                     font-family:'DM Sans','Malgun Gothic',sans-serif;font-size:19px;font-weight:700;
+                     letter-spacing:-0.5px;color:#ffffff;">
+            Bid<span style="color:#FF9E6B;">Radar</span>
+          </td>
+          <td align="right" style="vertical-align:middle;
+                     font-family:'DM Sans','Malgun Gothic',sans-serif;font-size:11px;
+                     font-weight:600;color:#919EAB;">
+            {{DATE}}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  <tr><td style="height:3px;background:#DE5B21;font-size:0;line-height:0;">&nbsp;</td></tr>
+</table>

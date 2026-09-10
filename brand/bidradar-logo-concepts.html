@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BidRadar 로고 시안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+:root{
+  --p:#DE5B21; --pd:#B24314; --pl:#FF9E6B;
+  --ink:#161C24; --g600:#637381; --g500:#919EAB; --g300:#DFE3E8; --g200:#F4F6F8; --g100:#F9FAFB;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--g200);color:var(--ink);
+  font-family:"DM Sans","Noto Sans KR",system-ui,sans-serif;font-size:14px;line-height:1.6;word-break:keep-all}
+.wrap{max-width:1180px;margin:0 auto;padding:40px 28px 80px}
+h1{font-size:30px;font-weight:700;letter-spacing:-.025em;margin:0 0 6px}
+.lede{color:var(--g600);margin:0 0 34px;max-width:64ch}
+h2{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--g500);
+   margin:38px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--g300)}
+
+.card{background:#fff;border-radius:16px;padding:26px 28px;margin-bottom:16px;
+  box-shadow:0 1px 2px rgba(145,158,171,.16)}
+.hd{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+.hd .n{font-family:"DM Sans";font-size:12px;font-weight:700;color:var(--p);letter-spacing:.08em}
+.hd h3{margin:0;font-size:18px;font-weight:700;letter-spacing:-.015em}
+.desc{color:var(--g600);font-size:13.5px;margin:0 0 20px;max-width:66ch}
+
+.row{display:flex;align-items:flex-end;gap:26px;flex-wrap:wrap;margin-bottom:18px}
+.spec{display:flex;flex-direction:column;align-items:center;gap:7px}
+.spec .lb{font-size:10.5px;color:var(--g500);font-weight:600;font-variant-numeric:tabular-nums}
+.box{display:grid;place-items:center;border-radius:10px;background:var(--g100);border:1px solid var(--g300)}
+.box.dk{background:var(--ink);border-color:#2C3138}
+.box.or{background:var(--p);border-color:var(--pd)}
+
+.lockup{display:flex;align-items:center;gap:11px}
+.lockup .wm{font-family:"DM Sans",sans-serif;font-weight:700;letter-spacing:-.03em;line-height:1}
+.lockup .wm .b{color:var(--ink)} .lockup .wm .r{color:var(--p)}
+.lockup.inv .wm .b{color:#fff}
+.lockup .sub{font-size:10px;font-weight:600;letter-spacing:.16em;color:var(--g500);text-transform:uppercase;margin-top:3px}
+
+.mailhdr{border-radius:12px;overflow:hidden;border:1px solid var(--g300);max-width:600px}
+.mailhdr .bar{background:var(--ink);padding:16px 22px;display:flex;align-items:center;gap:11px}
+.mailhdr .bd{padding:20px 22px;background:#fff}
+.mailhdr .bd h4{margin:0 0 6px;font-size:16px;font-weight:700}
+.mailhdr .bd p{margin:0;color:var(--g600);font-size:13px}
+.mailhdr .accent{height:3px;background:var(--p)}
+
+.note{background:#FFF5CC;border-left:4px solid #B76E00;border-radius:0 10px 10px 0;
+  padding:14px 18px;font-size:13.5px;margin:14px 0}
+.note b{color:#8A5300}
+table.g{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+table.g td{padding:8px 10px;border-bottom:1px dashed var(--g300)}
+table.g td:first-child{color:var(--g500);font-weight:600;width:130px}
+table.g tr:last-child td{border-bottom:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>BidRadar 로고 시안</h1>
+<p class="lede">네 방향입니다. 각 시안을 <b>실제 사용 크기</b>로 렌더했습니다 — 홈페이지 헤더(40px), 파비콘(16px), 앱 아이콘, 그리고 이메일 헤더까지. 16px에서 무너지지 않는지가 1차 관문입니다.</p>
+
+<!-- ══════════════ 공통 defs ══════════════ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+  <radialGradient id="swp" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#DE5B21" stop-opacity=".34"/>
+    <stop offset="70%" stop-color="#DE5B21" stop-opacity=".16"/>
+    <stop offset="100%" stop-color="#DE5B21" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="swpD" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#FF9E6B" stop-opacity=".42"/>
+    <stop offset="70%" stop-color="#FF9E6B" stop-opacity=".2"/>
+    <stop offset="100%" stop-color="#FF9E6B" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+</svg>
+
+<!-- ══════════════ 01 ══════════════ -->
+<h2>01 — 스캔 스코프</h2>
+<div class="card">
+  <div class="hd"><span class="n">01</span><h3>Scan Scope</h3></div>
+  <p class="desc">동심원을 <b>끊어진 호</b>로 그리고 각 호의 틈을 다르게 회전시켜 "돌고 있는" 인상을 만듭니다. 스윕 부채꼴이 지나간 자리에 <b>주황 블립 하나</b>가 남습니다 — 여러 신호 중 우리에게 맞는 하나를 먼저 찾아낸다는 제품의 정확한 은유입니다.</p>
+
+  <div class="row">
+    <div class="spec"><span class="lb">96px</span><div class="box" style="width:120px;height:120px">
+      <svg width="96" height="96" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#919EAB" stroke-width="2" stroke-linecap="round" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#637381" stroke-width="2" stroke-linecap="round" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#161C24" stroke-width="2" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <path d="M24 24 L27.6 3.3 A21 21 0 0 1 43.7 16.8 Z" fill="url(#swp)"/>
+        <circle cx="33.2" cy="14.8" r="6.4" fill="#DE5B21" opacity=".16"/>
+        <circle cx="33.2" cy="14.8" r="3.5" fill="#DE5B21"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">40px · 헤더</span><div class="box" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#919EAB" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#637381" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#161C24" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <path d="M24 24 L27.6 3.3 A21 21 0 0 1 43.7 16.8 Z" fill="url(#swp)"/>
+        <circle cx="33.2" cy="14.8" r="3.8" fill="#DE5B21"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">32px</span><div class="box" style="width:52px;height:52px">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#919EAB" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="82 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="10" stroke="#161C24" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="46 20" transform="rotate(130 24 24)"/>
+        <circle cx="33.2" cy="14.8" r="4.6" fill="#DE5B21"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">16px · 파비콘</span><div class="box" style="width:38px;height:38px">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="17" stroke="#637381" stroke-width="5" stroke-linecap="round" stroke-dasharray="78 30" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="6" fill="#161C24"/>
+        <circle cx="34" cy="14" r="6.5" fill="#DE5B21"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">다크</span><div class="box dk" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#454F5B" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#919EAB" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#E9E6E0" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <path d="M24 24 L27.6 3.3 A21 21 0 0 1 43.7 16.8 Z" fill="url(#swpD)"/>
+        <circle cx="33.2" cy="14.8" r="3.8" fill="#FF9E6B"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">단색</span><div class="box" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#161C24" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#161C24" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#161C24" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <circle cx="33.2" cy="14.8" r="3.8" fill="#161C24"/>
+      </svg></div></div>
+
+    <div class="spec"><span class="lb">앱 아이콘</span><div class="box or" style="width:72px;height:72px;border-radius:16px">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-opacity=".45" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-opacity=".7" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <circle cx="33.2" cy="14.8" r="3.8" fill="#fff"/>
+      </svg></div></div>
+  </div>
+
+  <div class="lockup">
+    <svg width="38" height="38" viewBox="0 0 48 48" fill="none">
+      <circle cx="24" cy="24" r="19" stroke="#919EAB" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+      <circle cx="24" cy="24" r="13" stroke="#637381" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+      <circle cx="24" cy="24" r="7" stroke="#161C24" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+      <path d="M24 24 L27.6 3.3 A21 21 0 0 1 43.7 16.8 Z" fill="url(#swp)"/>
+      <circle cx="33.2" cy="14.8" r="3.8" fill="#DE5B21"/>
+    </svg>
+    <div><div class="wm" style="font-size:25px"><span class="b">Bid</span><span class="r">Radar</span></div>
+    <div class="sub">입찰 레이더</div></div>
+  </div>
+</div>
+
+<!-- ══════════════ 02 ══════════════ -->
+<h2>02 — 조준 · 타겟</h2>
+<div class="card">
+  <div class="hd"><span class="n">02</span><h3>Target Lock</h3></div>
+  <p class="desc">조준경 형태. 십자 틱과 동심원이 명확한 격자를 만들고, 블립이 <b>정중앙에서 벗어난 곳</b>에 있어 "아직 조준 중"이라는 긴장을 남깁니다. 가장 단순해서 작은 크기에 가장 강하지만, 조준·타격 은유가 조달 도구에 다소 공격적으로 읽힐 수 있습니다.</p>
+
+  <div class="row">
+    <div class="spec"><span class="lb">96px</span><div class="box" style="width:120px;height:120px">
+      <svg width="96" height="96" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#919EAB" stroke-width="2"/>
+        <circle cx="24" cy="24" r="10.5" stroke="#637381" stroke-width="2"/>
+        <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#161C24" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="6" fill="#DE5B21" opacity=".16"/>
+        <circle cx="31" cy="17" r="3.4" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">40px</span><div class="box" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#919EAB" stroke-width="2.4"/>
+        <circle cx="24" cy="24" r="10.5" stroke="#637381" stroke-width="2.4"/>
+        <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#161C24" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="3.6" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">32px</span><div class="box" style="width:52px;height:52px">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="17" stroke="#637381" stroke-width="3.4"/>
+        <path d="M24 1v7M24 40v7M1 24h7M40 24h7" stroke="#161C24" stroke-width="3.4" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="4.6" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">16px</span><div class="box" style="width:38px;height:38px">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="16" stroke="#637381" stroke-width="5"/>
+        <path d="M24 0v6M24 42v6M0 24h6M42 24h6" stroke="#161C24" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="6.5" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">다크</span><div class="box dk" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#454F5B" stroke-width="2.4"/>
+        <circle cx="24" cy="24" r="10.5" stroke="#919EAB" stroke-width="2.4"/>
+        <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#E9E6E0" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="3.6" fill="#FF9E6B"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">앱 아이콘</span><div class="box or" style="width:72px;height:72px;border-radius:16px">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="18" stroke="#fff" stroke-width="2.4" stroke-opacity=".5"/>
+        <circle cx="24" cy="24" r="10.5" stroke="#fff" stroke-width="2.4" stroke-opacity=".75"/>
+        <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="31" cy="17" r="3.6" fill="#fff"/>
+      </svg></div></div>
+  </div>
+
+  <div class="lockup">
+    <svg width="38" height="38" viewBox="0 0 48 48" fill="none">
+      <circle cx="24" cy="24" r="18" stroke="#919EAB" stroke-width="2.4"/>
+      <circle cx="24" cy="24" r="10.5" stroke="#637381" stroke-width="2.4"/>
+      <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#161C24" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="31" cy="17" r="3.6" fill="#DE5B21"/>
+    </svg>
+    <div><div class="wm" style="font-size:25px"><span class="b">Bid</span><span class="r">Radar</span></div>
+    <div class="sub">입찰 레이더</div></div>
+  </div>
+</div>
+
+<!-- ══════════════ 03 ══════════════ -->
+<h2>03 — 신호 수신</h2>
+<div class="card">
+  <div class="hd"><span class="n">03</span><h3>Signal</h3></div>
+  <p class="desc">아래 기준점에서 위로 퍼지는 파동. <b>"먼저 감지한다"</b>는 조기 경보 성격이 가장 잘 드러나고, 레이더보다 부드럽습니다. 방향성이 있어 로고 락업에서 워드마크와 자연스럽게 이어집니다. 다만 Wi-Fi 아이콘으로 오독될 여지가 있습니다.</p>
+
+  <div class="row">
+    <div class="spec"><span class="lb">96px</span><div class="box" style="width:120px;height:120px">
+      <svg width="96" height="96" viewBox="0 0 48 48" fill="none">
+        <path d="M9 36a21 21 0 0 1 30 0" stroke="#919EAB" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M15.5 36a13 13 0 0 1 17 0" stroke="#637381" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M21 36a6 6 0 0 1 6 0" stroke="#161C24" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="24" cy="40" r="6.6" fill="#DE5B21" opacity=".16"/>
+        <circle cx="24" cy="40" r="3.6" fill="#DE5B21"/>
+        <circle cx="35" cy="13" r="2.6" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">40px</span><div class="box" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <path d="M9 36a21 21 0 0 1 30 0" stroke="#919EAB" stroke-width="3" stroke-linecap="round"/>
+        <path d="M15.5 36a13 13 0 0 1 17 0" stroke="#637381" stroke-width="3" stroke-linecap="round"/>
+        <path d="M21 36a6 6 0 0 1 6 0" stroke="#161C24" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="24" cy="40" r="3.8" fill="#DE5B21"/>
+        <circle cx="35" cy="13" r="2.8" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">32px</span><div class="box" style="width:52px;height:52px">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <path d="M9 35a21 21 0 0 1 30 0" stroke="#637381" stroke-width="4" stroke-linecap="round"/>
+        <path d="M17 35a10 10 0 0 1 14 0" stroke="#161C24" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="24" cy="40" r="4.4" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">16px</span><div class="box" style="width:38px;height:38px">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+        <path d="M8 33a22 22 0 0 1 32 0" stroke="#637381" stroke-width="6" stroke-linecap="round"/>
+        <path d="M18 33a9 9 0 0 1 12 0" stroke="#161C24" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="24" cy="41" r="6" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">다크</span><div class="box dk" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <path d="M9 36a21 21 0 0 1 30 0" stroke="#454F5B" stroke-width="3" stroke-linecap="round"/>
+        <path d="M15.5 36a13 13 0 0 1 17 0" stroke="#919EAB" stroke-width="3" stroke-linecap="round"/>
+        <path d="M21 36a6 6 0 0 1 6 0" stroke="#E9E6E0" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="24" cy="40" r="3.8" fill="#FF9E6B"/>
+        <circle cx="35" cy="13" r="2.8" fill="#FF9E6B"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">앱 아이콘</span><div class="box or" style="width:72px;height:72px;border-radius:16px">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <path d="M9 36a21 21 0 0 1 30 0" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-opacity=".5"/>
+        <path d="M15.5 36a13 13 0 0 1 17 0" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-opacity=".75"/>
+        <path d="M21 36a6 6 0 0 1 6 0" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="24" cy="40" r="3.8" fill="#fff"/>
+      </svg></div></div>
+  </div>
+
+  <div class="lockup">
+    <svg width="38" height="38" viewBox="0 0 48 48" fill="none">
+      <path d="M9 36a21 21 0 0 1 30 0" stroke="#919EAB" stroke-width="3" stroke-linecap="round"/>
+      <path d="M15.5 36a13 13 0 0 1 17 0" stroke="#637381" stroke-width="3" stroke-linecap="round"/>
+      <path d="M21 36a6 6 0 0 1 6 0" stroke="#161C24" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="24" cy="40" r="3.8" fill="#DE5B21"/>
+      <circle cx="35" cy="13" r="2.8" fill="#DE5B21"/>
+    </svg>
+    <div><div class="wm" style="font-size:25px"><span class="b">Bid</span><span class="r">Radar</span></div>
+    <div class="sub">입찰 레이더</div></div>
+  </div>
+</div>
+
+<!-- ══════════════ 04 ══════════════ -->
+<h2>04 — 문서 스캔</h2>
+<div class="card">
+  <div class="hd"><span class="n">04</span><h3>Doc Scan</h3></div>
+  <p class="desc">공고문(모서리가 접힌 문서)에서 레이더 호가 퍼져 나갑니다. <b>"공고를 스캔한다"</b>는 기능을 가장 직접적으로 말하고, 조달 도메인이 한눈에 읽힙니다. 대신 요소가 둘이라 작은 크기에서 가장 먼저 무너지므로 16px 전용 단순화 버전이 필수입니다.</p>
+
+  <div class="row">
+    <div class="spec"><span class="lb">96px</span><div class="box" style="width:120px;height:120px">
+      <svg width="96" height="96" viewBox="0 0 48 48" fill="none">
+        <path d="M11 7.5A2.5 2.5 0 0 1 13.5 5H26l8 8v27.5a2.5 2.5 0 0 1-2.5 2.5h-18a2.5 2.5 0 0 1-2.5-2.5z" stroke="#637381" stroke-width="2.2" stroke-linejoin="round"/>
+        <path d="M26 5v6a2 2 0 0 0 2 2h6" stroke="#637381" stroke-width="2.2" stroke-linejoin="round"/>
+        <path d="M17 24h9M17 31h13" stroke="#C4CDD5" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M33 25a9 9 0 0 0-9-9" stroke="#DE5B21" stroke-width="2.4" stroke-linecap="round" opacity=".38"/>
+        <path d="M39 25a15 15 0 0 0-15-15" stroke="#DE5B21" stroke-width="2.4" stroke-linecap="round" opacity=".2"/>
+        <circle cx="24" cy="16" r="6" fill="#DE5B21" opacity=".14"/>
+        <circle cx="24" cy="16" r="3.2" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">40px</span><div class="box" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <path d="M11 7.5A2.5 2.5 0 0 1 13.5 5H26l8 8v27.5a2.5 2.5 0 0 1-2.5 2.5h-18a2.5 2.5 0 0 1-2.5-2.5z" stroke="#637381" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M26 5v6a2 2 0 0 0 2 2h6" stroke="#637381" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M17 31h13" stroke="#C4CDD5" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M33 25a9 9 0 0 0-9-9" stroke="#DE5B21" stroke-width="2.6" stroke-linecap="round" opacity=".4"/>
+        <circle cx="24" cy="16" r="3.6" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">32px</span><div class="box" style="width:52px;height:52px">
+      <svg width="32" height="32" viewBox="0 0 48 48" fill="none">
+        <path d="M11 8a3 3 0 0 1 3-3h12l8 8v27a3 3 0 0 1-3 3H14a3 3 0 0 1-3-3z" stroke="#637381" stroke-width="3.4" stroke-linejoin="round"/>
+        <circle cx="24" cy="20" r="5" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">16px</span><div class="box" style="width:38px;height:38px">
+      <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+        <path d="M12 9a4 4 0 0 1 4-4h10l7 7v27a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4z" stroke="#454F5B" stroke-width="5" stroke-linejoin="round"/>
+        <circle cx="23" cy="22" r="6.5" fill="#DE5B21"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">다크</span><div class="box dk" style="width:64px;height:64px">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none">
+        <path d="M11 7.5A2.5 2.5 0 0 1 13.5 5H26l8 8v27.5a2.5 2.5 0 0 1-2.5 2.5h-18a2.5 2.5 0 0 1-2.5-2.5z" stroke="#919EAB" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M26 5v6a2 2 0 0 0 2 2h6" stroke="#919EAB" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M17 31h13" stroke="#454F5B" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M33 25a9 9 0 0 0-9-9" stroke="#FF9E6B" stroke-width="2.6" stroke-linecap="round" opacity=".5"/>
+        <circle cx="24" cy="16" r="3.6" fill="#FF9E6B"/>
+      </svg></div></div>
+    <div class="spec"><span class="lb">앱 아이콘</span><div class="box or" style="width:72px;height:72px;border-radius:16px">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <path d="M11 7.5A2.5 2.5 0 0 1 13.5 5H26l8 8v27.5a2.5 2.5 0 0 1-2.5 2.5h-18a2.5 2.5 0 0 1-2.5-2.5z" stroke="#fff" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M26 5v6a2 2 0 0 0 2 2h6" stroke="#fff" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M33 25a9 9 0 0 0-9-9" stroke="#fff" stroke-width="2.6" stroke-linecap="round" opacity=".55"/>
+        <circle cx="24" cy="16" r="3.6" fill="#fff"/>
+      </svg></div></div>
+  </div>
+
+  <div class="lockup">
+    <svg width="38" height="38" viewBox="0 0 48 48" fill="none">
+      <path d="M11 7.5A2.5 2.5 0 0 1 13.5 5H26l8 8v27.5a2.5 2.5 0 0 1-2.5 2.5h-18a2.5 2.5 0 0 1-2.5-2.5z" stroke="#637381" stroke-width="2.6" stroke-linejoin="round"/>
+      <path d="M26 5v6a2 2 0 0 0 2 2h6" stroke="#637381" stroke-width="2.6" stroke-linejoin="round"/>
+      <path d="M33 25a9 9 0 0 0-9-9" stroke="#DE5B21" stroke-width="2.6" stroke-linecap="round" opacity=".4"/>
+      <circle cx="24" cy="16" r="3.6" fill="#DE5B21"/>
+    </svg>
+    <div><div class="wm" style="font-size:25px"><span class="b">Bid</span><span class="r">Radar</span></div>
+    <div class="sub">입찰 레이더</div></div>
+  </div>
+</div>
+
+<!-- ══════════════ 이메일 적용 ══════════════ -->
+<h2>보고서 메일 적용 (01 기준)</h2>
+<div class="card">
+  <p class="desc">일일 브리핑 메일 헤더입니다. 어두운 바 위에서 마크가 흰색으로 뒤집히고, 하단 주황 라인이 브랜드를 이어받습니다.</p>
+  <div class="mailhdr">
+    <div class="bar">
+      <svg width="30" height="30" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="19" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-opacity=".38" stroke-dasharray="88 32" transform="rotate(-25 24 24)"/>
+        <circle cx="24" cy="24" r="13" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-opacity=".65" stroke-dasharray="58 24" transform="rotate(115 24 24)"/>
+        <circle cx="24" cy="24" r="7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="30 14" transform="rotate(250 24 24)"/>
+        <circle cx="33.2" cy="14.8" r="3.8" fill="#FF9E6B"/>
+      </svg>
+      <div class="wm" style="font-size:19px;color:#fff"><span style="color:#fff">Bid</span><span style="color:#FF9E6B">Radar</span></div>
+      <div style="margin-left:auto;font-size:11px;color:#919EAB;font-weight:600">2026-09-01</div>
+    </div>
+    <div class="accent"></div>
+    <div class="bd">
+      <h4>오늘의 신규 공고 18건 · 사전규격 3건</h4>
+      <p>마감 임박 3건이 포함되어 있습니다. 관심도 상위 5건을 아래에 정리했습니다.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>이메일에서 주의할 점</b> — Gmail·Outlook은 <b>SVG를 차단</b>합니다. 메일에는 반드시 <b>PNG</b>(@2x 포함)를 써야 하고, 다크 모드에서 검정 마크가 사라지지 않도록 <b>흰색 버전 PNG</b>를 어두운 바 위에 얹는 지금 방식이 가장 안전합니다.
+  </div>
+</div>
+
+<h2>선택하시면 만들어 드릴 것</h2>
+<div class="card">
+  <table class="g">
+    <tr><td>SVG</td><td>마크 · 가로 락업 · 세로 락업 · 단색(흑/백) — 웹·인쇄 원본</td></tr>
+    <tr><td>파비콘</td><td><code>favicon.svg</code> + <code>favicon-16/32/48.png</code> + <code>.ico</code></td></tr>
+    <tr><td>앱 아이콘</td><td><code>apple-touch-icon-180.png</code> · <code>icon-192/512.png</code> · <code>site.webmanifest</code></td></tr>
+    <tr><td>이메일용 PNG</td><td>마크·락업 @1x/@2x, 라이트/다크 각각 (SVG 차단 대응)</td></tr>
+    <tr><td>OG 이미지</td><td><code>og-image.png</code> 1200×630 — 링크 공유 시 미리보기</td></tr>
+    <tr><td>React 컴포넌트</td><td><code>frontend/src/components/Logo.tsx</code> — 프로토타입의 <code>BR</code> 자리 교체</td></tr>
+    <tr><td>사용 가이드</td><td>최소 크기·여백·금지 사용례를 <code>docs/브랜드.md</code>로</td></tr>
+  </table>
+</div>
+
+</div>
+</body>
+</html>

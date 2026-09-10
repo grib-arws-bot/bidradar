@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none" role="img" aria-label="BidRadar">
+  <circle cx="24" cy="24" r="18" stroke="#FFFFFF" stroke-width="2.4"/>
+  <circle cx="24" cy="24" r="10.5" stroke="#FFFFFF" stroke-width="2.4"/>
+  <path d="M24 2v7M24 39v7M2 24h7M39 24h7" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="31" cy="17" r="3.4" fill="#FFFFFF"/>
+</svg>
