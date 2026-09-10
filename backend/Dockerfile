@@ -3,7 +3,7 @@ FROM python:3.12.7-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpq5 \
+    && apt-get install -y --no-install-recommends libpq5 tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml alembic.ini ./

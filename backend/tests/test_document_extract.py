@@ -113,15 +113,20 @@ def test_extract_pdf_success_uses_pypdf_text_layer():
     assert result.text == "추출된 공고문 내용"
 
 
-def test_extract_pdf_empty_text_layer_reports_failure():
-    # 스캔본 PDF처럼 텍스트 레이어가 비어 있는 경우 — 조용히 빈 결과로 넘어가지 않는다.
+def test_extract_pdf_empty_text_layer_falls_back_to_ocr_not_immediate_failure():
+    # 2026-09-10 OCR 도입 전에는 텍스트 레이어가 비면 바로 "스캔본 가능성"으로 실패 처리했는데,
+    # 이제는 스캔본일 가능성이 실제로 높으므로 조용히 포기하지 않고 OCR을 시도한다 — 이 테스트가
+    # 실제 검증하는 건 "OCR로 폴백까지 실제로 넘어간다"는 것(OCR 자체 성공/실패는 아래 별도
+    # 테스트들이 검증). 여기선 PdfReader만 모킹하고 fitz는 진짜 빈 PDF를 열게 둔다.
     fake_page = mock.Mock()
     fake_page.extract_text.return_value = ""
     with mock.patch("app.services.document_extract.PdfReader") as MockReader:
         MockReader.return_value.pages = [fake_page]
-        result = extract_document("스캔본.pdf", b"%PDF-fake")
-    assert result.ok is False
-    assert "스캔본" in result.error
+        with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value="OCR로 복구된 내용"):
+            result = extract_document("스캔본.pdf", _make_pdf(page_count=1))
+    assert result.ok is True
+    assert result.method == "pdf_ocr"
+    assert "OCR로 복구된 내용" in result.text
 
 
 def test_extract_pdf_broken_file_reports_error_not_exception():
@@ -234,3 +239,77 @@ def test_extract_document_unsupported_extension_reports_failure_not_silent_skip(
     assert result.ok is False
     assert result.method == "unsupported"
     assert "지원하지 않는 형식" in result.error
+
+
+def _make_png(size: tuple[int, int] = (100, 40)) -> bytes:
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", size, color="white").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _make_pdf(page_count: int = 1) -> bytes:
+    import pymupdf as fitz
+
+    doc = fitz.open()
+    for _ in range(page_count):
+        doc.new_page()
+    content = doc.tobytes()
+    doc.close()
+    return content
+
+
+def test_extract_image_ocr_success_returns_recognized_text():
+    # 2026-09-10 OCR 도입 — 실제 Tesseract 엔진 정확도는 검증 대상이 아니라(다른 라이브러리
+    # 파서들과 동일한 모킹 방침), 우리 쪽 래핑 로직(호출·정리·실패 판정)만 검증한다.
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value="  붙임 규격서 내용  \n") as mock_ocr:
+        result = extract_document("규격서_스캔.jpg", _make_png())
+    assert result.ok is True
+    assert result.method == "tesseract_ocr"
+    assert result.text == "붙임 규격서 내용"
+    assert mock_ocr.call_args.kwargs.get("lang") == "kor+eng"
+
+
+def test_extract_image_ocr_empty_result_reports_failure_not_silent():
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value=""):
+        result = extract_document("빈이미지.png", _make_png())
+    assert result.ok is False
+    assert result.method == "tesseract_ocr"
+    assert "OCR 결과가 비어" in result.error
+
+
+def test_extract_image_ocr_engine_error_reports_failure_not_exception():
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", side_effect=RuntimeError("tesseract not found")):
+        result = extract_document("깨진이미지.png", _make_png())
+    assert result.ok is False
+    assert result.method == "tesseract_ocr"
+    assert "tesseract not found" in result.error
+
+
+def test_extract_pdf_falls_back_to_ocr_when_text_layer_empty():
+    # 스캔본 PDF(텍스트 레이어 없음)는 바로 실패 처리하지 않고 페이지를 이미지로 렌더링해 OCR한다.
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value="스캔된 공고문 본문"):
+        result = extract_document("스캔공고.pdf", _make_pdf(page_count=1))
+    assert result.ok is True
+    assert result.method == "pdf_ocr"
+    assert "스캔된 공고문 본문" in result.text
+
+
+def test_extract_pdf_ocr_also_empty_reports_final_failure_not_silent():
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value=""):
+        result = extract_document("완전백지.pdf", _make_pdf(page_count=1))
+    assert result.ok is False
+    assert result.method == "pdf_ocr"
+    assert "OCR" in result.error
+
+
+def test_extract_pdf_ocr_limits_to_max_pages_and_notes_truncation():
+    from app.services import document_extract
+
+    over_limit = document_extract._PDF_OCR_MAX_PAGES + 3
+    with mock.patch("app.services.document_extract.pytesseract.image_to_string", return_value="페이지 내용") as mock_ocr:
+        result = extract_document("초대용량스캔.pdf", _make_pdf(page_count=over_limit))
+    assert result.ok is True
+    assert mock_ocr.call_count == document_extract._PDF_OCR_MAX_PAGES
+    assert f"{document_extract._PDF_OCR_MAX_PAGES}페이지만 처리" in result.text

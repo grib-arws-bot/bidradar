@@ -24,7 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
+import pymupdf as fitz  # 스캔본 PDF를 이미지로 렌더링(OCR 폴백 전용) — "fitz"는 구 패키지명이자
+# deprecated import alias(PyMuPDF 공식 권고: pymupdf로 직접 import) — 코드 내부는 익숙한
+# 이름(fitz) 그대로 쓰되 실제 import 자체는 신 패키지명으로 한다.
 import olefile
+import pytesseract
+from PIL import Image
 from pypdf import PdfReader
 
 _HWPX_PARAGRAPH_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
@@ -32,6 +37,16 @@ _HWP5TXT_TIMEOUT_SEC = 30
 _DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+# 정부 공고 첨부는 거의 전부 한국어라 kor를 우선하되, 도면 치수·모델명 등 영문/숫자가 섞인
+# 경우를 위해 eng도 같이 로드한다(2026-09-10, OCR 도입 — 구현스펙 07절 폴백 사슬 마지막 단계).
+_OCR_LANG = "kor+eng"
+# 스캔본 PDF 페이지를 너무 낮은 해상도로 렌더링하면 작은 글자가 OCR에서 뭉개진다 — 150dpi 기준
+# zoom factor(72dpi가 PDF 기본 단위이므로 150/72 ≈ 2.08).
+_PDF_OCR_ZOOM = 150 / 72
+# 스캔본 PDF는 페이지가 많으면(수십~수백 장) OCR이 매우 오래 걸릴 수 있어 상한을 둔다 — 넘는
+# 페이지는 건너뛰고, 몇 페이지까지 처리했는지는 error 없이 method로만 구분한다(잘라도 앞부분
+# 텍스트는 실제로 쓸모 있음 — 조용히 버리는 게 아니라 일부라도 확보하는 쪽을 택함).
+_PDF_OCR_MAX_PAGES = 20
 
 
 def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
@@ -49,7 +64,7 @@ def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
 @dataclass
 class ExtractResult:
     text: str | None
-    method: str  # pdf_text / hwpx_xml / hwp5txt / hwp_preview
+    method: str  # pdf_text / hwpx_xml / hwp5xml / hwp_preview / tesseract_ocr / pdf_ocr
     ok: bool
     error: str | None = None
 
@@ -62,8 +77,50 @@ def _extract_pdf(content: bytes) -> ExtractResult:
     except Exception as exc:  # noqa: BLE001 — 폴백 사슬의 한 단계, 실패를 결과로 보고해야 한다
         return ExtractResult(text=None, method="pdf_text", ok=False, error=str(exc))
     if not text:
-        return ExtractResult(text=None, method="pdf_text", ok=False, error="텍스트 레이어가 비어 있음(스캔본 가능성)")
+        # 텍스트 레이어가 없으면 스캔본일 가능성이 높다 — 바로 실패 처리하지 않고 OCR로 폴백한다
+        # (2026-09-10 OCR 도입, 구현스펙 07절 폴백 사슬 마지막 단계).
+        return _extract_pdf_ocr(content)
     return ExtractResult(text=text, method="pdf_text", ok=True)
+
+
+def _extract_image_ocr(content: bytes) -> ExtractResult:
+    try:
+        image = Image.open(io.BytesIO(content))
+        text = pytesseract.image_to_string(image, lang=_OCR_LANG).strip()
+    except Exception as exc:  # noqa: BLE001 — 폴백 사슬의 마지막 단계, 실패를 결과로 보고해야 한다
+        return ExtractResult(text=None, method="tesseract_ocr", ok=False, error=str(exc))
+    if not text:
+        return ExtractResult(text=None, method="tesseract_ocr", ok=False, error="OCR 결과가 비어 있음(글자가 없거나 인식 실패)")
+    return ExtractResult(text=text, method="tesseract_ocr", ok=True)
+
+
+def _extract_pdf_ocr(content: bytes) -> ExtractResult:
+    """텍스트 레이어가 없는 PDF(스캔본)를 페이지별로 이미지 렌더링 후 OCR한다. 페이지가
+    너무 많으면 앞에서부터 _PDF_OCR_MAX_PAGES장까지만 처리 — 일부라도 확보하는 쪽이 통째로
+    실패 처리하는 것보다 낫다는 판단(S8 원칙: 조용한 빈 결과 금지, 단 부분 성공은 허용)."""
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception as exc:  # noqa: BLE001
+        return ExtractResult(text=None, method="pdf_ocr", ok=False, error=str(exc))
+    try:
+        page_count = doc.page_count
+        matrix = fitz.Matrix(_PDF_OCR_ZOOM, _PDF_OCR_ZOOM)
+        parts: list[str] = []
+        for page in doc[: min(page_count, _PDF_OCR_MAX_PAGES)]:
+            pixmap = page.get_pixmap(matrix=matrix)
+            image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+            page_text = pytesseract.image_to_string(image, lang=_OCR_LANG).strip()
+            if page_text:
+                parts.append(page_text)
+    except Exception as exc:  # noqa: BLE001
+        return ExtractResult(text=None, method="pdf_ocr", ok=False, error=str(exc))
+    finally:
+        doc.close()
+    text = "\n\n".join(parts).strip()
+    if not text:
+        return ExtractResult(text=None, method="pdf_ocr", ok=False, error="스캔본 PDF OCR 결과가 비어 있음(텍스트 레이어도 없고 OCR도 실패)")
+    truncated_note = f" (전체 {page_count}페이지 중 앞 {_PDF_OCR_MAX_PAGES}페이지만 처리)" if page_count > _PDF_OCR_MAX_PAGES else ""
+    return ExtractResult(text=text + truncated_note, method="pdf_ocr", ok=True)
 
 
 def _extract_hwpx(content: bytes) -> ExtractResult:
@@ -259,8 +316,9 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
 
     HWP는 pyhwp(hwp5txt) 전문 추출 우선 → 실패 시 PrvText 미리보기(~1000자)로 폴백.
     pptx/xlsx/docx는 hwpx와 같은 OOXML(zip+XML) 구조라 같은 방식으로 직접 파싱한다.
-    이미지(png/jpg 등)는 OCR 파이프라인이 아직 없어(구현스펙 07절 폴백 사슬의 마지막 단계,
-    미구현) 지원하지 않음을 명시 보고한다 — 나중에 OCR을 붙이면 이 분기만 바꾸면 됨.
+    이미지(png/jpg 등)와 텍스트 레이어 없는 스캔본 PDF는 Tesseract OCR로 처리한다(2026-09-10
+    도입 — 구현스펙 07절 폴백 사슬의 마지막 단계. 한국어 문서가 대부분이라 kor+eng 언어팩
+    사용, 시스템에 tesseract-ocr·tesseract-ocr-kor 설치 필요).
     """
     lower = filename.lower()
     if lower.endswith(".pdf"):
@@ -277,7 +335,7 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
     if lower.endswith(".docx"):
         return _extract_docx(content)
     if lower.endswith(_IMAGE_EXTENSIONS):
-        return ExtractResult(text=None, method="unsupported", ok=False, error=f"이미지 파일은 OCR 미구현으로 아직 지원하지 않음: {filename}")
+        return _extract_image_ocr(content)
     if lower.endswith(_LEGACY_OFFICE_EXTENSIONS):
         return ExtractResult(text=None, method="unsupported", ok=False, error=f"구버전 오피스 형식(2007 이전)은 아직 지원하지 않음: {filename}")
     return ExtractResult(text=None, method="unsupported", ok=False, error=f"지원하지 않는 형식: {filename}")
