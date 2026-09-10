@@ -1,0 +1,70 @@
+# BidRadar 프로덕션 배포 (2026-09-10) — 항상 "수동 실행"만 가능
+#
+# D:\Code-CLI\ARWS\.github\workflows\deploy-prod.yml의 구조를 그대로 복제한다(의사결정_로그
+# 6번/94번/97번). 자동 트리거(push 등)를 넣지 않음 — "테스트 통과 후 사람이 직접 승인"하는
+# 게이트 역할. self-hosted 러너는 ARWS와 별개(라벨 "bidradar").
+#
+# 실행 방법: GitHub Actions 탭 → "Deploy - Production" 선택 → "Run workflow" 버튼 클릭
+# (Use workflow from: Branch는 항상 main으로 둘 것).
+#
+# deploy-stg.yml에서 스테이징 배포+응답 확인까지 자동으로 끝난 뒤, 사람이 직접 로컬(스테이징)
+# 화면을 확인하고 나서 이 워크플로우를 실행하는 것을 전제로 한다.
+
+name: Deploy - Production
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-production:
+    name: 프로덕션 배포
+    runs-on: [self-hosted, bidradar]
+    timeout-minutes: 20
+    steps:
+      - name: main 브랜치인지 확인
+        if: github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "::error::이 워크플로우는 main 브랜치에서 트리거됐을 때만 실행할 수 있습니다(실제 ref: ${{ github.ref }}) — 검토 안 된 브랜치에서 prod로 임의 코드가 실행되는 걸 막기 위함입니다."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: .env 파일 준비(테스트용 시크릿)
+        shell: powershell
+        run: Copy-Item -Path "D:\Code-CLI\BidRadar\infra\.env" -Destination "infra\.env" -Force
+
+      - name: DB 컨테이너 기동 확인
+        shell: powershell
+        working-directory: infra
+        run: docker compose up -d db
+
+      - name: 백엔드 테스트 (pytest)
+        shell: powershell
+        working-directory: backend
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pytest
+
+      - name: 프론트엔드 빌드 확인 (타입체크 포함)
+        shell: powershell
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 프로덕션 배포 실행
+        shell: powershell
+        run: ./scripts/deploy-to-production.ps1 -Services backend,frontend,scheduler
+
+      - name: .env 파일 정리(시크릿 잔존 방지)
+        if: always()
+        shell: powershell
+        run: Remove-Item -Path "infra\.env" -Force -ErrorAction SilentlyContinue

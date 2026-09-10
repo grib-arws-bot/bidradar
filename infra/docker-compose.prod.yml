@@ -1,0 +1,51 @@
+# prod 전용 오버레이 — TLS 종료 프록시 추가 (2026-09-10, ARWS의 동일 구조를 복제 — CLAUDE.md
+# "infra/는 ARWS 구조를 복제" 원칙, 의사결정_로그 6번/95번/97번).
+#
+# stg(로컬 PC)는 이 파일을 안 쓰고 기존처럼 평문 HTTP로 그대로 사용 — 이 오버레이는 prod 배포/실행
+# 시에만 -f 옵션으로 추가 적용한다:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+#
+# 최초 1회, 인증서가 없으면 먼저 생성: sh infra/tls-proxy/gen-cert.sh
+#
+# BidRadar는 ARWS와 달리 새 서비스라 재사용할 기존 NAT 규칙이 없다 — 신규 외부 포트를 관리자에게
+# 요청해야 한다(내부 3300으로 고정, advisory/server/ 배포가이드 참고). frontend가 이미 /api를
+# backend로 리버스 프록시하므로 노출할 포트는 이거 하나뿐 — ARWS처럼 두 개(admin/서비스)를 열
+# 필요가 없다.
+
+services:
+  db:
+    # 로컬 개발 편의용 포트(psql 직접 접속)를 prod에서는 열지 않는다 — 방화벽에 기대지 않고
+    # 컨테이너 자체가 호스트 포트를 아예 안 물게 한다(ARWS docker-compose.prod.yml과 동일 원칙).
+    ports: !override []
+
+  backend:
+    ports: !override []
+    environment:
+      # config.py의 secure 쿠키 플래그가 이 값으로만 결정된다(X-Forwarded-Proto 판단 없음 — ARWS
+      # Secure 플래그 사고 재현 방지, app/api/auth.py 주석 참고) — prod에서 반드시 있어야 한다.
+      - ENVIRONMENT=production
+
+  # scheduler는 애초에 호스트 포트를 안 쓰므로(docker-compose.yml에 ports 자체가 없음) 여기 별도
+  # 오버라이드가 불필요 — ENVIRONMENT는 스케줄러 자체 동작(수집 로직)엔 영향 없어 생략.
+
+  frontend:
+    ports: !override []
+
+  tls-proxy:
+    image: nginx:1.31.3-alpine
+    restart: unless-stopped
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "-o", "/dev/null", "-f", "https://localhost:3300/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "3300:3300"
+    volumes:
+      - ./tls-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tls-proxy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - frontend

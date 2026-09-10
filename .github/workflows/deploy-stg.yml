@@ -1,0 +1,89 @@
+# BidRadar 스테이징(로컬) 빌드/배포 (2026-09-10)
+#
+# D:\Code-CLI\ARWS\.github\workflows\deploy-stg.yml의 구조를 그대로 복제한다(CLAUDE.md
+# "infra/·scripts/deploy-to-production.ps1·.github/workflows/는 ARWS 구조를 복제" 원칙,
+# 의사결정_로그 6번). self-hosted 러너는 ARWS와 공유하지 않고 BidRadar 전용으로 별도 등록한다
+# (의사결정_로그 94번) — 라벨 "bidradar"로 식별.
+#
+# 실행 방법: GitHub Actions 탭 → "Deploy - Staging" → "Run workflow" 버튼 클릭.
+# 프로덕션 배포는 이 워크플로우가 아니라 deploy-prod.yml(수동 트리거)에서 별도로 한다.
+
+name: Deploy - Staging
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  build-and-stage:
+    name: 로컬 빌드 + 스테이징 배포
+    runs-on: [self-hosted, bidradar]
+    timeout-minutes: 20
+    steps:
+      - name: main 브랜치인지 확인
+        if: github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "::error::이 워크플로우는 main 브랜치에서 트리거됐을 때만 실행할 수 있습니다(실제 ref: ${{ github.ref }}) — self-hosted 러너에 이미 있는 실제 .env(라이브 시크릿)로 검토 안 된 브랜치의 코드를 빌드/실행하는 걸 막기 위함입니다."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      # actions/checkout은 매번 새 작업 디렉터리로 클린 체크아웃하므로(.env는 gitignore라 없음),
+      # 이 단계 없이 바로 docker compose를 돌리면 ${VAR} 치환 값이 전부 빈 문자열이 된다(ARWS
+      # 2026-08-09 실제 발생 사고와 동일한 클래스) — 실제 관리되는 .env를 그대로 복사해 쓴다.
+      - name: .env 파일 준비(스테이징 시크릿)
+        shell: powershell
+        run: Copy-Item -Path "D:\Code-CLI\BidRadar\infra\.env" -Destination "infra\.env" -Force
+
+      # backend/tests/conftest.py는 격리된 테스트 DB가 아니라 로컬 dev DB(127.0.0.1:15432)를
+      # 그대로 쓴다 — db 컨테이너가 이미 떠 있어야 한다(멱등: 이미 떠 있으면 아무 것도 안 함).
+      - name: DB 컨테이너 기동 확인
+        shell: powershell
+        working-directory: infra
+        run: docker compose up -d db
+
+      - name: 백엔드 테스트 (pytest)
+        shell: powershell
+        working-directory: backend
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pytest
+
+      - name: 프론트엔드 빌드 확인 (타입체크 포함)
+        shell: powershell
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 이미지 빌드 (backend, frontend, scheduler)
+        shell: powershell
+        working-directory: infra
+        run: docker compose build backend frontend scheduler
+
+      - name: 스테이징(로컬) 기동
+        shell: powershell
+        working-directory: infra
+        run: docker compose up -d --no-deps backend frontend scheduler
+
+      - name: 스테이징 응답 확인
+        shell: powershell
+        run: |
+          Start-Sleep -Seconds 5
+          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:13200/" -UseBasicParsing -TimeoutSec 10
+          Write-Host "스테이징 frontend: HTTP $($resp.StatusCode)"
+          Write-Host ""
+          Write-Host "==> 스테이징 확인 후 문제 없으면, GitHub Actions 탭에서 'Deploy - Production'"
+          Write-Host "    워크플로우를 수동으로 실행(Run workflow)해서 프로덕션에 배포하세요."
+
+      - name: .env 파일 정리(시크릿 잔존 방지)
+        if: always()
+        shell: powershell
+        run: Remove-Item -Path "infra\.env" -Force -ErrorAction SilentlyContinue
