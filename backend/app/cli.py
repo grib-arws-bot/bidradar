@@ -93,12 +93,21 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
     수집 뒤 중복체크·첨부분석(A1)·AI분석(A2)까지 한 번에 이어진다(2026-09-07,
     run_source_and_process_pending) — 첨부분석·AI분석은 그 소스의 auto_extract/auto_analyze
     설정을 그대로 따르므로 꺼져 있으면 자연히 건너뛴다."""
+    from urllib.parse import unquote
     from sqlalchemy import update
 
     from app.collector.runner import CollectionInProgressError, DEFAULT_MAX_LOOKBACK_DAYS, run_source_and_process_pending
     from app.models import source_credential
 
     if service_key:
+        # data.go.kr 마이페이지는 키를 "일반 인증키(Encoding)"(%2B·%3D 등 퍼센트 인코딩된 형태)와
+        # "일반 인증키(Decoding)"(원문, +·/·= 그대로) 두 가지로 같이 보여준다. url_guard.fetch()가
+        # 넘겨받은 값을 쿼리스트링에 넣을 때 자체적으로 다시 인코딩하므로, 이미 인코딩된 형태를
+        # 그대로 넣으면 %가 %25로 이중 인코딩돼 "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"로 실패한다
+        # (2026-09-10 prod 최초 배포 시 실제 발생 — xlsx의 Encoding 키를 그대로 붙여넣어 재현).
+        # unquote()는 %XX 패턴이 없는 입력(이미 Decoding 형태)엔 아무 영향이 없어 안전하게 항상
+        # 적용한다 — 사용자가 어느 쪽을 붙여넣어도 저장되는 값은 항상 Decoding 형태로 통일된다.
+        service_key = unquote(service_key)
         with engine.begin() as conn:
             conn.execute(
                 update(source_credential)
