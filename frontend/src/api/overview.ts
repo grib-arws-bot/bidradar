@@ -8,12 +8,32 @@ export interface SourceHealth {
 }
 
 export interface Overview {
+  notices: {
+    total: number;
+    added_24h: number;
+    added_7d: number;
+    in_progress: number;
+    closed: number;
+  };
+  customers: {
+    total: number;
+    with_interests: number;
+    profile_summarized: number;
+    by_tier: Record<string, number>;
+  };
+  reports: {
+    total: number;
+    added_7d: number;
+    with_ai_commentary: number;
+    total_views: number;
+  };
   sources: {
     counts: Record<string, number>;
     sources: SourceHealth[];
+    total: number;
+    last_run_at: string | null;
   };
-  notices: { total: number; added_24h: number; added_7d: number };
-  customers: { total: number; with_interests: number; by_tier: Record<string, number> };
+  pending_analysis: { extraction: number; analyze: number };
   recent_reports: {
     id: number;
     token: string;

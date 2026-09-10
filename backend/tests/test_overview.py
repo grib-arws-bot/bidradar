@@ -37,7 +37,9 @@ def test_overview_shape(client: TestClient):
     response = client.get("/api/overview")
     assert response.status_code == 200
     body = response.json()
-    assert {"sources", "notices", "customers", "recent_reports"} <= body.keys()
+    assert {"sources", "notices", "customers", "reports", "pending_analysis", "recent_reports"} <= body.keys()
     assert body["notices"]["total"] > 0
     assert body["customers"]["total"] > 0
     assert sum(body["sources"]["counts"].values()) == len(body["sources"]["sources"])
+    assert {"total", "added_7d", "with_ai_commentary", "total_views"} <= body["reports"].keys()
+    assert {"extraction", "analyze"} <= body["pending_analysis"].keys()
