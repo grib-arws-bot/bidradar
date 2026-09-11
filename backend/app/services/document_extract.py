@@ -51,6 +51,10 @@ _PDF_OCR_MAX_PAGES = 20
 # 이 컨테이너를 쓴다. 확장자가 .hwpx(zip 기반이어야 정상)인데 실제로는 이 헤더를 가진 경우를
 # 잡아내는 데 쓴다(2026-09-11 실측, 나라장터의 확장자 오표기).
 _OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+# ZIP 로컬 파일 헤더 매직바이트 — hwpx/docx/xlsx/pptx 등 OOXML 계열이 전부 이 컨테이너를
+# 쓴다. 확장자가 .hwp(OLE 바이너리여야 정상)인데 실제로는 이 헤더를 가진 경우를 잡아내는
+# 데 쓴다(2026-09-11 실측 — 위 .hwpx↔OLE 오표기의 반대 방향).
+_ZIP_SIGNATURE = b"\x50\x4b\x03\x04"
 
 
 def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
@@ -337,6 +341,11 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
             return full if full is not None else _extract_hwp_preview(content)
         return _extract_hwpx(content)
     if lower.endswith(".hwp"):
+        # 2026-09-11 실측 — 위 .hwpx 오표기의 반대 방향도 실데이터로 확인됨: 실제로는 진짜
+        # HWPX(zip, 내용이 "mimetype: application/hwp+zip"로 시작)인데 .hwp 확장자가 붙어
+        # 온다. OLE 파서로 열면 "not an OLE2 structured storage file"로 실패한다.
+        if content[:len(_ZIP_SIGNATURE)] == _ZIP_SIGNATURE:
+            return _extract_hwpx(content)
         full = _extract_hwp_full(content)
         return full if full is not None else _extract_hwp_preview(content)
     if lower.endswith(".pptx"):

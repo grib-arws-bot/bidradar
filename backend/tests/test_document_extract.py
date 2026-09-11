@@ -234,6 +234,29 @@ def test_extract_hwp_falls_back_to_preview_when_hwp5txt_returns_nonzero():
     assert result.method == "hwp_preview"
 
 
+def test_extract_hwp_extension_with_zip_content_reroutes_to_hwpx():
+    # 2026-09-11 실측 — 위 반대 방향도 확인됨: 실제로는 진짜 HWPX(zip, "mimetype:
+    # application/hwp+zip"로 시작)인데 .hwp 확장자가 붙어 온다. OLE 파서로 열면
+    # "not an OLE2 structured storage file"로 실패했었다.
+    content = _make_hwpx(["확장자는 hwp인데 실제로는 HWPX"])
+    result = extract_document("제안요청서.hwp", content)
+    assert result.ok is True
+    assert result.method == "hwpx_xml"
+    assert result.text == "확장자는 hwp인데 실제로는 HWPX"
+
+
+def test_extract_hwp_extension_with_real_ole_content_still_parses_as_hwp5():
+    # 위 우회 로직이 "진짜" hwp(OLE 바이너리인 정상 케이스)까지 잘못 건드리면 안 된다.
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>정상적인 hwp5 파일</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=_fake_hwp5proc_xml_run(xml_body)):
+        result = extract_document("정상공고.hwp", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1fake-ole-body")
+    assert result.ok is True
+    assert result.method == "hwp5xml"
+
+
 def test_extract_hwpx_extension_with_ole_content_reroutes_to_hwp5():
     # 2026-09-11 실측 — 나라장터가 실제로는 구버전 HWP5(OLE 바이너리) 파일에 .hwpx 확장자를
     # 잘못 붙여 주는 사례를 실데이터로 확인(매직바이트 D0 CF 11 E0 A1 B1 1A E1). 확장자만
