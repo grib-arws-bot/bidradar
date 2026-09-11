@@ -47,6 +47,10 @@ _PDF_OCR_ZOOM = 150 / 72
 # 페이지는 건너뛰고, 몇 페이지까지 처리했는지는 error 없이 method로만 구분한다(잘라도 앞부분
 # 텍스트는 실제로 쓸모 있음 — 조용히 버리는 게 아니라 일부라도 확보하는 쪽을 택함).
 _PDF_OCR_MAX_PAGES = 20
+# OLE2 복합 문서 파일(Compound File Binary Format) 매직바이트 — 구버전 HWP5·XLS·DOC가 전부
+# 이 컨테이너를 쓴다. 확장자가 .hwpx(zip 기반이어야 정상)인데 실제로는 이 헤더를 가진 경우를
+# 잡아내는 데 쓴다(2026-09-11 실측, 나라장터의 확장자 오표기).
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def _flatten_hwpx_text(t_elem: ElementTree.Element) -> str:
@@ -324,6 +328,13 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
     if lower.endswith(".pdf"):
         return _extract_pdf(content)
     if lower.endswith(".hwpx"):
+        # 2026-09-11 실측 — 나라장터가 실제로는 구버전 HWP5(OLE 바이너리) 파일에 .hwpx
+        # 확장자를 잘못 붙여 주는 사례를 확인(140건, 매직바이트 D0 CF 11 E0로 직접 확인).
+        # 확장자만 믿고 zip으로 열면 무조건 "File is not a zip file"로 실패한다 — 내용을
+        # 먼저 들여다보고 실제 OLE 구조면 HWP5 경로로 보낸다.
+        if content[:len(_OLE_SIGNATURE)] == _OLE_SIGNATURE:
+            full = _extract_hwp_full(content)
+            return full if full is not None else _extract_hwp_preview(content)
         return _extract_hwpx(content)
     if lower.endswith(".hwp"):
         full = _extract_hwp_full(content)

@@ -234,6 +234,31 @@ def test_extract_hwp_falls_back_to_preview_when_hwp5txt_returns_nonzero():
     assert result.method == "hwp_preview"
 
 
+def test_extract_hwpx_extension_with_ole_content_reroutes_to_hwp5():
+    # 2026-09-11 실측 — 나라장터가 실제로는 구버전 HWP5(OLE 바이너리) 파일에 .hwpx 확장자를
+    # 잘못 붙여 주는 사례를 실데이터로 확인(매직바이트 D0 CF 11 E0 A1 B1 1A E1). 확장자만
+    # 믿고 zip으로 열면 무조건 "File is not a zip file"로 실패했었다 — 내용을 먼저 확인해서
+    # 진짜 형식으로 우회해야 한다.
+    ole_content = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"fake-ole-body"
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>확장자는 hwpx인데 실제로는 HWP5</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=_fake_hwp5proc_xml_run(xml_body)):
+        result = extract_document("공고문1.hwpx", ole_content)
+    assert result.ok is True
+    assert result.method == "hwp5xml"
+    assert result.text == "확장자는 hwpx인데 실제로는 HWP5"
+
+
+def test_extract_hwpx_extension_with_real_zip_content_still_parses_as_hwpx():
+    # 위 우회 로직이 "진짜" hwpx(정상적으로 zip인 경우)까지 잘못 건드리면 안 된다.
+    content = _make_hwpx(["정상적인 hwpx 파일"])
+    result = extract_document("정상공고.hwpx", content)
+    assert result.ok is True
+    assert result.method == "hwpx_xml"
+
+
 def test_extract_document_unsupported_extension_reports_failure_not_silent_skip():
     result = extract_document("신청서양식.zip", b"PK\x03\x04fake")
     assert result.ok is False
