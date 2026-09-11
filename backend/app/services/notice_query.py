@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 
-from sqlalchemy import Select, and_, exists, func, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.engine import Connection
 
 from app.models import analysis, customer, interest_topic, notice, notice_score, org, requirement, source
@@ -87,6 +87,11 @@ class NoticeFilters:
     q: str | None = None
     domain_ids: list[int] = field(default_factory=list)
     org_ids: list[int] = field(default_factory=list)
+    # 발주기관 "유형" 단위 검색(2026-09-11 구현, 2026-09-07 사용자 지시 향후 과제) — 예:
+    # "교육청"을 고르면 서울시교육청·경기도교육청 등 org.category="교육청"인 기관 전부가
+    # 함께 검색된다. org_ids(개별 기관 다중선택)와는 OR로 결합 — 개별 기관 몇 개를 콕
+    # 집으면서 동시에 "교육청 전체"도 같이 보는 식의 조합이 자연스럽게 된다.
+    org_categories: list[str] = field(default_factory=list)
     source_ids: list[int] = field(default_factory=list)
     price_min: int | None = None
     price_max: int | None = None
@@ -197,8 +202,13 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
             )
         )
 
-    if filters.org_ids:
-        conditions.append(notice.c.org_id.in_(filters.org_ids))
+    if filters.org_ids or filters.org_categories:
+        org_conditions = []
+        if filters.org_ids:
+            org_conditions.append(notice.c.org_id.in_(filters.org_ids))
+        if filters.org_categories:
+            org_conditions.append(org.c.category.in_(filters.org_categories))
+        conditions.append(or_(*org_conditions))
 
     if filters.source_ids:
         conditions.append(notice.c.source_id.in_(filters.source_ids))
@@ -349,7 +359,14 @@ def ordered_ids(conn: Connection, filters: NoticeFilters) -> list[int]:
     함수로 바꾸면 되고, 지금 미리 최적화할 이유는 없다.
     """
     priority_sq = _priority_subquery()
-    stmt = select(notice.c.id).select_from(notice).join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
+    stmt = (
+        select(notice.c.id)
+        .select_from(notice)
+        # org_categories 필터가 org.c.category를 참조하므로 반드시 조인해야 한다 — 안 그러면
+        # SQLAlchemy가 org를 FROM절에 암묵적으로 더 추가해 카티션 곱(중복 행)이 생긴다.
+        .join(org, org.c.id == notice.c.org_id, isouter=True)
+        .join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
+    )
     stmt = _apply_filters(stmt, filters)
     stmt = _apply_sort(stmt, filters.sort, priority_sq)
     return [row[0] for row in conn.execute(stmt)]
@@ -366,6 +383,11 @@ def filter_options(conn: Connection) -> dict:
         .order_by(interest_topic.c.sort_order)
     ).mappings().all()
     orgs = conn.execute(select(org.c.id, org.c.name).order_by(org.c.name)).mappings().all()
+    # DB collation 정렬이 파이썬 sorted()와 어긋나는 문제(app/services/agency_registry.py의
+    # list_agency_categories() 2026-09-11 발견과 동일)를 피하려고 애플리케이션에서 정렬한다.
+    org_categories = sorted(
+        row[0] for row in conn.execute(select(org.c.category).distinct().where(org.c.category.is_not(None)))
+    )
     # "데이터 소스" 필터(2026-09-05)는 개별 source 행이 아니라 공고기관(channel_name) 단위로
     # 묶어서 보여준다 — 나라장터 하나만 봐도 사전규격·발주계획·입찰공고 3종×물품/용역/공사로
     # 9개 행이 나와 관리자가 아닌 일반 사용자에게는 지나치게 세분화돼 있었다.
@@ -382,6 +404,7 @@ def filter_options(conn: Connection) -> dict:
     return {
         "topics": [dict(row) for row in topics],
         "orgs": [dict(row) for row in orgs],
+        "org_categories": org_categories,
         "channels": channels,
         "stages": stages,
         "regions": regions,

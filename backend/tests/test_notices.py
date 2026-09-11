@@ -22,7 +22,7 @@ from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
-from app.models import analysis, notice, notice_score, source
+from app.models import analysis, notice, notice_score, org, source
 from app.services.notice_query import SORT_OPTIONS, TABS, NoticeFilters, compute_bid_status, list_notices
 
 EMAIL = "report@grib.co.kr"
@@ -190,6 +190,83 @@ def test_biz_type_filter(client: TestClient):
             conn.execute(delete(notice).where(notice.c.id == notice_id))
 
 
+def test_org_category_filter_matches_all_orgs_in_that_category(client: TestClient):
+    """발주기관 "분야" 필터(2026-09-11) — 개별 기관을 몰라도 분야 하나로 그 분야 전 기관의
+    공고가 함께 검색돼야 한다."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        org_a = conn.execute(
+            insert(org).values(name="[테스트] 분야필터용 기관A", category="[테스트]교육").returning(org.c.id)
+        ).scalar_one()
+        org_b = conn.execute(
+            insert(org).values(name="[테스트] 분야필터용 기관B", category="[테스트]교육").returning(org.c.id)
+        ).scalar_one()
+        org_c = conn.execute(
+            insert(org).values(name="[테스트] 분야필터용 기관C", category="[테스트]건설교통").returning(org.c.id)
+        ).scalar_one()
+        notice_ids = []
+        for i, org_id in enumerate((org_a, org_b, org_c)):
+            notice_ids.append(
+                conn.execute(
+                    insert(notice).values(
+                        source_id=source_id, source_ver=1, stage="입찰공고", org_id=org_id,
+                        title=f"[테스트] 분야필터 검증용 공고{i}", url=f"https://example.grib-test.kr/notice/org-category-test-{i}",
+                    ).returning(notice.c.id)
+                ).scalar_one()
+            )
+    try:
+        response = client.get("/api/notices", params={"tab": "all", "org_category[]": ["[테스트]교육"], "size": 50})
+        assert response.status_code == 200
+        titles = {item["title"] for item in response.json()["items"]}
+        assert "[테스트] 분야필터 검증용 공고0" in titles
+        assert "[테스트] 분야필터 검증용 공고1" in titles
+        assert "[테스트] 분야필터 검증용 공고2" not in titles
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id.in_(notice_ids)))
+            conn.execute(delete(org).where(org.c.id.in_((org_a, org_b, org_c))))
+
+
+def test_org_category_filter_combines_with_org_id_filter_via_or(client: TestClient):
+    """개별 기관(org)과 분야(org_category)를 동시에 지정하면 OR로 합쳐져야 한다 — 특정
+    기관 몇 개를 콕 집으면서 동시에 다른 분야 전체도 같이 보는 조합이 흔하다."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        picked_org = conn.execute(
+            insert(org).values(name="[테스트] OR결합용 개별기관", category=None).returning(org.c.id)
+        ).scalar_one()
+        category_org = conn.execute(
+            insert(org).values(name="[테스트] OR결합용 분야기관", category="[테스트]농림수산").returning(org.c.id)
+        ).scalar_one()
+        notice_ids = [
+            conn.execute(
+                insert(notice).values(
+                    source_id=source_id, source_ver=1, stage="입찰공고", org_id=picked_org,
+                    title="[테스트] OR결합 검증 개별기관 공고", url="https://example.grib-test.kr/notice/org-or-test-1",
+                ).returning(notice.c.id)
+            ).scalar_one(),
+            conn.execute(
+                insert(notice).values(
+                    source_id=source_id, source_ver=1, stage="입찰공고", org_id=category_org,
+                    title="[테스트] OR결합 검증 분야기관 공고", url="https://example.grib-test.kr/notice/org-or-test-2",
+                ).returning(notice.c.id)
+            ).scalar_one(),
+        ]
+    try:
+        response = client.get(
+            "/api/notices",
+            params={"tab": "all", "org[]": [picked_org], "org_category[]": ["[테스트]농림수산"], "size": 50},
+        )
+        assert response.status_code == 200
+        titles = {item["title"] for item in response.json()["items"]}
+        assert "[테스트] OR결합 검증 개별기관 공고" in titles
+        assert "[테스트] OR결합 검증 분야기관 공고" in titles
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id.in_(notice_ids)))
+            conn.execute(delete(org).where(org.c.id.in_((picked_org, category_org))))
+
+
 def test_work_type_filter(client: TestClient):
     response = client.get("/api/notices", params={"tab": "all", "work_type[]": ["유지보수"], "size": 50})
     assert response.status_code == 200
@@ -259,7 +336,7 @@ def test_filter_options_shape(client: TestClient):
     response = client.get("/api/notices/filter-options")
     assert response.status_code == 200
     body = response.json()
-    assert set(body.keys()) == {"topics", "orgs", "channels", "stages", "regions", "biz_types", "work_types"}
+    assert set(body.keys()) == {"topics", "orgs", "org_categories", "channels", "stages", "regions", "biz_types", "work_types"}
     assert len(body["topics"]) > 0
     assert len(body["orgs"]) > 0
     # "데이터 소스"는 개별 source 행이 아니라 공고기관(나라장터/IRIS 등) 단위로 묶여야 한다

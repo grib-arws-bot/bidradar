@@ -81,6 +81,19 @@ def seed_prod() -> None:
     print("prod 최소 시드 완료(관심주제·키워드·소스·발주기관만 — 고객은 비워둠).")
 
 
+def backfill_org_categories_cmd() -> None:
+    """이미 수집된 발주기관 중 category(업종/분야)가 비어있는 행을 기관명 패턴으로 일괄
+    분류한다(2026-09-11) — 신규 기관은 수집 시점에 자동 분류되므로 1회만 실행하면 된다."""
+    from app.services.org_classification import backfill_org_categories
+
+    with engine.begin() as conn:
+        counts = backfill_org_categories(conn)
+    total = sum(counts.values())
+    print(f"분류 완료: {total}건")
+    for category, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+        print(f"  {category}: {count}건")
+
+
 def collect(source_id: int, service_key: str | None, force: bool, max_lookback_days: int | None) -> None:
     """수동 1회 수집(U11). 공공데이터포털 인증키가 아직 없으면 --service-key 없이 호출해도
     되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도).
@@ -208,6 +221,7 @@ def main() -> None:
     subparsers.add_parser("create-admin")
     subparsers.add_parser("seed")
     subparsers.add_parser("seed-prod")
+    subparsers.add_parser("backfill-org-categories")
 
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--source-id", type=int, required=True)
@@ -247,6 +261,8 @@ def main() -> None:
         seed()
     elif args.command == "seed-prod":
         seed_prod()
+    elif args.command == "backfill-org-categories":
+        backfill_org_categories_cmd()
     elif args.command == "collect":
         collect(args.source_id, args.service_key, args.force, args.max_lookback_days)
     elif args.command == "check-compliance":

@@ -75,6 +75,7 @@ function paramsToFilters(sp: URLSearchParams): NoticeFilterValues {
   return {
     domain: sp.getAll("domain[]").map(Number),
     org: sp.getAll("org[]").map(Number),
+    org_category: sp.getAll("org_category[]"),
     source: sp.getAll("source[]").map(Number),
     region: sp.getAll("region[]"),
     stage: sp.getAll("stage[]"),
@@ -153,6 +154,7 @@ export function NoticeExplorePage() {
     updateParams({
       "domain[]": next.domain.map(String),
       "org[]": next.org.map(String),
+      "org_category[]": next.org_category,
       "source[]": next.source.map(String),
       "region[]": next.region,
       "stage[]": next.stage,

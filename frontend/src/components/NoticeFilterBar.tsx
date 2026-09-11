@@ -6,6 +6,9 @@ import type { FilterOptions } from "@/api/notices";
 export interface NoticeFilterValues {
   domain: number[];
   org: number[];
+  // 발주기관 "분야"(2026-09-11) — 개별 기관(org)과 별개로 OR 결합된다. 예: 특정 기관 2곳을
+  // org로 콕 집으면서 동시에 "교육" 분야 전체도 같이 볼 수 있다.
+  org_category: string[];
   source: number[];
   region: string[];
   stage: string[];
@@ -21,6 +24,7 @@ export interface NoticeFilterValues {
 export const EMPTY_FILTERS: NoticeFilterValues = {
   domain: [],
   org: [],
+  org_category: [],
   source: [],
   region: [],
   stage: [],
@@ -78,6 +82,15 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
           onChange={(_, selected) => set("org", selected.map((s) => s.id))}
           isOptionEqualToValue={(a, b) => a.id === b.id}
           renderInput={(params) => <TextField {...params} label="발주기관" />}
+        />
+        <Autocomplete
+          multiple
+          size="small"
+          sx={{ minWidth: 180 }}
+          options={options?.org_categories ?? []}
+          value={values.org_category}
+          onChange={(_, selected) => set("org_category", selected)}
+          renderInput={(params) => <TextField {...params} label="발주기관 분야" />}
         />
         <Autocomplete
           multiple
@@ -207,6 +220,13 @@ function AppliedChips({ options, values, onChange }: Props) {
       onDelete: () => onChange({ ...values, org: values.org.filter((v) => v !== id) }),
     });
   });
+  values.org_category.forEach((c) =>
+    chips.push({
+      key: `org_category-${c}`,
+      label: `기관 분야: ${c}`,
+      onDelete: () => onChange({ ...values, org_category: values.org_category.filter((v) => v !== c) }),
+    }),
+  );
   selectedChannels(options?.channels ?? [], values.source).forEach((c) => {
     chips.push({
       key: `channel-${c.name}`,

@@ -117,8 +117,12 @@ def list_agencies(
 
 def list_agency_categories(conn: Connection) -> list[str]:
     """분류 드롭다운용 전체 분류 목록 — list_agencies가 페이지네이션되면서(2026-09-05)
-    현재 페이지 행에서만 뽑던 방식을 못 쓰게 돼 별도로 뗐다."""
-    rows = conn.execute(
-        select(org.c.category).where(org.c.category.is_not(None)).distinct().order_by(org.c.category)
-    ).scalars().all()
-    return list(rows)
+    현재 페이지 행에서만 뽑던 방식을 못 쓰게 돼 별도로 뗐다.
+
+    2026-09-11 발견 — DB의 `ORDER BY category`(서버 기본 collation)가 파이썬 `sorted()`
+    (유니코드 코드포인트 순서)와 다른 순서를 준다(실측: "R&D 지원기관"이 영문자로 시작하는데도
+    DB 정렬에서는 중간에 낌, 한글 항목끼리도 가나다순이 아님). 발주기관 산업분야 분류 백필로
+    실제 값이 2~3개에서 12개로 늘면서 처음 드러난 문제 — DB collation에 기대지 않고 애플리케이션
+    쪽에서 명시적으로 정렬한다(화면·테스트 양쪽에서 일관된 순서를 보장)."""
+    rows = conn.execute(select(org.c.category).where(org.c.category.is_not(None)).distinct()).scalars().all()
+    return sorted(rows)

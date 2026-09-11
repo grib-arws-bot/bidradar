@@ -337,6 +337,21 @@ def test_get_or_create_org_sets_source_id_for_new_org():
             conn.execute(delete(org).where(org.c.name == unique_name))
 
 
+def test_get_or_create_org_classifies_category_by_name_pattern():
+    # 2026-09-11 발견 — 실제 수집 데이터 2,981건 중 2건만 category가 채워져 있던 원인이 바로
+    # 이 함수가 생성 시점에 분류를 아예 안 했던 것 — 이제 기관명 패턴으로 자동 분류한다.
+    source_id = _bid_service_source_id()
+    unique_name = "테스트전용발주기관_교육청_분류확인"
+    with engine.begin() as conn:
+        conn.execute(delete(org).where(org.c.name == unique_name))
+        try:
+            org_id = _get_or_create_org(conn, unique_name, source_id)
+            category = conn.execute(select(org.c.category).where(org.c.id == org_id)).scalar_one()
+            assert category == "교육"
+        finally:
+            conn.execute(delete(org).where(org.c.name == unique_name))
+
+
 # ---- 사업유형 제목 기반 추정(근사치, 2026-09-01 요청) ----------------------------
 
 

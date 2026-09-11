@@ -20,6 +20,7 @@ from app.db import engine
 from app.models import notice, notice_score, org, raw_payload, source, source_config, source_credential, source_field_map, source_run
 from app.services.notice_cleanup import delete_expired_notices
 from app.services.notice_dedup import find_and_mark_superseded
+from app.services.org_classification import classify_org_category
 from app.services.pending_analysis import process_new_notices
 
 # 공고가 2개월(60일) 넘게 열려있는 경우를 본 적이 없다는 판단(2026-09-01 결정) — 수집 이력이
@@ -66,7 +67,11 @@ def _get_or_create_org(conn: Connection, name: str, source_id: int) -> int:
         return row[0]
     # 새로 발견되는 발주기관은 지금 수집 중인 소스(공고기관/채널)를 그대로 연결해둔다 —
     # 관리자 페이지 "소스 관리"(발주기관 중심 목록)가 별도 수작업 없이 채워지도록.
-    result = conn.execute(insert(org).values(name=name, source_id=source_id).returning(org.c.id)).one()
+    # category(업종/분야)는 2026-09-11까지 여기서 아예 설정을 안 해서 실제 수집 데이터
+    # 2,981건 중 2건만 채워져 있었다(발견) — 기관명 패턴 분류를 신규 생성 시점에도 적용한다.
+    result = conn.execute(
+        insert(org).values(name=name, source_id=source_id, category=classify_org_category(name)).returning(org.c.id)
+    ).one()
     return result.id
 
 
