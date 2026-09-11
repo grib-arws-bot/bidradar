@@ -94,11 +94,10 @@ def backfill_org_categories_cmd() -> None:
         print(f"  {category}: {count}건")
 
 
-def collect(source_id: int, service_key: str | None, force: bool, max_lookback_days: int | None) -> None:
+def collect(source_id: int, service_key: str | None, max_lookback_days: int | None) -> None:
     """수동 1회 수집(U11). 공공데이터포털 인증키가 아직 없으면 --service-key 없이 호출해도
     되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도).
 
-    --force는 B등급 소스의 최소 수집 간격을 관리자가 의도적으로 우회할 때만 쓴다(INBOX #5).
     --max-lookback-days는 데이터를 전부 지우고 특정 기간치를 재수집할 때만 쓴다 — 직전 성공
     수집 이력이 남아있으면 거기서부터 이어받으므로(runner.py의 _collection_window), 이 옵션이
     실제로 먹으려면 그 소스의 source_run 이력도 같이 비워야 한다.
@@ -130,7 +129,7 @@ def collect(source_id: int, service_key: str | None, force: bool, max_lookback_d
 
     try:
         result = run_source_and_process_pending(
-            source_id, force=force, max_lookback_days=max_lookback_days or DEFAULT_MAX_LOOKBACK_DAYS
+            source_id, max_lookback_days=max_lookback_days or DEFAULT_MAX_LOOKBACK_DAYS
         )
     except CollectionInProgressError as exc:
         print(f"수집 건너뜀: {exc}", file=sys.stderr)
@@ -226,7 +225,6 @@ def main() -> None:
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--source-id", type=int, required=True)
     collect_parser.add_argument("--service-key", default=None, help="공공데이터포털 인증키(발급받은 경우)")
-    collect_parser.add_argument("--force", action="store_true", help="B등급 최소 수집 간격 무시(관리자 수동 재수집)")
     collect_parser.add_argument(
         "--max-lookback-days", type=int, default=None, help="이 기간까지만 거슬러 수집(해당 소스 source_run 이력도 비워야 실제로 적용됨)"
     )
@@ -264,7 +262,7 @@ def main() -> None:
     elif args.command == "backfill-org-categories":
         backfill_org_categories_cmd()
     elif args.command == "collect":
-        collect(args.source_id, args.service_key, args.force, args.max_lookback_days)
+        collect(args.source_id, args.service_key, args.max_lookback_days)
     elif args.command == "check-compliance":
         check_compliance(args.source_id)
     elif args.command == "cleanup-closed":

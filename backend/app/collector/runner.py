@@ -139,14 +139,10 @@ def run_source(
     source_id: int,
     *,
     max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS,
-    force: bool = False,
     window: tuple[datetime, datetime] | None = None,
     run_id: int | None = None,
 ) -> dict:
     """소스 하나를 1회 수집한다. 반환값은 결과 요약(로그·테스트 검증용).
-
-    force=True는 관리자가 수동으로 즉시 재수집할 때만 쓴다 — B등급 최소 수집 간격을 우회한다
-    (advisory INBOX #5). 등급 C 차단은 force로도 못 뚫는다 — 활성화 자체가 금지된 소스라서.
 
     window=(begin, end)는 _collection_window()의 자동 좁히기(직전 성공 시각 기준)를 완전히
     건너뛰고 호출부가 지정한 구간만 그대로 쓴다 — 최초 백필을 하루 단위로 쪼갤 때만 쓰는
@@ -167,8 +163,8 @@ def run_source(
         raise ValueError(f"소스를 찾을 수 없습니다: {source_id}")
     if src["adapter_type"] != "openapi":
         raise ValueError(f"U11 범위는 openapi 어댑터만 지원합니다(소스 타입: {src['adapter_type']})")
-    # 공고 자동 수집 on/off(2026-09-05, 관리자 화면 토글) — 관리자가 의도적으로 끈 소스라
-    # force로도 우회하지 않는다(법적 등급 C와 같은 성격 — 시간 제약이 아니라 명시적 배제).
+    # 공고 자동 수집 on/off(2026-09-05, 관리자 화면 토글) — 관리자가 의도적으로 끈 소스는
+    # 관리자 화면에서 다시 켜기 전엔 우회할 방법이 없다(법적 등급 C와 같은 성격 — 명시적 배제).
     if not src["active"]:
         raise ValueError(f"'{src['name']}' 소스는 비활성화 상태입니다 — 관리자 화면(데이터 수집채널)에서 켜야 수집할 수 있습니다.")
     # 법적 등급 C(금지) — robots 차단 또는 약관상 명시적 금지 소스는 활성화 자체를 거부한다
@@ -178,15 +174,6 @@ def run_source(
         raise ValueError(
             f"'{src['name']}' 소스는 법적 등급 C(수집 금지)입니다 — advisory INBOX #5에 따라 활성화할 수 없습니다."
         )
-    if src["legal_tier"] == "B" and not force:
-        last_ok = _last_ok_run_at(conn, source_id)
-        min_interval = timedelta(minutes=src["frequency_minutes"])
-        if last_ok is not None and (datetime.now(timezone.utc) - last_ok) < min_interval:
-            raise ValueError(
-                f"'{src['name']}'은 법적 등급 B — 최소 수집 간격({src['frequency_minutes']}분) 전입니다 "
-                f"(advisory INBOX #5, 마지막 성공 수집: {last_ok.isoformat()})."
-            )
-
     cfg = conn.execute(
         select(source_config)
         .where(source_config.c.source_id == source_id)
@@ -371,7 +358,6 @@ def run_source_and_process_pending(
     source_id: int,
     *,
     max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS,
-    force: bool = False,
 ) -> dict:
     """파이프라인 전체(수집→중복체크→첨부분석(A1)→AI분석(A2))를 한 번에 잇는다(2026-09-07
     사용자 지시) — "자동수집"이든 "지금 수집"이든 이 함수를 거쳐야 끝까지 이어진다.
@@ -395,7 +381,7 @@ def run_source_and_process_pending(
     run_id = _start_run(source_id)
     try:
         with engine.begin() as conn:
-            collect_result = run_source(conn, source_id, max_lookback_days=max_lookback_days, force=force, run_id=run_id)
+            collect_result = run_source(conn, source_id, max_lookback_days=max_lookback_days, run_id=run_id)
         new_notice_ids = collect_result.pop("inserted_notice_ids")
         raw_items_by_notice_id = collect_result.pop("inserted_raw_items")
         pending_result = process_new_notices(source_id, new_notice_ids, raw_items_by_notice_id=raw_items_by_notice_id)

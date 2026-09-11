@@ -41,7 +41,7 @@ def test_collect_decodes_percent_encoded_service_key_before_storing():
         encoded_key = "abcXYZ123%2Bdef%3D%3D"
         with mock.patch("app.collector.runner.run_source_and_process_pending") as mock_run:
             mock_run.return_value = {"fetched": 0, "inserted": 0, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 0, "dedup_notices_updated": 0, "dedup_groups_with_duplicates": 0, "extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
-            collect(source_id, encoded_key, False, None)
+            collect(source_id, encoded_key, None)
 
         with engine.connect() as conn:
             stored = conn.execute(
@@ -64,7 +64,7 @@ def test_collect_leaves_already_decoded_service_key_unchanged():
         decoded_key = "abcXYZ123+def=="
         with mock.patch("app.collector.runner.run_source_and_process_pending") as mock_run:
             mock_run.return_value = {"fetched": 0, "inserted": 0, "skipped": 0, "scored": 0, "out_of_window": 0, "already_closed": 0, "dedup_notices_updated": 0, "dedup_groups_with_duplicates": 0, "extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
-            collect(source_id, decoded_key, False, None)
+            collect(source_id, decoded_key, None)
 
         with engine.connect() as conn:
             stored = conn.execute(

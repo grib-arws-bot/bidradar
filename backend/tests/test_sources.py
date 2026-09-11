@@ -470,7 +470,7 @@ def test_collect_now_success_records_audit_log(client: TestClient):
         response = client.post(f"/api/admin/sources/{source_id}/collect-now")
     assert response.status_code == 200
     assert response.json() == {"id": source_id, **fake_result}
-    assert mock_run.call_args.kwargs == {"force": True}
+    assert mock_run.call_args.kwargs == {}
 
     with engine.connect() as conn:
         detail = conn.execute(

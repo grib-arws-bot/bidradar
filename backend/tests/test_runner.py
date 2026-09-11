@@ -259,36 +259,9 @@ def test_run_source_blocks_legal_tier_c():
             conn.execute(delete(source).where(source.c.id == source_id))
 
 
-def test_run_source_enforces_tier_b_minimum_interval(monkeypatch):
-    mock_response = mock.Mock()
-    mock_response.json.return_value = {"items": [{"title": "t"}]}
-    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
-
-    # 각 단계를 별도 트랜잭션으로 커밋한다 — run_source의 _record_run이 호출부와 독립된
-    # 커넥션으로 source_run을 쓰기 때문에(CLAUDE.md 취지: 실패도 반드시 기록), 같은 트랜잭션
-    # 안에서 소스를 만들고 바로 run_source를 부르면 그 커넥션 눈엔 소스가 아직 안 보여
-    # FK 위반이 난다.
-    with engine.begin() as conn:
-        source_id = _make_temp_source(conn, legal_tier="B", frequency_minutes=1440)
-    try:
-        with engine.begin() as conn:
-            conn.execute(
-                insert(source_run).values(
-                    source_id=source_id, status="ok", items_fetched=0,
-                    run_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-                )
-            )
-        with engine.begin() as conn:
-            with pytest.raises(ValueError, match="최소 수집 간격"):
-                run_source(conn, source_id)
-        # force=True는 관리자 수동 재수집용 우회 — 이건 통과해야 함
-        with engine.begin() as conn:
-            run_source(conn, source_id, force=True)
-    finally:
-        with engine.begin() as conn:
-            conn.execute(delete(source_run).where(source_run.c.source_id == source_id))
-            conn.execute(delete(raw_payload).where(raw_payload.c.source_id == source_id))
-            conn.execute(delete(source).where(source.c.id == source_id))
+# 법적 등급 B 소스의 "최소 수집 간격" 강제는 사용자 지시로 제거했다(2026-09-11, 의사결정_로그
+# 104번) — 스케줄대로 항상 수집돼야 한다는 운영 요구가 advisory INBOX #5의 간격 제약보다
+# 우선한다고 판단. 등급 C(수집 금지) 차단은 그대로 유지된다(위 test_run_source_blocks_legal_tier_c).
 
 
 # ---- 날짜범위 파라미터 없는 API의 클라이언트측 기간 필터(2026-09-02, IRIS 재수집 정확도) --
@@ -430,13 +403,12 @@ def test_run_source_and_process_pending_chains_and_merges_results(monkeypatch):
          mock.patch.object(runner, "_reject_if_already_running") as mock_reject, \
          mock.patch.object(runner, "_start_run", return_value=4242) as mock_start, \
          mock.patch.object(runner, "_finish_run") as mock_finish:
-        result = runner.run_source_and_process_pending(999, force=True)
+        result = runner.run_source_and_process_pending(999)
 
     mock_reject.assert_called_once_with(999)
     mock_start.assert_called_once_with(999)
     mock_collect.assert_called_once()
     assert mock_collect.call_args.args[1] == 999
-    assert mock_collect.call_args.kwargs["force"] is True
     assert mock_collect.call_args.kwargs["run_id"] == 4242
     mock_pending.assert_called_once_with(999, [555], raw_items_by_notice_id=raw_items)
     mock_finish.assert_called_once_with(4242, status="ok", items_fetched=3)
@@ -517,7 +489,7 @@ def test_run_source_and_process_pending_marks_running_then_ok(monkeypatch):
     with mock.patch.object(runner, "process_new_notices", return_value={
         "extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0,
     }):
-        runner.run_source_and_process_pending(source_id, force=True)
+        runner.run_source_and_process_pending(source_id)
 
     with engine.connect() as conn:
         run_row = conn.execute(

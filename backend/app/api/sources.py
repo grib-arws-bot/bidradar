@@ -115,13 +115,11 @@ def update_schedule_route(source_id: int, payload: ScheduleTimesUpdate, email: s
 @router.post("/{source_id}/collect-now")
 def collect_now_route(source_id: int, email: str = Depends(require_auth)) -> dict:
     """관리자가 스케줄과 무관하게 임의 시점에 즉시 1회 수집한다(2026-09-07 사용자 지시) —
-    지금까진 python -m app.cli collect로만 가능했다. force=True로 실행해 법적 등급 B의
-    최소 수집 간격만 우회한다(CLI --force와 동일한 의미 — "관리자가 명시적으로 지금 누른
-    것"이라 CLAUDE.md S8 원칙 3과 충돌 없음). 비활성 소스·법적 등급 C는 force로도 여전히
+    지금까진 python -m app.cli collect로만 가능했다. 비활성 소스·법적 등급 C는 여전히
     거부된다. 수집→중복체크→첨부분석(A1)→AI분석(A2)까지 한 번에 이어진다(같은 날 사용자
     지시) — 첨부분석·AI분석은 그 소스의 auto_extract/auto_analyze 설정을 그대로 따른다."""
     try:
-        result = run_source_and_process_pending(source_id, force=True)
+        result = run_source_and_process_pending(source_id)
     except CollectionInProgressError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
