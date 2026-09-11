@@ -12,6 +12,7 @@ export interface CustomerFull {
   contact_title: string | null;
   contact_phone: string | null;
   report_recipient_emails: string[];
+  reference_urls: string[];
   active: boolean;
   profile_summary_md: string | null;
   profile_summarized_at: string | null;
@@ -26,6 +27,7 @@ export interface CustomerDraft {
   contact_title: string | null;
   contact_phone: string | null;
   report_recipient_emails: string[];
+  reference_urls: string[];
   active: boolean;
 }
 
@@ -61,10 +63,17 @@ export async function fetchCustomerDocuments(customerId: number): Promise<Custom
   return data;
 }
 
-export async function uploadCustomerDocuments(customerId: number, files: File[]): Promise<CustomerDocument[]> {
+export interface UploadDocumentsResult {
+  documents: CustomerDocument[];
+  errors: string[];
+}
+
+// 여러 파일 중 하나가 실패해도(예: 용량 초과) 나머지는 저장된다(2026-09-11) — 응답에 담긴
+// errors를 호출부가 그대로 토스트로 보여줘야 한다("조용한 실패 금지").
+export async function uploadCustomerDocuments(customerId: number, files: File[]): Promise<UploadDocumentsResult> {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
-  const { data } = await apiClient.post<CustomerDocument[]>(`/customers/${customerId}/documents`, form, {
+  const { data } = await apiClient.post<UploadDocumentsResult>(`/customers/${customerId}/documents`, form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return data;
@@ -85,6 +94,7 @@ export interface ProfileSummarizeResult {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  failed_urls: string[];
 }
 
 export async function summarizeCustomerProfile(customerId: number, model: LlmModel): Promise<ProfileSummarizeResult> {

@@ -109,7 +109,9 @@ def test_upload_list_download_delete_documents(client: TestClient, temp_customer
     ]
     upload = client.post(f"/api/customers/{temp_customer}/documents", files=files)
     assert upload.status_code == 201
-    docs = upload.json()
+    body = upload.json()
+    assert body["errors"] == []
+    docs = body["documents"]
     assert len(docs) == 2
     assert {d["filename"] for d in docs} == {"회사소개서.txt", "제품소개서.txt"}
 
@@ -127,6 +129,56 @@ def test_upload_list_download_delete_documents(client: TestClient, temp_customer
     remaining = client.get(f"/api/customers/{temp_customer}/documents").json()
     assert len(remaining) == 1
     assert doc_id not in {d["id"] for d in remaining}
+
+
+def test_upload_partial_failure_keeps_valid_files(client: TestClient, temp_customer: int):
+    """파일 하나가 용량 초과라도(2026-09-11 수정 전엔 트랜잭션 전체가 롤백돼 정상 파일까지
+    안 올라갔다) 나머지 정상 파일은 저장되고, 실패 사유는 errors로 그대로 보고된다."""
+    from app.services.customer_management import MAX_DOCUMENT_BYTES
+
+    files = [
+        ("files", ("정상.txt", b"ok content", "text/plain")),
+        ("files", ("너무큼.txt", b"x" * (MAX_DOCUMENT_BYTES + 1), "text/plain")),
+    ]
+    upload = client.post(f"/api/customers/{temp_customer}/documents", files=files)
+    assert upload.status_code == 201
+    body = upload.json()
+    assert len(body["errors"]) == 1
+    assert "너무큼.txt" in body["errors"][0]
+    assert [d["filename"] for d in body["documents"]] == ["정상.txt"]
+
+
+def test_upload_all_files_fail_returns_422(client: TestClient, temp_customer: int):
+    from app.services.customer_management import MAX_DOCUMENT_BYTES
+
+    files = [("files", ("너무큼.txt", b"x" * (MAX_DOCUMENT_BYTES + 1), "text/plain"))]
+    upload = client.post(f"/api/customers/{temp_customer}/documents", files=files)
+    assert upload.status_code == 422
+
+
+def test_list_documents_orders_same_timestamp_files_by_id_desc(client: TestClient, temp_customer: int):
+    """uploaded_at은 트랜잭션 시작 시각이라 한 번에 여러 파일을 올리면 값이 동일하다
+    (2026-09-11 사용자 발견 — 방금 올린 파일이 안 보이는 것처럼 느껴짐). id를 보조
+    정렬키로 둬 항상 최신 업로드가 위로 오게 한다."""
+    files = [
+        ("files", ("첫번째.txt", b"1", "text/plain")),
+        ("files", ("두번째.txt", b"2", "text/plain")),
+        ("files", ("세번째.txt", b"3", "text/plain")),
+    ]
+    client.post(f"/api/customers/{temp_customer}/documents", files=files)
+    listed = client.get(f"/api/customers/{temp_customer}/documents").json()
+    ids = [d["id"] for d in listed]
+    assert ids == sorted(ids, reverse=True)
+
+
+def test_reference_urls_round_trip(client: TestClient, temp_customer: int):
+    payload = dict(_SAMPLE_PAYLOAD, reference_urls=["https://example.com", "https://grib.co.kr"])
+    response = client.patch(f"/api/customers/{temp_customer}", json=payload)
+    assert response.status_code == 200
+
+    rows = client.get("/api/customers/full").json()
+    row = next(r for r in rows if r["id"] == temp_customer)
+    assert row["reference_urls"] == ["https://example.com", "https://grib.co.kr"]
 
 
 def test_documents_404_for_unknown_customer(client: TestClient):

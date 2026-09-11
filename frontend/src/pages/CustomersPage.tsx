@@ -40,6 +40,7 @@ const EMPTY_DRAFT: CustomerDraft = {
   contact_title: "",
   contact_phone: "",
   report_recipient_emails: [],
+  reference_urls: [],
   active: true,
 };
 

@@ -61,6 +61,7 @@ class CustomerPayload(BaseModel):
     contact_title: str | None = None
     contact_phone: str | None = None
     report_recipient_emails: list[str] = []
+    reference_urls: list[str] = []
     active: bool = True
 
     def to_draft(self) -> CustomerDraft:
@@ -116,10 +117,16 @@ def get_documents(customer_id: int, _email: str = Depends(require_auth)) -> list
 @router.post("/{customer_id}/documents", status_code=status.HTTP_201_CREATED)
 async def post_documents(
     customer_id: int, files: list[UploadFile] = File(...), email: str = Depends(require_auth)
-) -> list[dict]:
+) -> dict:
+    """여러 파일 중 하나가 크기 초과 등으로 실패해도 나머지는 그대로 저장한다(2026-09-11
+    수정) — 예전엔 파일 하나만 실패해도 예외가 트랜잭션 전체를 롤백시켜, 정상 파일도 같이
+    안 올라간 채 "업로드는 끝난 것 같은데 파일이 안 보인다"로 이어졌다. 실패한 파일은
+    errors에 사유와 함께 그대로 보고한다 — 조용히 건너뛰지 않는다."""
     with engine.begin() as conn:
         if get_customer(conn, customer_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+        errors: list[str] = []
+        uploaded_count = 0
         for f in files:
             content = await f.read()
             try:
@@ -127,9 +134,12 @@ async def post_documents(
                     conn, customer_id, filename=f.filename or "제목없음", content_type=f.content_type,
                     content=content, uploaded_by=email,
                 )
+                uploaded_count += 1
             except ValueError as exc:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        return list_documents(conn, customer_id)
+                errors.append(str(exc))
+        if errors and uploaded_count == 0:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=" / ".join(errors))
+        return {"documents": list_documents(conn, customer_id), "errors": errors}
 
 
 @router.get("/{customer_id}/documents/{document_id}/download")

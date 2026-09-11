@@ -12,13 +12,14 @@ OCR은 전용 파서나 외부 바이너리(LibreOffice, Tesseract)가 이미지
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from html.parser import HTMLParser
 from io import BytesIO
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+
+from app.services.html_text import html_to_text
 
 # HWPX(OWPML) 본문은 zip 안 Contents/section*.xml에 있고, 텍스트는 <hp:t> 태그 안에 있다.
 _HWPX_TEXT_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}t"
@@ -31,28 +32,6 @@ class ExtractResult:
     text: str = ""
     error: str | None = None
     attempted: list[str] = field(default_factory=list)
-
-
-class _TextOnlyHTMLParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self._chunks: list[str] = []
-        self._skip = False
-
-    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001 — stdlib 시그니처 그대로
-        if tag in ("script", "style"):
-            self._skip = True
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = False
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip and data.strip():
-            self._chunks.append(data.strip())
-
-    def text(self) -> str:
-        return "\n".join(self._chunks)
 
 
 def _extract_hwpx(data: bytes) -> tuple[bool, str, str | None]:
@@ -91,9 +70,7 @@ def _extract_pdf(data: bytes) -> tuple[bool, str, str | None]:
 
 def _extract_html(data: bytes) -> tuple[bool, str, str | None]:
     try:
-        parser = _TextOnlyHTMLParser()
-        parser.feed(data.decode("utf-8", errors="replace"))
-        text = parser.text()
+        text = html_to_text(data.decode("utf-8", errors="replace"))
         if not text.strip():
             return False, "", "본문 텍스트를 찾지 못했습니다"
         return True, text, None

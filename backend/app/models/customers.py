@@ -37,6 +37,9 @@ customer = Table(
     # 보고서 수신자 이메일 목록(2026-09-05) — contact_email(주 담당자)과 별개로, 리포트를
     # 참조로 받을 추가 수신자들. 문자열 배열.
     Column("report_recipient_emails", JSONB, nullable=False, server_default="[]"),
+    # AI 고객 분석(2026-09-11, "소개서 파일"에서 개명)에 파일과 함께 넣을 참고 URL 목록 —
+    # report_recipient_emails와 같은 방식(JSONB 문자열 배열).
+    Column("reference_urls", JSONB, nullable=False, server_default="[]"),
     Column("active", Boolean, nullable=False, server_default="true"),
     # 고객 프로필 요약(2026-09-05, "Phase 1" 보고서 최적화 설계) — 소개서 파일(customer_document)
     # 원문을 매 보고서 생성마다 LLM에 넣는 대신, 한 번 요약해 MD로 캐싱해둔다(사용자 확정 — 비용

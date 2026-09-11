@@ -8,6 +8,7 @@ import {
   Box,
   Button,
   Card,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -33,6 +34,7 @@ import {
   deleteCustomerDocument,
   fetchCustomerDocuments,
   summarizeCustomerProfile,
+  updateCustomer,
   updateCustomerProfileSummary,
   uploadCustomerDocuments,
   type CustomerFull,
@@ -49,8 +51,9 @@ function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`;
 }
 
-// 소개서 파일(다중 업로드, DB 바이너리 저장) + 고객 프로필 요약(AI, "B로 하자" 결정 —
-// 소개서를 매번 LLM에 넣지 않고 한 번 요약해 캐싱, 재요약은 관리자가 수동으로만).
+// "AI 고객 분석"(2026-09-11, "소개서 파일"에서 개명) — 소개서 파일(다중 업로드, DB 바이너리
+// 저장) + 참고 URL(customer.reference_urls) + 고객 프로필 요약(AI, "B로 하자" 결정 —
+// 파일·URL을 매번 LLM에 넣지 않고 한 번 요약해 캐싱, 재요약은 관리자가 수동으로만).
 export function CustomerDocumentsSection({ customer }: { customer: CustomerFull }) {
   const queryClient = useQueryClient();
   const { notify } = useToast();
@@ -60,6 +63,7 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
   const [profileModel, setProfileModel] = useState<LlmModel>("sonnet");
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [urlInput, setUrlInput] = useState("");
 
   const documentsQuery = useQuery({
     queryKey: ["customer-documents", customerId],
@@ -68,12 +72,45 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
 
   const uploadMutation = useMutation({
     mutationFn: (files: File[]) => uploadCustomerDocuments(customerId, files),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["customer-documents", customerId] });
-      notify("success", "파일을 업로드했습니다.");
+    onSuccess: ({ documents, errors }, files) => {
+      queryClient.setQueryData(["customer-documents", customerId], documents);
+      const succeededCount = files.length - errors.length;
+      if (errors.length > 0) notify("error", `${errors.length}개 파일 업로드 실패: ${errors.join(" / ")}`);
+      if (succeededCount > 0) notify("success", `파일 ${succeededCount}개를 업로드했습니다.`);
     },
     onError: (error) => notify("error", apiErrorMessage(error, "파일 업로드에 실패했습니다.")),
   });
+
+  // 참고 URL 목록은 customer.reference_urls(JSONB 배열)에 저장 — 다른 고객 정보 필드(이름·
+  // 등급 등)는 그대로 두고 이 필드만 바꿔서 저장한다(2026-09-11, "AI 고객 분석"에 URL 입력
+  // 추가). 파일 업로드처럼 추가·삭제 즉시 반영(위쪽 "고객 정보" 카드의 "저장" 버튼과 무관).
+  const updateUrlsMutation = useMutation({
+    mutationFn: (urls: string[]) =>
+      updateCustomer(customerId, {
+        name: customer.name,
+        plan_tier: customer.plan_tier,
+        contact_email: customer.contact_email,
+        contact_name: customer.contact_name,
+        contact_title: customer.contact_title,
+        contact_phone: customer.contact_phone,
+        report_recipient_emails: customer.report_recipient_emails,
+        reference_urls: urls,
+        active: customer.active,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["customers-full"] }),
+    onError: (error) => notify("error", apiErrorMessage(error, "참고 URL 저장에 실패했습니다.")),
+  });
+
+  function addUrl() {
+    const url = urlInput.trim();
+    if (!url || customer.reference_urls.includes(url)) return;
+    updateUrlsMutation.mutate([...customer.reference_urls, url]);
+    setUrlInput("");
+  }
+
+  function removeUrl(url: string) {
+    updateUrlsMutation.mutate(customer.reference_urls.filter((u) => u !== url));
+  }
 
   const deleteDocMutation = useMutation({
     mutationFn: (documentId: number) => deleteCustomerDocument(customerId, documentId),
@@ -86,9 +123,10 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
 
   const summarizeMutation = useMutation({
     mutationFn: (model: LlmModel) => summarizeCustomerProfile(customerId, model),
-    onSuccess: () => {
+    onSuccess: ({ failed_urls }) => {
       queryClient.invalidateQueries({ queryKey: ["customers-full"] });
       notify("success", "프로필 요약을 생성했습니다.");
+      if (failed_urls.length > 0) notify("error", `${failed_urls.length}개 URL을 가져오지 못했습니다: ${failed_urls.join(" / ")}`);
     },
     onError: (error) => notify("error", apiErrorMessage(error, "요약 생성에 실패했습니다.")),
   });
@@ -116,6 +154,9 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
   return (
     <Card sx={{ p: 3 }}>
       <Typography variant="h3" sx={{ mb: 1.5 }}>
+        AI 고객 분석
+      </Typography>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
         소개서 파일
       </Typography>
       <input
@@ -137,7 +178,7 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
         onClick={() => fileInputRef.current?.click()}
         sx={{ mb: 1 }}
       >
-        파일 추가(다중 선택 가능)
+        {uploadMutation.isPending ? "업로드 중..." : "파일 추가(다중 선택 가능)"}
       </Button>
       <List dense disablePadding>
         {(documentsQuery.data ?? []).map((doc) => (
@@ -168,6 +209,33 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
           </Typography>
         )}
       </List>
+
+      <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
+        참고 URL
+      </Typography>
+      <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+        <TextField
+          size="small"
+          placeholder="URL 입력 후 Enter"
+          value={urlInput}
+          onChange={(e) => setUrlInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addUrl())}
+          fullWidth
+        />
+        <Button variant="outlined" disabled={updateUrlsMutation.isPending} onClick={addUrl}>
+          추가
+        </Button>
+      </Stack>
+      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+        {customer.reference_urls.map((url) => (
+          <Chip key={url} label={url} size="small" onDelete={() => removeUrl(url)} />
+        ))}
+        {customer.reference_urls.length === 0 && (
+          <Typography variant="body2" color="text.secondary">
+            등록된 URL이 없습니다.
+          </Typography>
+        )}
+      </Stack>
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 3, mb: 1 }}>
         <Typography variant="h3">고객 프로필 요약(AI) — 전략 수립 참고자료</Typography>
@@ -228,8 +296,8 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          아직 요약이 없습니다. 소개서 파일을 업로드한 뒤 "요약 생성"을 누르거나, "직접 작성"으로
-          바로 입력할 수 있습니다.
+          아직 요약이 없습니다. 소개서 파일을 업로드하거나 참고 URL을 등록한 뒤 "요약 생성"을
+          누르거나, "직접 작성"으로 바로 입력할 수 있습니다.
         </Typography>
       )}
 
@@ -237,8 +305,8 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
         <DialogTitle>{customer.profile_summarized_at ? "고객 프로필 재요약" : "고객 프로필 요약 생성"}</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            LLM 호출 비용이 발생합니다. 소개서 파일 전체를 다시 읽어 요약하며, 이후 보고서
-            AI 코멘트 생성의 기반 자료로 쓰입니다
+            LLM 호출 비용이 발생합니다. 소개서 파일과 참고 URL 전체를 다시 읽어 요약하며,
+            이후 보고서 AI 코멘트 생성의 기반 자료로 쓰입니다
             {customer.profile_summarized_at ? " — 재요약하면 기존 요약이 덮어써집니다." : "."}
           </Alert>
           <RadioGroup value={profileModel} onChange={(e) => setProfileModel(e.target.value as LlmModel)}>

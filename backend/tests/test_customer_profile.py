@@ -106,7 +106,7 @@ def test_summarize_saves_markdown_and_cost(temp_customer, monkeypatch):
     assert mock_fetch.call_args.kwargs["headers"]["x-api-key"] == "sk-ant-test"
     assert result == {
         "summary_md": _SUMMARY_MD, "input_tokens": 500, "output_tokens": 300,
-        "cost_usd": round(500 / 1e6 * 3.00 + 300 / 1e6 * 15.00, 4),
+        "cost_usd": round(500 / 1e6 * 3.00 + 300 / 1e6 * 15.00, 4), "failed_urls": [],
     }
 
     with engine.connect() as conn:
@@ -144,6 +144,103 @@ def test_summarize_accumulates_tokens_across_reruns(temp_customer, monkeypatch):
             select(customer.c.profile_summary_tokens).where(customer.c.id == temp_customer)
         ).scalar_one()
     assert tokens == 1600  # 800 * 2
+
+
+# ---- 참고 URL(2026-09-11, "AI 고객 분석" 확장 — 파일 외에 URL도 함께 입력) --------------
+
+
+def _html_response(body: str) -> mock.Mock:
+    resp = mock.Mock()
+    resp.headers = {"content-type": "text/html; charset=utf-8"}
+    resp.text = body
+    return resp
+
+
+def test_summarize_succeeds_with_only_reference_urls_no_documents(temp_customer, monkeypatch):
+    """소개서 파일이 하나도 없어도 참고 URL만으로 요약이 가능해야 한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == temp_customer).values(reference_urls=["https://example.com/about"])
+        )
+
+    def fetch_side_effect(url, **kwargs):
+        if "anthropic.com" in url:
+            return _mock_anthropic_response(_SUMMARY_MD)
+        return _html_response("<html><body>그립은 산업안전관리 솔루션 기업입니다.</body></html>")
+
+    with mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect):
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["summary_md"] == _SUMMARY_MD
+    assert result["failed_urls"] == []
+
+
+def test_summarize_combines_documents_and_reference_urls(temp_customer, monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.begin() as conn:
+        conn.execute(
+            insert(customer_document).values(
+                customer_id=temp_customer, filename="회사소개서.hwpx", content_type="application/haansofthwp+zip",
+                content=b"fake", size_bytes=4,
+            )
+        )
+        conn.execute(
+            customer.update().where(customer.c.id == temp_customer).values(reference_urls=["https://example.com"])
+        )
+
+    def fetch_side_effect(url, **kwargs):
+        if "anthropic.com" in url:
+            return _mock_anthropic_response(_SUMMARY_MD)
+        return _html_response("<html><body>MARKER_URL_BODY</body></html>")
+
+    with mock.patch(
+        "app.services.customer_profile.extract_document",
+        return_value=mock.Mock(ok=True, text="MARKER_FILE_BODY", error=None),
+    ), mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect) as mock_fetch:
+        with engine.begin() as conn:
+            summarize_customer_profile(conn, temp_customer)
+
+    anthropic_call = next(c for c in mock_fetch.call_args_list if "anthropic.com" in c.args[0])
+    sent_text = anthropic_call.kwargs["data"].decode("utf-8")
+    assert "MARKER_FILE_BODY" in sent_text
+    assert "MARKER_URL_BODY" in sent_text
+
+
+def test_summarize_reports_failed_url_without_blocking_others(temp_customer, monkeypatch):
+    """URL 하나가 실패해도(네트워크 오류 등) 나머지 소스로 요약은 계속 진행하고, 실패한
+    URL은 조용히 건너뛰지 않고 failed_urls로 보고한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update()
+            .where(customer.c.id == temp_customer)
+            .values(reference_urls=["https://ok.example.com", "https://down.example.com"])
+        )
+
+    def fetch_side_effect(url, **kwargs):
+        if "anthropic.com" in url:
+            return _mock_anthropic_response(_SUMMARY_MD)
+        if url == "https://down.example.com":
+            raise ConnectionError("연결 실패")
+        return _html_response("<html><body>정상 페이지 본문</body></html>")
+
+    with mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect):
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["summary_md"] == _SUMMARY_MD
+    assert len(result["failed_urls"]) == 1
+    assert "down.example.com" in result["failed_urls"][0]
+
+
+def test_summarize_requires_at_least_one_document_or_url(temp_customer, monkeypatch):
+    """문서도 URL도 전혀 없으면(빈 참고 URL 포함) 여전히 NoDocumentsError."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with engine.begin() as conn:
+        with pytest.raises(NoDocumentsError):
+            summarize_customer_profile(conn, temp_customer)
 
 
 # ---- API 라우트 --------------------------------------------------------------------

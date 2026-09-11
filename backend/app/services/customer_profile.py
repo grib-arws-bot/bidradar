@@ -1,8 +1,8 @@
 """고객 프로필 요약(2026-09-05, "Phase 1" 보고서 최적화 설계) — 고객이 올린 소개서
-(customer_document)를 매 보고서 생성마다 LLM에 다시 넣는 대신, 한 번 요약해 MD로 캐싱해둔다
-(사용자 확정 — 비용 절감·검증 가능성). 소개서를 새로 올리거나 바꿔도 자동 재요약하지 않는다
-— 관리자가 버튼을 눌러야만 실행한다("고객사 AI 재분석은 관리자가 수동으로", CLAUDE.md
-원칙 3 "자동 실행 금지"와 같은 이유).
+(customer_document)와 참고 URL(customer.reference_urls, 2026-09-11 추가)을 매 보고서
+생성마다 LLM에 다시 넣는 대신, 한 번 요약해 MD로 캐싱해둔다(사용자 확정 — 비용 절감·검증
+가능성). 소개서를 새로 올리거나 바꿔도 자동 재요약하지 않는다 — 관리자가 버튼을 눌러야만
+실행한다("고객사 AI 재분석은 관리자가 수동으로", CLAUDE.md 원칙 3 "자동 실행 금지"와 같은 이유).
 
 기본 모델은 Sonnet — 이 요약이 이후 모든 보고서 코멘트 생성의 기반 자료가 되므로(1회성·저빈도
 호출이라 비용 부담도 작음) Haiku보다 품질을 우선한다.
@@ -20,6 +20,7 @@ from app.config import settings
 from app.models import customer, customer_document
 from app.security.url_guard import fetch
 from app.services.document_extract import extract_document
+from app.services.html_text import html_to_text
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -59,7 +60,7 @@ _SYSTEM_PROMPT = """당신은 영업 지원 도구입니다. 회사가 올린 �
 
 
 class NoDocumentsError(Exception):
-    """추출 가능한 소개서 파일이 없음 — 먼저 업로드해야 함."""
+    """추출 가능한 소개서 파일도, 읽어올 수 있는 참고 URL도 없음 — 먼저 하나는 등록해야 함."""
 
 
 class LLMNotConfiguredError(Exception):
@@ -77,10 +78,31 @@ def _collect_document_text(conn: Connection, customer_id: int) -> str:
         result = extract_document(filename, content)
         if result.ok and result.text:
             parts.append(f"=== {filename} ===\n{result.text}")
-    combined = "\n\n".join(parts)
-    if len(combined) > _MAX_DOC_CHARS:
-        combined = combined[:_MAX_DOC_CHARS] + "\n\n[문서가 길어 이후 내용은 잘렸습니다]"
-    return combined
+    return "\n\n".join(parts)
+
+
+_URL_FETCH_TIMEOUT_SECONDS = 30
+
+
+def _collect_url_text(reference_urls: list[str]) -> tuple[str, list[str]]:
+    """참고 URL 본문을 가져와 합친다. 실패한 URL은 조용히 건너뛰지 않고 failed로 보고한다
+    (CLAUDE.md "조용한 빈 결과 금지") — SSRF 차단·네트워크 오류·빈 본문 등 원인은 다양하지만
+    호출부(summarize_customer_profile)가 반환값에 그대로 실어 화면에 보여준다."""
+    parts = []
+    failed = []
+    for url in reference_urls:
+        try:
+            response = fetch(url, timeout=_URL_FETCH_TIMEOUT_SECONDS)
+            content_type = response.headers.get("content-type", "")
+            text = html_to_text(response.text) if "html" in content_type or not content_type else response.text
+        except Exception as exc:  # noqa: BLE001 — SSRF 차단·타임아웃·연결 실패 등 원인이 다양해 전부 "이 URL 실패"로 처리
+            failed.append(f"{url} ({exc})")
+            continue
+        if text.strip():
+            parts.append(f"=== {url} ===\n{text}")
+        else:
+            failed.append(f"{url} (본문을 찾지 못했습니다)")
+    return "\n\n".join(parts), failed
 
 
 def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str = "claude-sonnet-5") -> dict:
@@ -91,15 +113,22 @@ def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str
     if model not in PRICING_PER_MTOK:
         raise ValueError(f"허용되지 않은 모델: {model} (허용: {', '.join(PRICING_PER_MTOK)})")
 
+    reference_urls = (
+        conn.execute(select(customer.c.reference_urls).where(customer.c.id == customer_id)).scalar_one() or []
+    )
     document_text = _collect_document_text(conn, customer_id)
-    if not document_text:
-        raise NoDocumentsError("추출 가능한 소개서 파일이 없습니다 — 먼저 파일을 업로드하세요.")
+    url_text, failed_urls = _collect_url_text(reference_urls)
+    combined_text = "\n\n".join(t for t in (document_text, url_text) if t)
+    if not combined_text:
+        raise NoDocumentsError("추출 가능한 소개서 파일도 읽어올 수 있는 참고 URL도 없습니다 — 먼저 하나는 등록하세요.")
+    if len(combined_text) > _MAX_DOC_CHARS:
+        combined_text = combined_text[:_MAX_DOC_CHARS] + "\n\n[내용이 길어 이후는 잘렸습니다]"
 
     payload = {
         "model": model,
         "max_tokens": 4000,
         "system": _SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": f"다음은 회사 소개서 원문입니다.\n\n{document_text}"}],
+        "messages": [{"role": "user", "content": f"다음은 회사 소개서·참고 자료 원문입니다.\n\n{combined_text}"}],
     }
     response = fetch(
         ANTHROPIC_MESSAGES_URL,
@@ -144,6 +173,7 @@ def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cost_usd": round(cost, 4),
+        "failed_urls": failed_urls,
     }
 
 

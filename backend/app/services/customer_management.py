@@ -27,6 +27,7 @@ class CustomerDraft:
     contact_title: str | None = None
     contact_phone: str | None = None
     report_recipient_emails: list[str] = field(default_factory=list)
+    reference_urls: list[str] = field(default_factory=list)
     active: bool = True
 
 
@@ -40,6 +41,7 @@ def _serialize(row) -> dict:
         "contact_title": row["contact_title"],
         "contact_phone": row["contact_phone"],
         "report_recipient_emails": row["report_recipient_emails"] or [],
+        "reference_urls": row["reference_urls"] or [],
         "active": row["active"],
         "profile_summary_md": row["profile_summary_md"],
         "profile_summarized_at": row["profile_summarized_at"].isoformat() if row["profile_summarized_at"] else None,
@@ -68,6 +70,7 @@ def create_customer(conn: Connection, draft: CustomerDraft) -> int:
             contact_title=draft.contact_title,
             contact_phone=draft.contact_phone,
             report_recipient_emails=draft.report_recipient_emails,
+            reference_urls=draft.reference_urls,
             active=draft.active,
         )
         .returning(customer.c.id)
@@ -86,6 +89,7 @@ def update_customer(conn: Connection, customer_id: int, draft: CustomerDraft) ->
             contact_title=draft.contact_title,
             contact_phone=draft.contact_phone,
             report_recipient_emails=draft.report_recipient_emails,
+            reference_urls=draft.reference_urls,
             active=draft.active,
         )
     )
@@ -113,7 +117,11 @@ def list_documents(conn: Connection, customer_id: int) -> list[dict]:
             customer_document.c.size_bytes, customer_document.c.uploaded_at, customer_document.c.uploaded_by,
         )
         .where(customer_document.c.customer_id == customer_id)
-        .order_by(customer_document.c.uploaded_at.desc())
+        # uploaded_at은 트랜잭션 시작 시각(server_default=func.now())이라 한 번에 여러 파일을
+        # 올리면 전부 같은 값을 가져 순서가 안정적이지 않다(2026-09-11 사용자 발견 — 방금
+        # 올린 파일이 목록에 안 보이는 것처럼 느껴짐). id를 보조 정렬키로 둬 항상 최신이
+        # 위로 오게 한다.
+        .order_by(customer_document.c.uploaded_at.desc(), customer_document.c.id.desc())
     ).mappings().all()
     return [
         {
