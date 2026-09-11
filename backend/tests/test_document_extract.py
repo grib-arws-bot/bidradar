@@ -29,6 +29,21 @@ def _make_hwpx(paragraphs: list[str]) -> bytes:
     return buf.getvalue()
 
 
+_SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+
+def _make_xlsx(shared_strings: list[str]) -> bytes:
+    sst_xml = (
+        f'<?xml version="1.0" encoding="UTF-8"?><sst xmlns="{_SPREADSHEETML_NS}">'
+        + "".join(f"<si><t>{s}</t></si>" for s in shared_strings)
+        + "</sst>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/sharedStrings.xml", sst_xml)
+    return buf.getvalue()
+
+
 def test_extract_hwpx_joins_paragraph_text():
     content = _make_hwpx(["첫 문단입니다.", "둘째 문단입니다."])
     result = extract_document("공고문.hwpx", content)
@@ -280,6 +295,36 @@ def test_extract_hwpx_extension_with_real_zip_content_still_parses_as_hwpx():
     result = extract_document("정상공고.hwpx", content)
     assert result.ok is True
     assert result.method == "hwpx_xml"
+
+
+def test_extract_xlsm_uses_same_parser_as_xlsx():
+    # 2026-09-11 실측 15건 — 매크로 포함 엑셀(.xlsm)은 시트/셀 XML 구조가 .xlsx와 완전히
+    # 같아서 별도 파서 없이 그대로 처리 가능한데 지금까지 "지원하지 않는 형식"으로 실패했다.
+    content = _make_xlsx(["산출내역서 항목", "단가"])
+    result = extract_document("산출내역서.xlsm", content)
+    assert result.ok is True
+    assert result.method == "xlsx_xml"
+    assert "산출내역서 항목" in result.text
+
+
+def test_extract_txt_decodes_utf8():
+    result = extract_document("과업내용서_수정안내.txt", "과업내용서 내용이 일부 수정되었습니다.".encode("utf-8"))
+    assert result.ok is True
+    assert result.method == "plain_text"
+    assert result.text == "과업내용서 내용이 일부 수정되었습니다."
+
+
+def test_extract_txt_falls_back_to_cp949_for_legacy_korean_encoding():
+    # 오래된 정부 문서는 UTF-8이 아니라 CP949(EUC-KR)로 저장된 경우가 흔하다.
+    result = extract_document("공지사항.txt", "안내문 내용입니다.".encode("cp949"))
+    assert result.ok is True
+    assert result.text == "안내문 내용입니다."
+
+
+def test_extract_txt_empty_file_reports_failure_not_silent():
+    result = extract_document("빈파일.txt", b"")
+    assert result.ok is False
+    assert result.method == "plain_text"
 
 
 def test_extract_document_unsupported_extension_reports_failure_not_silent_skip():

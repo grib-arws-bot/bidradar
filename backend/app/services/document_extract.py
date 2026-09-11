@@ -197,6 +197,23 @@ def _extract_docx(content: bytes) -> ExtractResult:
     return ExtractResult(text=text, method="docx_xml", ok=True)
 
 
+# 정부 공고 첨부는 오래된 문서일수록 UTF-8이 아니라 한국 레거시 인코딩(CP949/EUC-KR)으로
+# 저장된 경우가 흔하다 — 순서대로 시도해 첫 성공을 쓴다(2026-09-11).
+_TEXT_ENCODINGS = ("utf-8", "cp949", "euc-kr")
+
+
+def _extract_txt(content: bytes) -> ExtractResult:
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            text = content.decode(encoding).strip()
+        except UnicodeDecodeError:
+            continue
+        if not text:
+            return ExtractResult(text=None, method="plain_text", ok=False, error="파일이 비어 있음")
+        return ExtractResult(text=text, method="plain_text", ok=True)
+    return ExtractResult(text=None, method="plain_text", ok=False, error="지원하는 인코딩(utf-8/cp949/euc-kr)으로 디코딩 실패")
+
+
 def _extract_xlsx(content: bytes) -> ExtractResult:
     """OOXML(zip+XML) — 공유 문자열(xl/sharedStrings.xml)과 시트 내 인라인 문자열만 모은다.
     표 구조(행/열, 셀 좌표)는 보존하지 않는 단순 텍스트 나열이다 — 서식·규격서처럼 셀에 담긴
@@ -350,10 +367,14 @@ def extract_document(filename: str, content: bytes) -> ExtractResult:
         return full if full is not None else _extract_hwp_preview(content)
     if lower.endswith(".pptx"):
         return _extract_pptx(content)
-    if lower.endswith(".xlsx"):
+    if lower.endswith((".xlsx", ".xlsm")):
+        # .xlsm(매크로 포함 엑셀)은 매크로 스트림만 추가된 것 — 시트/셀 XML 구조는 .xlsx와
+        # 완전히 동일해 같은 파서를 그대로 쓸 수 있다(2026-09-11 실측 15건 확인).
         return _extract_xlsx(content)
     if lower.endswith(".docx"):
         return _extract_docx(content)
+    if lower.endswith(".txt"):
+        return _extract_txt(content)
     if lower.endswith(_IMAGE_EXTENSIONS):
         return _extract_image_ocr(content)
     if lower.endswith(_LEGACY_OFFICE_EXTENSIONS):

@@ -132,10 +132,20 @@ def _decode_zip_name(info: zipfile.ZipInfo) -> str:
         return info.filename  # 복구 실패해도 예외로 전체를 막지 않고 원본(깨진 이름) 그대로
 
 
-def _iter_zip_entries(content: bytes) -> list[tuple[str, bytes]]:
+_MAX_ZIP_NESTING_DEPTH = 3  # zip 안에 zip이 무한히 깊어지는 이상 파일(zip bomb 등) 방지
+
+
+def _iter_zip_entries(content: bytes, *, _depth: int = 0) -> list[tuple[str, bytes]]:
     """zip 안의 각 파일을 (내부경로, 바이트)로 펼친다 — 디렉터리 항목·일반 안내 문서(이름 필터
     적용)는 뺀다(2026-09-05, "분석 대상 파일이 zip이면 안의 모든 파일을 분석"). 손상된 zip은
-    예외를 그대로 올려 호출부가 실패로 기록하게 한다."""
+    예외를 그대로 올려 호출부가 실패로 기록하게 한다.
+
+    2026-09-11 실측 — "계약 관련 서류.zip" 안에 "용역계약일반조건.zip"처럼 zip 안에 또 zip이
+    든 실제 사례(31건)가 있었다. extract_document()는 .zip 확장자를 아예 모르기 때문에 그때
+    까지는 그 안쪽 zip이 통째로 "지원하지 않는 형식"으로 실패 처리됐다 — 재귀적으로 한 번
+    더 펼친다(상한 _MAX_ZIP_NESTING_DEPTH). 안쪽 zip 자체가 손상됐으면 예외를 삼키고 그
+    zip 파일 자체를 leaf로 남겨(기존과 동일하게 "지원하지 않는 형식"으로 실패 보고) 조용히
+    사라지지 않게 한다."""
     entries = []
     with zipfile.ZipFile(io.BytesIO(content)) as z:
         for info in z.infolist():
@@ -144,7 +154,15 @@ def _iter_zip_entries(content: bytes) -> list[tuple[str, bytes]]:
             inner_name = _decode_zip_name(info)
             if _should_skip_by_name(inner_name):
                 continue
-            entries.append((inner_name, z.read(info)))
+            inner_content = z.read(info)
+            if inner_name.lower().endswith(".zip") and _depth < _MAX_ZIP_NESTING_DEPTH:
+                try:
+                    nested_entries = _iter_zip_entries(inner_content, _depth=_depth + 1)
+                    entries.extend((f"{inner_name} :: {name}", data) for name, data in nested_entries)
+                    continue
+                except Exception:  # noqa: BLE001 — 안쪽 zip이 손상됐으면 leaf로 남겨 기존 방식대로 실패 보고
+                    pass
+            entries.append((inner_name, inner_content))
     return entries
 
 

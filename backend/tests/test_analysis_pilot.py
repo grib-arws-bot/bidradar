@@ -321,6 +321,33 @@ def test_run_extraction_pilot_expands_zip_and_skips_routine_files_inside(g2b_zip
     assert result["docs"][0]["kind"] == "pdf"
 
 
+def test_run_extraction_pilot_recurses_into_nested_zip(g2b_zip_notice):
+    # 2026-09-11 실측 31건 — "계약 관련 서류.zip" 안에 "용역계약일반조건.zip"처럼 zip 안에
+    # 또 zip이 든 실제 사례. 이전엔 안쪽 zip이 extract_document()가 모르는 확장자(.zip)라
+    # 통째로 "지원하지 않는 형식"으로 실패했다 — 이제 한 번 더 펼쳐서 그 안의 실제 문서까지
+    # 추출한다.
+    import io
+    import zipfile
+
+    inner_zip_buf = io.BytesIO()
+    with zipfile.ZipFile(inner_zip_buf, "w") as inner_zip:
+        inner_zip.writestr("일반조건.pdf", b"%PDF-fake")
+    zip_response = _fake_zip_response({"계약 관련 서류.zip": inner_zip_buf.getvalue()})
+    with mock.patch("app.services.g2b_attachments.fetch_openapi_items", return_value=[_G2B_ZIP_SAMPLE_ITEM]):
+        with mock.patch("app.services.analysis_pilot.fetch", return_value=zip_response):
+            with engine.begin() as conn:
+                with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                    fake_page = mock.Mock()
+                    fake_page.extract_text.return_value = "일반조건 본문"
+                    MockReader.return_value.pages = [fake_page]
+                    result = run_extraction_pilot(conn, g2b_zip_notice)
+
+    assert result["status"] == "done"
+    names = [d["name"] for d in result["docs"]]
+    assert any("계약 관련 서류.zip" in n and "일반조건.pdf" in n for n in names)
+    assert result["docs"][0]["extract_ok"] is True
+
+
 @pytest.fixture
 def g2b_orderplan_notice():
     with engine.begin() as conn:
