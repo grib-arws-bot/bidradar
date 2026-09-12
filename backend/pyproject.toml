@@ -40,3 +40,6 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "no_db_isolation: 2026-09-13 트랜잭션 격리(conftest._isolate_db_per_test)를 이 테스트에서만 끈다 — app/collector/runner.py의 _record_run처럼 '호출부 트랜잭션과 독립적으로 커밋'하는 동작 자체를 검증할 때만 사용. 테스트가 직접 만든 행은 반드시 finally에서 지울 것.",
+]

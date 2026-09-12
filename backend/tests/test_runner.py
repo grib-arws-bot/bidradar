@@ -358,21 +358,31 @@ def test_run_source_skips_items_already_past_close_date(monkeypatch):
     assert titles == {"아직 진행중인 공고", "마감일 없는 공고"}
 
 
+@pytest.mark.no_db_isolation
 def test_run_source_records_failure_and_reraises(monkeypatch):
+    """_record_run()은 호출부 트랜잭션과 **독립적으로** 커밋한다(runner.py 주석 참고) — 그래야
+    run_source 자체가 실패해 호출부가 롤백돼도 "시도했고 실패했다"는 기록은 남는다. 이 "독립
+    커밋"이 실제로 살아남는지가 이 테스트의 핵심이라 conftest의 트랜잭션 격리를 끈다(그 격리는
+    모든 engine.begin()을 하나의 SAVEPOINT로 묶어버려서, 켜둔 채로는 이 독립성 자체를 검증할
+    수 없다) — 대신 이 테스트가 남긴 행은 finally에서 직접 지운다."""
     monkeypatch.setattr(
         "app.collector.adapters.openapi.fetch", mock.Mock(side_effect=RuntimeError("네트워크 실패"))
     )
 
     source_id = _bid_service_source_id()
-    with pytest.raises(RuntimeError):
-        with engine.begin() as conn:
-            run_source(conn, source_id)
+    try:
+        with pytest.raises(RuntimeError):
+            with engine.begin() as conn:
+                run_source(conn, source_id)
 
-    with engine.connect() as conn:
-        run_row = conn.execute(
-            select(source_run.c.status).where(source_run.c.source_id == source_id).order_by(source_run.c.id.desc())
-        ).first()
-    assert run_row == ("fail",)
+        with engine.connect() as conn:
+            run_row = conn.execute(
+                select(source_run.c.status).where(source_run.c.source_id == source_id).order_by(source_run.c.id.desc())
+            ).first()
+        assert run_row == ("fail",)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(source_run).where(source_run.c.source_id == source_id, source_run.c.status == "fail"))
 
 
 # 첨부문서 자동 추출(A1)·AI 자동분석(A2) 트리거 검증은 test_pending_analysis.py로 옮겼다

@@ -58,8 +58,12 @@ def test_login_default_session_is_12h(client: TestClient):
     assert response.status_code == 200
     assert response.cookies["bidradar_session"]
     # httpx TestClient는 쿠키의 max-age를 노출 안 하므로 DB에 저장된 만료시각으로 검증한다.
+    # 2026-09-13 트랜잭션 격리 도입 후 auth_session에 기존 실세션도 같이 보이므로(같은
+    # 커넥션이라 당연히 보임 — conftest.py 참고), 방금 이 로그인이 만든 것(최신 id)만 본다.
     with engine.begin() as conn:
-        expires_at = conn.execute(select(auth_session.c.expires_at)).scalar_one()
+        expires_at = conn.execute(
+            select(auth_session.c.expires_at).order_by(auth_session.c.id.desc()).limit(1)
+        ).scalar_one()
     remaining = expires_at - datetime.now(timezone.utc)
     assert timedelta(hours=11) < remaining <= timedelta(hours=12)
 
@@ -70,7 +74,9 @@ def test_login_remember_extends_session_to_30d(client: TestClient):
     )
     assert response.status_code == 200
     with engine.begin() as conn:
-        expires_at = conn.execute(select(auth_session.c.expires_at)).scalar_one()
+        expires_at = conn.execute(
+            select(auth_session.c.expires_at).order_by(auth_session.c.id.desc()).limit(1)
+        ).scalar_one()
     remaining = expires_at - datetime.now(timezone.utc)
     assert timedelta(days=29) < remaining <= timedelta(days=30)
 
