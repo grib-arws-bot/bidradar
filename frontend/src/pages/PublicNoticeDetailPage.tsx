@@ -2,13 +2,17 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBackOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import OpenInNewIcon from "@mui/icons-material/OpenInNewOutlined";
-import { Box, Button, Card, Chip, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, CircularProgress, Divider, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 
 import { BID_STATUS_LABELS } from "@/api/notices";
-import { fetchPublicNotice } from "@/api/reports";
+import { fetchPublicExtraction, fetchPublicNotice, fetchPublicRequirements, generatePublicNoticeStrategy } from "@/api/reports";
+import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
+import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDocumentsSection";
 import Logo from "@/components/Logo";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { isAttachmentDownloadUrl } from "@/utils/noticeLinks";
 
 function formatPrice(value: number | null): string {
@@ -43,15 +47,38 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-// 공개(비로그인) 공고 상세 — 리포트에서 공고를 클릭하면 온다. 내부 관리자 화면(NoticeTopSection)
-// 과 같은 정보 구성이되, 담당자 배정·자사 제품 충족판정 등 내부 전용 항목은 뺀 버전
-// (app/services/notice_strategy.py get_public_notice_summary가 이미 걸러서 준다).
+// 공개(비로그인) 공고 상세 — 리포트에서 공고를 클릭하면 온다. 내부 관리자 화면(NoticeDetailPage)
+// 과 같은 상세 분석 내용(탭·첨부원문)을 그대로 보여준다(2026-09-12 사용자 지시 — "공고탐색의
+// 공고 상세페이지와 내용이 모두 들어가게"). 담당자 배정·자사 제품 충족판정 등 내부 전용
+// 항목만 빠진다(app/services/notice_strategy.py get_public_notice_summary가 걸러서 줌 — A2
+// requirement 자체엔 그런 내부 판정 필드가 아예 없어 그대로 노출해도 안전함).
 export function PublicNoticeDetailPage() {
   const { token, noticeId } = useParams<{ token: string; noticeId: string }>();
+  const noticeIdNum = Number(noticeId);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["public-notice", token, noticeId],
-    queryFn: () => fetchPublicNotice(token!, Number(noticeId)),
+    queryFn: () => fetchPublicNotice(token!, noticeIdNum),
     retry: false,
+  });
+  const requirementsQuery = useQuery({
+    queryKey: ["public-notice-requirements", token, noticeId],
+    queryFn: () => fetchPublicRequirements(token!, noticeIdNum),
+  });
+  const extractionQuery = useQuery({
+    queryKey: ["public-notice-extraction", token, noticeId],
+    queryFn: () => fetchPublicExtraction(token!, noticeIdNum),
+  });
+
+  // "AI 사업 추진 전략" — 예전엔 별도 페이지(/strategy)로 이동했으나, 이 페이지 하단에 섹션으로
+  // 붙인다(2026-09-12 사용자 지시 — "새로운 페이지로 가지 말고 현재 페이지 하단에"). 페이지를
+  // 열자마자 자동으로 생성하지 않고(LLM 비용 발생) 버튼을 눌러야만 조회를 시작한다.
+  const [strategyRequested, setStrategyRequested] = useState(false);
+  const strategyQuery = useQuery({
+    queryKey: ["public-notice-strategy", token, noticeId],
+    queryFn: () => generatePublicNoticeStrategy(token!, noticeIdNum),
+    enabled: strategyRequested,
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.status === "pending" ? 3000 : false),
   });
 
   if (isLoading) {
@@ -77,7 +104,7 @@ export function PublicNoticeDetailPage() {
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default", py: { xs: 3, md: 6 } }}>
-      <Stack spacing={3} sx={{ maxWidth: 720, mx: "auto", px: 2 }}>
+      <Stack spacing={3} sx={{ maxWidth: 960, mx: "auto", px: 2 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
           <Logo size={34} />
         </Stack>
@@ -86,7 +113,7 @@ export function PublicNoticeDetailPage() {
           리포트로 돌아가기
         </Button>
 
-        <Card sx={{ p: 3 }}>
+        <Card sx={{ p: { xs: 2, md: 3 } }}>
           <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
             <Chip label={data.notice_type} size="small" color="secondary" variant="outlined" />
             <Chip label={data.notice_status_label} size="small" variant="outlined" />
@@ -139,7 +166,7 @@ export function PublicNoticeDetailPage() {
             </Box>
           )}
 
-          <Stack direction="row" spacing={1.5} sx={{ mt: 3 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mt: 3 }}>
             <Button
               variant="outlined"
               startIcon={isAttachmentDownloadUrl(data.url) ? <DownloadOutlinedIcon /> : <OpenInNewIcon />}
@@ -150,16 +177,73 @@ export function PublicNoticeDetailPage() {
             >
               {isAttachmentDownloadUrl(data.url) ? "규격서 파일 다운로드" : "공고원문보기"}
             </Button>
-            <Button
-              variant="contained"
-              startIcon={<AutoAwesomeOutlinedIcon />}
-              component={RouterLink}
-              to={`/r/${token}/notices/${noticeId}/strategy`}
-            >
-              AI 사업 추진 전략
-            </Button>
+            {!strategyRequested && (
+              <Button variant="contained" startIcon={<AutoAwesomeOutlinedIcon />} onClick={() => setStrategyRequested(true)}>
+                AI 사업 추진 전략
+              </Button>
+            )}
           </Stack>
         </Card>
+
+        {strategyRequested && (
+          <Card sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 3, boxShadow: "0 8px 32px -12px rgba(0,0,0,0.15)" }}>
+            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 0.5 }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  placeItems: "center",
+                  width: 40,
+                  height: 40,
+                  borderRadius: 2,
+                  bgcolor: "primary.lighter",
+                  color: "primary.main",
+                  flexShrink: 0,
+                }}
+              >
+                <AutoAwesomeOutlinedIcon />
+              </Box>
+              <Typography variant="h2">AI 사업 추진 전략</Typography>
+            </Stack>
+            {strategyQuery.data?.status === "done" && (
+              <Chip label="AI 생성 참고자료" size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+            )}
+            <Divider sx={{ my: 2 }} />
+
+            {(strategyQuery.isLoading || strategyQuery.data?.status === "pending") && (
+              <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
+                <CircularProgress size={36} />
+                <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
+                  처음 열람하는 공고라 AI가 분석 중입니다 — 최대 1분 정도 걸릴 수 있습니다.
+                  <br />
+                  이 섹션을 벗어나지 않아도 자동으로 갱신됩니다.
+                </Typography>
+              </Stack>
+            )}
+
+            {strategyQuery.isError && (
+              <Stack spacing={2} sx={{ py: 3 }}>
+                <Alert severity="error">
+                  {(strategyQuery.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+                    "전략 생성에 실패했습니다."}
+                </Alert>
+                <Button variant="outlined" onClick={() => strategyQuery.refetch()} sx={{ alignSelf: "flex-start" }}>
+                  다시 시도
+                </Button>
+              </Stack>
+            )}
+
+            {strategyQuery.data?.status === "done" && strategyQuery.data.strategy_md && (
+              <MarkdownContent>{strategyQuery.data.strategy_md}</MarkdownContent>
+            )}
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 3, textAlign: "center" }}>
+              이 내용은 검토를 돕는 참고자료이며, 참여 여부에 대한 최종 판단은 별도로 필요합니다.
+            </Typography>
+          </Card>
+        )}
+
+        <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} />
+        <AnalyzedDocumentsSection extraction={extractionQuery.data} />
       </Stack>
     </Box>
   );

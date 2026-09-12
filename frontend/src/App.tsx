@@ -16,7 +16,6 @@ import { OverviewPage } from "@/pages/OverviewPage";
 import { PublicNoticeDetailPage } from "@/pages/PublicNoticeDetailPage";
 import { PublicReportPage } from "@/pages/PublicReportPage";
 import { PublicReportSourcesPage } from "@/pages/PublicReportSourcesPage";
-import { PublicStrategyPage } from "@/pages/PublicStrategyPage";
 import { ReportsManagementPage } from "@/pages/ReportsManagementPage";
 import { TopicsPage } from "@/pages/TopicsPage";
 import { useSession } from "@/hooks/useSession";
@@ -50,7 +49,9 @@ function AppRoutes() {
       <Route path="/r/:token" element={<PublicReportPage />} />
       <Route path="/r/:token/sources" element={<PublicReportSourcesPage />} />
       <Route path="/r/:token/notices/:noticeId" element={<PublicNoticeDetailPage />} />
-      <Route path="/r/:token/notices/:noticeId/strategy" element={<PublicStrategyPage />} />
+      {/* "AI 사업 추진 전략"은 2026-09-12부터 별도 페이지가 아니라 공고 상세 페이지 하단
+          섹션으로 통합됨 — 예전 링크(북마크 등)는 그 공고 상세로 되돌린다. */}
+      <Route path="/r/:token/notices/:noticeId/strategy" element={<Navigate to=".." replace />} />
       <Route
         element={
           <RequireAuth>

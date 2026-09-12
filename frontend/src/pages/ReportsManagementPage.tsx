@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Card,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -190,8 +191,9 @@ export function ReportsManagementPage() {
               variant="outlined"
               disabled={generateReportMutation.isPending || customerId === null}
               onClick={() => generateReportMutation.mutate()}
+              startIcon={generateReportMutation.isPending ? <CircularProgress size={16} /> : undefined}
             >
-              보고서 생성
+              {generateReportMutation.isPending ? "생성 중..." : "보고서 생성"}
             </Button>
           </Stack>
           {copiedToken && (
@@ -242,7 +244,7 @@ export function ReportsManagementPage() {
                 }
               >
                 <ListItemText
-                  primary={`${new Date(r.generated_at).toLocaleDateString("ko-KR")} · ${r.summary.total}건`}
+                  primary={`${new Date(r.generated_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })} · ${r.summary.total}건`}
                   secondary={
                     <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
                       /r/{r.token} (조회 {r.view_count}회)

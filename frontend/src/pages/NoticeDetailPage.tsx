@@ -196,7 +196,7 @@ export function NoticeDetailPage() {
         </Card>
       )}
 
-      <AnalysisTabsSection requirementsQuery={requirementsQuery} extraction={extractionQuery.data} />
+      <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} />
 
       {/* 분석대상 첨부파일 원문 — 페이지 최하단 별도 섹션(2026-09-08 요청). */}
       <AnalyzedDocumentsSection extraction={extractionQuery.data} />

@@ -1,3 +1,4 @@
+import type { ExtractionResult, RequirementsResult } from "@/api/analysis";
 import { apiClient } from "@/api/client";
 import type { BidStatus } from "@/api/notices";
 
@@ -113,6 +114,19 @@ export interface PublicNoticeDetail {
 
 export async function fetchPublicNotice(token: string, noticeId: number): Promise<PublicNoticeDetail> {
   const { data } = await apiClient.get<PublicNoticeDetail>(`/public/reports/${token}/notices/${noticeId}`);
+  return data;
+}
+
+// 공고탐색(관리자)과 같은 상세 분석 탭·첨부원문을 리포트에도 보여주기 위함(2026-09-12) —
+// AnalysisTabsSection·AnalyzedDocumentsSection이 그대로 재사용하는 타입이라 api/analysis.ts의
+// RequirementsResult·ExtractionResult를 그대로 쓴다.
+export async function fetchPublicRequirements(token: string, noticeId: number): Promise<RequirementsResult | null> {
+  const { data } = await apiClient.get<RequirementsResult | null>(`/public/reports/${token}/notices/${noticeId}/requirements`);
+  return data;
+}
+
+export async function fetchPublicExtraction(token: string, noticeId: number): Promise<ExtractionResult | null> {
+  const { data } = await apiClient.get<ExtractionResult | null>(`/public/reports/${token}/notices/${noticeId}/extract`);
   return data;
 }
 

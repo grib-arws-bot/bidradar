@@ -186,6 +186,53 @@ def test_public_notice_detail_requires_valid_token_and_membership(client: TestCl
     assert response.status_code == 404
 
 
+# ---- 공고탐색과 같은 상세 분석(A2 탭·A1 첨부원문)을 리포트에도 노출(2026-09-12) -------------
+
+
+def test_public_notice_requirements_matches_admin_route_shape(client: TestClient, grib_customer_id: int):
+    """공개 라우트가 관리자용(get_requirements)과 같은 서비스 함수를 그대로 쓰므로, 응답
+    모양(analysis_id·status·step·summary·requirements 키)이 같아야 한다."""
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    token = created["token"]
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    notice_id = notices[0]["id"]
+
+    admin_result = client.get(f"/api/notices/{notice_id}/requirements").json()
+    anon = TestClient(app)
+    public_result = anon.get(f"/api/public/reports/{token}/notices/{notice_id}/requirements").json()
+    assert public_result == admin_result
+
+
+def test_public_notice_requirements_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    anon = TestClient(app)
+    response = anon.get(f"/api/public/reports/{created['token']}/notices/999999999/requirements")
+    assert response.status_code == 404
+
+
+def test_public_notice_extraction_matches_admin_route_shape(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    token = created["token"]
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    notice_id = notices[0]["id"]
+
+    admin_result = client.get(f"/api/notices/{notice_id}/extract").json()
+    anon = TestClient(app)
+    public_result = anon.get(f"/api/public/reports/{token}/notices/{notice_id}/extract").json()
+    assert public_result == admin_result
+
+
+def test_public_notice_extraction_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    anon = TestClient(app)
+    response = anon.get(f"/api/public/reports/{created['token']}/notices/999999999/extract")
+    assert response.status_code == 404
+
+
 def test_public_notice_strategy_generation_is_idempotent(client: TestClient, grib_customer_id: int):
     created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
     notices = created["notices"]

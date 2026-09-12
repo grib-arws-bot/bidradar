@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.db import engine
+from app.services.analysis.structure import get_requirements
+from app.services.analysis_pilot import get_latest_extraction
 from app.services.interest_report import get_report_by_token
 from app.services.notice_strategy import (
     LLMNotConfiguredError,
@@ -49,6 +51,26 @@ def get_public_notice(token: str, notice_id: int) -> dict:
     if notice_info is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공고를 찾을 수 없습니다.")
     return notice_info
+
+
+# 공고탐색(관리자 화면)과 같은 상세 분석 내용을 리포트에도 그대로 보여주기 위함(2026-09-12
+# 사용자 지시 — "공고탐색의 공고 상세페이지와 내용이 모두 들어가게"). get_requirements·
+# get_latest_extraction은 인증 로직이 없는 순수 조회 함수라(app/api/notices.py도 이미 이렇게
+# 씀) 토큰 검증(_authorize_notice_in_report)만 이 라우터 방식대로 앞에 걸면 된다. A2
+# requirement에는 자사 제품 충족판정 같은 내부 판정 필드 자체가 없어(app/services/
+# analysis/structure.py, S8 원칙 1 — LLM은 판정하지 않음) 그대로 노출해도 안전하다.
+@router.get("/reports/{token}/notices/{notice_id}/requirements")
+def get_public_notice_requirements(token: str, notice_id: int) -> dict | None:
+    _authorize_notice_in_report(token, notice_id)
+    with engine.connect() as conn:
+        return get_requirements(conn, notice_id)
+
+
+@router.get("/reports/{token}/notices/{notice_id}/extract")
+def get_public_notice_extraction(token: str, notice_id: int) -> dict | None:
+    _authorize_notice_in_report(token, notice_id)
+    with engine.connect() as conn:
+        return get_latest_extraction(conn, notice_id)
 
 
 class StrategyResponse(BaseModel):

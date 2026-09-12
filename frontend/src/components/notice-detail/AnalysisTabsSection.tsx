@@ -1,36 +1,37 @@
 import { useState } from "react";
-import type { UseQueryResult } from "@tanstack/react-query";
 import { Box, Card, Chip, Stack, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, Typography } from "@mui/material";
 
-import {
-  fetchRequirements,
-  type AnalysisContentItem,
-  type AnalysisEvaluationItem,
-  type AnalysisSummary,
-  type ExtractionResult,
-  type Requirement,
+import type {
+  AnalysisContentItem,
+  AnalysisEvaluationItem,
+  AnalysisSummary,
+  ExtractionResult,
+  Requirement,
+  RequirementsResult,
 } from "@/api/analysis";
 
 const OP_LABEL: Record<string, string> = { gte: "이상", lte: "이하", eq: "일치", contains: "포함", manual: "서술형" };
 
 const TAB_LABELS = ["사업목표(원문)", "사업내용(AI요약)", "사업비(중소기업)", "신청자격", "제안제출", "평가기준(원문)", "기타사항"];
 
-type RequirementsQuery = UseQueryResult<Awaited<ReturnType<typeof fetchRequirements>>>;
-
+// 관리자 공고탐색(NoticeDetailPage)과 공개 리포트(PublicNoticeDetailPage)가 함께 쓴다
+// (2026-09-12 — "공고탐색과 같은 내용이 리포트에도 보이게" 요청). react-query 객체가 아니라
+// 순수 데이터를 받아서 두 화면 다 재사용 가능하게 만들었다 — 인증된 관리자 쿼리든 공개
+// 토큰 쿼리든 이 컴포넌트 입장에선 같은 모양의 데이터일 뿐이다.
 export function AnalysisTabsSection({
-  requirementsQuery,
+  requirements: requirementsData,
   extraction,
 }: {
-  requirementsQuery: RequirementsQuery;
+  requirements: RequirementsResult | null | undefined;
   extraction?: ExtractionResult | null;
 }) {
   const [tab, setTab] = useState(0);
-  const summary = requirementsQuery.data?.summary;
-  const requirements = requirementsQuery.data?.requirements ?? [];
+  const summary = requirementsData?.summary;
+  const requirements = requirementsData?.requirements ?? [];
   // 채널(IRIS/나라장터)로 하드코딩하지 않는다 — A2가 실제로 끝났는지만 본다(2026-09-05 요청,
   // "채널별로 다르게"가 아니라 "완료 여부를 보여달라"는 취지 — 지금은 IRIS는 이미 실행했고
   // 나라장터는 아직 안 해서 결과적으로 채널마다 다르게 보일 뿐).
-  const analysisDone = requirementsQuery.data?.step === "A2_structure";
+  const analysisDone = requirementsData?.step === "A2_structure";
   const extractionDone = !!extraction && (extraction.docs?.length ?? 0) > 0;
 
   // 원문 첨부 목록("분석대상 파일")은 페이지 최하단 별도 섹션(AnalyzedDocumentsSection)으로
