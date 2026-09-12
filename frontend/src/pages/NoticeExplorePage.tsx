@@ -36,6 +36,7 @@ import {
 import { EmptyState } from "@/components/EmptyState";
 import { NoticeCard } from "@/components/NoticeCard";
 import { EMPTY_FILTERS, NoticeFilterBar, type NoticeFilterValues } from "@/components/NoticeFilterBar";
+import { NoticeExcludeWordsBox } from "@/components/NoticeExcludeWordsBox";
 import { apiErrorMessage } from "@/utils/errors";
 
 // 탭(2026-09-03 재구성, 2번째) — stage(어느 소스에서 왔는가) 기준 2분류 대신 공고 생명주기
@@ -260,6 +261,10 @@ export function NoticeExplorePage() {
           </Button>
         </Stack>
       </Stack>
+
+      {/* 제외 키워드(2026-09-13 사용자 지시) — 별도 관리 화면 대신 정렬 바로 아래 인라인
+          박스로 통합, 그룹 추가·삭제·적용/즉석 단어까지 여기서 전부 처리 */}
+      <NoticeExcludeWordsBox values={filters} onChange={handleFiltersChange} />
 
       {/* 검색+필터링을 합쳐 실제로 몇 건이 나오는지 검색창 바로 옆에(2026-09-05 요청, "이
           갯수는 검색 및 필터링에 의한 항목 갯수") */}
