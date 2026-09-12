@@ -143,6 +143,20 @@ keyword_rule = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
+# 공고 탐색 화면의 제목 제외 키워드(2026-09-13 사용자 지시) — keyword_rule(L2 관심주제
+# 채점용)과는 완전히 별개: 이건 "이 단어가 제목에 있으면 화면에서 아예 안 보이게" 하는
+# 조회 시점 필터일 뿐, 수집·채점 로직에는 전혀 관여하지 않는다. 관리 편의를 위해 그룹을
+# 여러 개 두지 않고 딱 하나의 목록으로만 관리한다(그룹 테이블 자체가 불필요) — 화면에서는
+# 이 목록 전체를 "켜고 끌 수 있는 하나의 필터 그룹"으로 노출하고, 그때그때 추가하는 즉석
+# 단어는 DB에 저장하지 않고 조회 시 파라미터로만 합쳐진다(app/services/notice_query.py).
+notice_title_exclude_word = Table(
+    "notice_title_exclude_word",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("term", String(100), nullable=False, unique=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
 classification_correction = Table(
     "classification_correction",
     metadata,

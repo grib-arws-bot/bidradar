@@ -24,6 +24,7 @@ from app.services import audit
 from app.services.classification import ClassificationError, record_classification
 from app.services.notice_dedup import find_and_mark_superseded
 from app.services.notice_detail import follow_org, get_neighbors, get_notice_detail
+from app.services.notice_exclude_words import list_exclude_words
 from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
 from app.services.notice_topics import add_topic, remove_topic
 
@@ -47,7 +48,15 @@ def _notice_filters(
     status_: str | None = Query(None, alias="status"),
     qualified: bool | None = Query(None),
     sort: str = Query("notice_date_desc"),  # 공고일 최신순 기본(2026-09-08 사용자 지시)
+    # 제목 제외 키워드(2026-09-13) — exclude_group을 켜면 저장된 그룹 전체가, exclude_extra는
+    # 화면에서 그때그때 추가한 단어가 각각 최종 제외 목록에 합쳐진다(둘 다/둘 중 하나만도 가능).
+    exclude_group: bool = Query(False),
+    exclude_extra: list[str] = Query(default_factory=list, alias="exclude_extra[]"),
 ) -> NoticeFilters:
+    exclude_words = list(exclude_extra)
+    if exclude_group:
+        with engine.connect() as conn:
+            exclude_words += [row["term"] for row in list_exclude_words(conn)]
     return NoticeFilters(
         tab=tab,
         q=q,
@@ -65,6 +74,7 @@ def _notice_filters(
         status=status_,
         qualified=qualified,
         sort=sort,
+        exclude_words=exclude_words,
     )
 
 

@@ -276,6 +276,54 @@ def test_work_type_filter(client: TestClient):
         assert item["work_type"] == "유지보수"
 
 
+@pytest.fixture
+def temp_notice_for_exclude(client: TestClient):
+    """제목에 고유 마커 단어("가나다라마바사XYZ")를 넣은 임시 공고 하나 — 이 단어를 제외
+    필터에 걸었을 때 실제로 결과에서 빠지는지 검증하는 용도(2026-09-13)."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고",
+                title="[테스트] 가나다라마바사XYZ 시스템 유지보수 용역",
+                url="https://example.grib-test.kr/notice/exclude-word-test",
+            ).returning(notice.c.id)
+        ).scalar_one()
+    yield notice_id
+    with engine.begin() as conn:
+        conn.execute(delete(notice).where(notice.c.id == notice_id))
+
+
+def test_exclude_extra_hides_matching_title(client: TestClient, temp_notice_for_exclude: int):
+    without_filter = client.get("/api/notices", params={"tab": "all", "q": "가나다라마바사XYZ", "size": 20}).json()
+    assert any(item["id"] == temp_notice_for_exclude for item in without_filter["items"])
+
+    with_filter = client.get(
+        "/api/notices",
+        params={"tab": "all", "q": "가나다라마바사XYZ", "exclude_extra[]": ["가나다라마바사XYZ"], "size": 20},
+    ).json()
+    assert not any(item["id"] == temp_notice_for_exclude for item in with_filter["items"])
+
+
+def test_exclude_group_hides_matching_title_only_when_enabled(client: TestClient, temp_notice_for_exclude: int):
+    created = client.post("/api/admin/notice-exclude-words", json={"term": "가나다라마바사XYZ"})
+    assert created.status_code == 201
+    word_id = created.json()["id"]
+    try:
+        without_group = client.get(
+            "/api/notices", params={"tab": "all", "q": "가나다라마바사XYZ", "size": 20}
+        ).json()
+        assert any(item["id"] == temp_notice_for_exclude for item in without_group["items"])
+
+        with_group = client.get(
+            "/api/notices",
+            params={"tab": "all", "q": "가나다라마바사XYZ", "exclude_group": True, "size": 20},
+        ).json()
+        assert not any(item["id"] == temp_notice_for_exclude for item in with_group["items"])
+    finally:
+        client.delete(f"/api/admin/notice-exclude-words/{word_id}")
+
+
 @pytest.mark.parametrize("sort", SORT_OPTIONS)
 def test_every_sort_option_returns_200(client: TestClient, sort: str):
     response = client.get("/api/notices", params={"tab": "all", "sort": sort, "size": 20})

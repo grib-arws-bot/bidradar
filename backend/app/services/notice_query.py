@@ -102,6 +102,10 @@ class NoticeFilters:
     close_in: int | None = None  # 이 안(일)에 마감
     status: str | None = None  # open/closed
     qualified: bool | None = None
+    # 제목 제외 키워드(2026-09-13) — 저장된 그룹(notice_exclude_words)과 화면에서 그때그때
+    # 추가한 단어가 API 라우터 단계에서 이미 하나의 목록으로 합쳐져 들어온다(app/api/notices.py
+    # _notice_filters) — 이 계층은 "그룹"이라는 개념 자체를 몰라도 된다.
+    exclude_words: list[str] = field(default_factory=list)
     # 기본 정렬은 공고일 최신순(2026-09-08 사용자 지시 — "공고일"·"게시일"이 서로 다른
     # 개념임을 재확인, _apply_sort 주석 참고). 이전 기본값은 게시일(open_dt) 최신순이었음.
     sort: str = "notice_date_desc"
@@ -194,6 +198,11 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
     if filters.q:
         like = f"%{filters.q}%"
         conditions.append(notice.c.title.ilike(like))
+
+    for word in filters.exclude_words:
+        word = word.strip()
+        if word:
+            conditions.append(notice.c.title.not_ilike(f"%{word}%"))
 
     if filters.domain_ids:
         conditions.append(

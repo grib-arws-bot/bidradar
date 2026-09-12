@@ -19,6 +19,7 @@ from app.models.notices import (
     keyword_rule,
     notice,
     notice_score,
+    notice_title_exclude_word,
     notice_version,
     org,
     raw_payload,
@@ -64,6 +65,7 @@ __all__ = [
     "org",
     "award",
     "keyword_rule",
+    "notice_title_exclude_word",
     "classification_correction",
     # analysis
     "analysis",
