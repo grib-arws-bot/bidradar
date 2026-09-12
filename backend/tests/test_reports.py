@@ -256,6 +256,23 @@ def test_public_notice_strategy_generation_is_idempotent(client: TestClient, gri
         assert second.json() == first.json()
         assert mock_fetch.call_count == 1  # 여러 번 눌러도 LLM 호출은 한 번뿐
 
+    # 2026-09-12 — 이미 생성된 전략은 공고 상세 조회(get_public_notice)에도 그대로 보여야
+    # 프론트가 "생성" 버튼을 다시 안 띄우고 바로 내용을 보여줄 수 있다.
+    notice_detail = anon.get(f"/api/public/reports/{token}/notices/{notice_id}").json()
+    assert notice_detail["strategy"] == {"status": "done", "strategy_md": summary_md}
+
+
+def test_public_notice_detail_has_no_strategy_before_generation(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    notice_id = notices[0]["id"]
+
+    anon = TestClient(app)
+    notice_detail = anon.get(f"/api/public/reports/{created['token']}/notices/{notice_id}").json()
+    assert notice_detail["strategy"] is None
+
 
 def test_public_notice_strategy_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
     created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
@@ -366,6 +383,34 @@ def test_send_report_calls_mailer_with_recipients_and_link(client: TestClient, g
     assert response.status_code == 200
     assert response.json()["sent_to"] == ["a@example.com"]
     mock_smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+
+
+def test_send_report_email_body_includes_notice_list(client: TestClient, grib_customer_id: int):
+    """2026-09-12 사용자 지시 — "메일 본문에 관심공고 페이지를 바로 보여줄 수 있도록" —
+    링크 하나뿐이던 이메일 본문에 공고 목록(제목·발주기관·사업비·마감일)이 직접 들어가야 한다."""
+    from app.models import customer
+
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=["a@example.com"])
+        )
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+
+    with mock.patch("app.services.mailer.smtplib.SMTP_SSL") as mock_smtp, mock.patch(
+        "app.config.settings.smtp_host", "smtp.example.com"
+    ), mock.patch("app.config.settings.smtp_user", "u"), mock.patch("app.config.settings.smtp_password", "p"):
+        response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+    assert response.status_code == 200
+
+    sent_msg = mock_smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    html_part = next(part for part in sent_msg.iter_parts() if part.get_content_type() == "text/html")
+    html_body = html_part.get_content()
+    for n in notices[:5]:  # 전부 확인하면 느리고, 목록 로직 자체는 위에서 이미 검증됨
+        assert n["title"] in html_body
+        assert f"/r/{created['token']}/notices/{n['id']}" in html_body
 
 
 def test_send_report_422_without_recipients(client: TestClient, grib_customer_id: int):

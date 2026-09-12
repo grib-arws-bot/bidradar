@@ -101,10 +101,11 @@ export function PublicNoticeDetailPage() {
   const summary = data.ai_summary as
     | { project_period?: string; project_budget?: string; purpose?: string; sub_business?: string }
     | null;
+  const alreadyGenerated = data.strategy?.status === "done";
 
   return (
     <Box sx={{ minHeight: "100vh", bgcolor: "background.default", py: { xs: 3, md: 6 } }}>
-      <Stack spacing={3} sx={{ maxWidth: 960, mx: "auto", px: 2 }}>
+      <Stack spacing={3} sx={{ maxWidth: 1100, mx: "auto", px: 2 }}>
         <Stack direction="row" spacing={1.5} alignItems="center">
           <Logo size={34} />
         </Stack>
@@ -177,7 +178,10 @@ export function PublicNoticeDetailPage() {
             >
               {isAttachmentDownloadUrl(data.url) ? "규격서 파일 다운로드" : "공고원문보기"}
             </Button>
-            {!strategyRequested && (
+            {/* 이미 생성된 전략이 있으면(2026-09-12) 버튼을 다시 안 보여준다 — 아래 섹션에
+                바로 나온다. LLM을 다시 부르는 게 아니라 캐시된 결과 조회일 뿐이라 재클릭
+                자체가 의미 없기 때문. */}
+            {!alreadyGenerated && !strategyRequested && (
               <Button variant="contained" startIcon={<AutoAwesomeOutlinedIcon />} onClick={() => setStrategyRequested(true)}>
                 AI 사업 추진 전략
               </Button>
@@ -185,7 +189,7 @@ export function PublicNoticeDetailPage() {
           </Stack>
         </Card>
 
-        {strategyRequested && (
+        {(alreadyGenerated || strategyRequested) && (
           <Card sx={{ p: { xs: 2.5, md: 4 }, borderRadius: 3, boxShadow: "0 8px 32px -12px rgba(0,0,0,0.15)" }}>
             <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 0.5 }}>
               <Box
@@ -204,12 +208,12 @@ export function PublicNoticeDetailPage() {
               </Box>
               <Typography variant="h2">AI 사업 추진 전략</Typography>
             </Stack>
-            {strategyQuery.data?.status === "done" && (
+            {(alreadyGenerated || strategyQuery.data?.status === "done") && (
               <Chip label="AI 생성 참고자료" size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
             )}
             <Divider sx={{ my: 2 }} />
 
-            {(strategyQuery.isLoading || strategyQuery.data?.status === "pending") && (
+            {!alreadyGenerated && (strategyQuery.isLoading || strategyQuery.data?.status === "pending") && (
               <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
                 <CircularProgress size={36} />
                 <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
@@ -220,7 +224,7 @@ export function PublicNoticeDetailPage() {
               </Stack>
             )}
 
-            {strategyQuery.isError && (
+            {!alreadyGenerated && strategyQuery.isError && (
               <Stack spacing={2} sx={{ py: 3 }}>
                 <Alert severity="error">
                   {(strategyQuery.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -232,7 +236,8 @@ export function PublicNoticeDetailPage() {
               </Stack>
             )}
 
-            {strategyQuery.data?.status === "done" && strategyQuery.data.strategy_md && (
+            {alreadyGenerated && <MarkdownContent>{data.strategy!.strategy_md}</MarkdownContent>}
+            {!alreadyGenerated && strategyQuery.data?.status === "done" && strategyQuery.data.strategy_md && (
               <MarkdownContent>{strategyQuery.data.strategy_md}</MarkdownContent>
             )}
 

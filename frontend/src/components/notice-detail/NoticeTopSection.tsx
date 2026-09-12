@@ -23,6 +23,7 @@ import {
 
 import type { AnalysisSummary, LlmModel } from "@/api/analysis";
 import type { FilterOptions, NoticeDetail } from "@/api/notices";
+import { LoadingButton } from "@/components/LoadingButton";
 import { TopicEditor } from "@/components/notice-detail/TopicEditor";
 import { isAttachmentDownloadUrl } from "@/utils/noticeLinks";
 
@@ -176,15 +177,16 @@ export function NoticeTopSection({
               >
                 {isAttachmentDownloadUrl(notice.url) ? "규격서 파일 다운로드" : "공고원문보기"}
               </Button>
-              <Button
+              <LoadingButton
                 size="medium"
                 variant="contained"
                 startIcon={<AutoAwesomeOutlinedIcon />}
-                disabled={analysisPending}
+                loading={analysisPending}
+                loadingText="분석 중..."
                 onClick={() => setDialogOpen(true)}
               >
-                {analysisPending ? "분석 중..." : analysisDone ? "재분석" : "AI분석"}
-              </Button>
+                {analysisDone ? "재분석" : "AI분석"}
+              </LoadingButton>
             </Stack>
 
             {/* 2026-09-06 — 추출(A1) 실패는 예외 없이 정상 응답(status:"failed")으로 오기 때문에

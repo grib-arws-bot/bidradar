@@ -6,13 +6,11 @@ import {
   Box,
   Button,
   Card,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   FormControlLabel,
-  IconButton,
   List,
   ListItem,
   ListItemButton,
@@ -33,6 +31,7 @@ import { fetchCustomers } from "@/api/customerInterests";
 import { fetchCustomersFull, generateReportCommentary } from "@/api/customers";
 import { deleteReport, fetchReports, generateReport, sendReport } from "@/api/reports";
 import { fetchSettings, updateSettings } from "@/api/settings";
+import { LoadingButton, LoadingIconButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -155,13 +154,14 @@ export function ReportsManagementPage() {
             sx={{ width: 260 }}
             helperText="생성 후 이 기간이 지나면 자동 삭제됩니다. 비워두면 자동 삭제하지 않습니다."
           />
-          <Button
+          <LoadingButton
             variant="outlined"
-            disabled={saveSettingsMutation.isPending}
+            loading={saveSettingsMutation.isPending}
+            loadingText="저장 중..."
             onClick={() => saveSettingsMutation.mutate(retentionInput.trim() === "" ? null : Number(retentionInput))}
           >
             저장
-          </Button>
+          </LoadingButton>
         </Stack>
       </Card>
 
@@ -187,14 +187,15 @@ export function ReportsManagementPage() {
         <Card sx={{ p: 3, flexGrow: 1 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
             <Typography variant="h3">리포트 목록</Typography>
-            <Button
+            <LoadingButton
               variant="outlined"
-              disabled={generateReportMutation.isPending || customerId === null}
+              loading={generateReportMutation.isPending}
+              loadingText="생성 중..."
+              disabled={customerId === null}
               onClick={() => generateReportMutation.mutate()}
-              startIcon={generateReportMutation.isPending ? <CircularProgress size={16} /> : undefined}
             >
-              {generateReportMutation.isPending ? "생성 중..." : "보고서 생성"}
-            </Button>
+              보고서 생성
+            </LoadingButton>
           </Stack>
           {copiedToken && (
             <Typography variant="caption" color="success.main" sx={{ display: "block", mb: 1 }}>
@@ -210,35 +211,38 @@ export function ReportsManagementPage() {
                   <Stack direction="row" spacing={0.5}>
                     <Tooltip title={hasProfileSummary ? "" : "고객 프로필 요약을 먼저 생성하세요(고객 관리 상세 화면)"}>
                       <span>
-                        <Button
+                        <LoadingButton
                           size="small"
                           startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+                          loading={commentaryMutation.isPending && commentaryMutation.variables === r.id}
                           disabled={!hasProfileSummary || commentaryMutation.isPending}
                           onClick={() => setCommentaryTargetReportId(r.id)}
                         >
                           {r.ai_generated_at ? "AI 코멘트 재생성" : "AI 코멘트 생성"}
-                        </Button>
+                        </LoadingButton>
                       </span>
                     </Tooltip>
                     <Tooltip title={hasRecipients ? "설정된 수신자에게 발송" : "고객 상세 화면에서 보고서 수신자 이메일을 먼저 등록하세요"}>
                       <span>
-                        <IconButton
+                        <LoadingIconButton
                           size="small"
+                          loading={sendReportMutation.isPending && sendReportMutation.variables === r.id}
                           disabled={!hasRecipients || sendReportMutation.isPending}
                           onClick={() => sendReportMutation.mutate(r.id)}
                         >
                           <SendOutlinedIcon fontSize="small" />
-                        </IconButton>
+                        </LoadingIconButton>
                       </span>
                     </Tooltip>
                     <Tooltip title="삭제">
-                      <IconButton
+                      <LoadingIconButton
                         size="small"
+                        loading={deleteReportMutation.isPending && deleteReportMutation.variables === r.id}
                         disabled={deleteReportMutation.isPending}
                         onClick={() => deleteReportMutation.mutate(r.id)}
                       >
                         <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
+                      </LoadingIconButton>
                     </Tooltip>
                   </Stack>
                 }

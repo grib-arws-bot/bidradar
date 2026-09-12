@@ -149,17 +149,76 @@ def generate_report(customer_id: int) -> dict | None:
     }
 
 
+_EMAIL_SECTION_LABELS = {"plan": "발주계획", "prenotice": "사전규격 · 접수예정", "active": "입찰접수 · 접수중"}
+_EMAIL_SECTION_ORDER = ["active", "prenotice", "plan"]  # PublicReportPage.tsx SECTION_ORDER와 동일
+
+
+def _email_section_of(n: dict) -> str:
+    """PublicReportPage.tsx의 sectionOf()와 같은 로직 — 스냅샷(notices JSONB)은 이미 직렬화된
+    필드(stage/notice_type/bid_status)를 쓰므로 customer_interest._section_of(원본 raw 필드
+    기준)를 그대로 재사용할 수 없어 이메일 전용으로 다시 둔다."""
+    if n["stage"] == "발주계획":
+        return "plan"
+    if n["stage"] == "사전규격":
+        return "prenotice"
+    if n["notice_type"] == "정부지원" and n["bid_status"] in ("upcoming", "unscheduled"):
+        return "prenotice"
+    return "active"
+
+
+def _email_format_price(value: int | None) -> str:
+    if value is None:
+        return "미공개"
+    eok = value / 100_000_000
+    return f"{eok:.1f}억원" if eok >= 1 else f"{value / 10_000:.0f}만원"
+
+
+def _build_notices_html(notices: list[dict], token: str, base_url: str) -> str:
+    """이메일 클라이언트가 CSS class·flex/grid를 대부분 지원 안 해서(2026-09-12 사용자 지시
+    — "메일 본문에 관심공고 페이지를 바로 보여줄 수 있도록") 표(table) + 인라인 style로
+    PublicReportPage.tsx와 최대한 비슷한 구성(배지 한 줄 + 제목 링크 + 발주기관/사업비/마감일)
+    을 다시 만든다."""
+    by_section: dict[str, list[dict]] = {"plan": [], "prenotice": [], "active": []}
+    for n in notices:
+        by_section[_email_section_of(n)].append(n)
+
+    parts = []
+    for section in _EMAIL_SECTION_ORDER:
+        section_notices = by_section[section]
+        if not section_notices:
+            continue
+        parts.append(
+            f'<h3 style="margin:24px 0 8px;font-size:15px;color:#555;">'
+            f"{_EMAIL_SECTION_LABELS[section]} ({len(section_notices)}건)</h3>"
+        )
+        for n in section_notices:
+            notice_url = f"{base_url}/r/{token}/notices/{n['id']}"
+            org = n.get("org_name") or "발주기관 미상"
+            price = _email_format_price(n.get("est_price"))
+            close_dt = n.get("close_dt")
+            deadline = f"마감 {close_dt[:10]}" if close_dt else "마감 미상"
+            parts.append(
+                '<div style="padding:12px 0;border-bottom:1px solid #e5e5e5;">'
+                f'<a href="{notice_url}" style="font-size:15px;font-weight:600;color:#1a1a1a;text-decoration:none;">'
+                f"{n['title']}</a>"
+                f'<div style="font-size:13px;color:#777;margin-top:4px;">{org} · {price} · {deadline}</div>'
+                "</div>"
+            )
+    return "".join(parts)
+
+
 def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dict:
-    """설정된 보고서 수신자 이메일(customer.report_recipient_emails)로 리포트 링크를 보낸다.
-    관리자가 "발송" 버튼을 눌렀을 때만 실행 — 자동 발송 아님. 요약만 이메일에 담고 상세는
-    토큰 링크로 유도한다(reports.py 모듈 설명과 같은 설계, 2026-09-01 결정)."""
+    """설정된 보고서 수신자 이메일(customer.report_recipient_emails)로 리포트를 보낸다.
+    관리자가 "발송" 버튼을 눌렀을 때만 실행 — 자동 발송 아님. 공고 목록을 이메일 본문에
+    직접 표로 담고(2026-09-12 사용자 지시), 공고별 상세·AI 사업 추진 전략은 여전히 토큰
+    링크로 유도한다(reports.py 모듈 설명과 같은 설계, 2026-09-01 결정)."""
     from app.config import settings
     from app.services.mailer import send_email
 
     row = conn.execute(
         select(
-            newsletter_report.c.token, newsletter_report.c.summary, newsletter_report.c.generated_at,
-            customer.c.name, customer.c.report_recipient_emails,
+            newsletter_report.c.token, newsletter_report.c.summary, newsletter_report.c.notices,
+            newsletter_report.c.generated_at, customer.c.name, customer.c.report_recipient_emails,
         )
         .select_from(newsletter_report)
         .join(customer, customer.c.id == newsletter_report.c.customer_id)
@@ -173,6 +232,7 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
         raise ValueError("보고서 수신자 이메일이 설정되지 않았습니다 — 고객 상세 화면에서 먼저 등록하세요.")
     report_url = f"{settings.public_base_url}/r/{row['token']}"
     summary = row["summary"]
+    notices = row["notices"]
     subject = f"[BidRadar] {row['name']} 관심 공고 리포트 — 신규 {summary.get('total', 0)}건"
     text_body = (
         f"{row['name']}님을 위한 관심 공고 리포트가 도착했습니다.\n\n"
@@ -180,9 +240,12 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
         f"자세히 보기: {report_url}\n"
     )
     html_body = (
+        f'<div style="font-family:sans-serif;max-width:640px;">'
         f"<p>{row['name']}님을 위한 관심 공고 리포트가 도착했습니다.</p>"
         f"<p>총 <b>{summary.get('total', 0)}건</b>, 마감임박 <b>{summary.get('closing_soon', 0)}건</b>.</p>"
-        f'<p><a href="{report_url}">자세히 보기</a></p>'
+        f"{_build_notices_html(notices, row['token'], settings.public_base_url)}"
+        f'<p style="margin-top:24px;"><a href="{report_url}">웹에서 전체 리포트 보기</a></p>'
+        "</div>"
     )
     send_email(to=recipients, subject=subject, html_body=html_body, text_body=text_body)
     return {"sent_to": recipients}

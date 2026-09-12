@@ -39,6 +39,7 @@ import {
   uploadCustomerDocuments,
   type CustomerFull,
 } from "@/api/customers";
+import { LoadingButton, LoadingIconButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -174,16 +175,17 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
           e.target.value = "";
         }}
       />
-      <Button
+      <LoadingButton
         size="small"
         variant="outlined"
         startIcon={<UploadFileIcon />}
-        disabled={uploadMutation.isPending}
+        loading={uploadMutation.isPending}
+        loadingText="업로드 중..."
         onClick={() => fileInputRef.current?.click()}
         sx={{ mb: 1 }}
       >
-        {uploadMutation.isPending ? "업로드 중..." : "파일 추가(다중 선택 가능)"}
-      </Button>
+        파일 추가(다중 선택 가능)
+      </LoadingButton>
       <List dense disablePadding>
         {(documentsQuery.data ?? []).map((doc) => (
           <ListItem
@@ -197,9 +199,13 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
                   </IconButton>
                 </Tooltip>
                 <Tooltip title="삭제">
-                  <IconButton size="small" onClick={() => deleteDocMutation.mutate(doc.id)}>
+                  <LoadingIconButton
+                    size="small"
+                    loading={deleteDocMutation.isPending && deleteDocMutation.variables === doc.id}
+                    onClick={() => deleteDocMutation.mutate(doc.id)}
+                  >
                     <DeleteOutlineIcon fontSize="small" />
-                  </IconButton>
+                  </LoadingIconButton>
                 </Tooltip>
               </Stack>
             }
@@ -229,9 +235,9 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addUrl())}
           fullWidth
         />
-        <Button variant="outlined" disabled={updateUrlsMutation.isPending} onClick={addUrl}>
+        <LoadingButton variant="outlined" loading={updateUrlsMutation.isPending} loadingText="추가 중..." onClick={addUrl}>
           추가
-        </Button>
+        </LoadingButton>
       </Stack>
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
         {customer.reference_urls.map((url) => (
@@ -252,15 +258,17 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
               {customer.profile_summary_md ? "편집" : "직접 작성"}
             </Button>
           )}
-          <Button
+          <LoadingButton
             size="small"
             variant="outlined"
             startIcon={<AutoAwesomeOutlinedIcon />}
-            disabled={summarizeMutation.isPending || editing}
+            loading={summarizeMutation.isPending}
+            loadingText="요약 중..."
+            disabled={editing}
             onClick={() => setProfileDialogOpen(true)}
           >
-            {summarizeMutation.isPending ? "요약 중..." : customer.profile_summarized_at ? "재요약" : "요약 생성"}
-          </Button>
+            {customer.profile_summarized_at ? "재요약" : "요약 생성"}
+          </LoadingButton>
         </Stack>
       </Stack>
       {editing ? (
@@ -276,14 +284,15 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
             slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: 13 } } }}
           />
           <Stack direction="row" spacing={1}>
-            <Button
+            <LoadingButton
               size="small"
               variant="contained"
-              disabled={updateSummaryMutation.isPending}
+              loading={updateSummaryMutation.isPending}
+              loadingText="저장 중..."
               onClick={() => updateSummaryMutation.mutate(editText)}
             >
               저장
-            </Button>
+            </LoadingButton>
             <Button size="small" onClick={() => setEditing(false)}>
               취소
             </Button>

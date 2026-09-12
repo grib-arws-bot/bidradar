@@ -14,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { fetchInterestProfile, saveInterestProfile, type InterestDraft, type TopicPriority } from "@/api/customerInterests";
+import { LoadingButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -220,9 +221,15 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
         </Box>
 
         <Stack direction="row" spacing={2} alignItems="center">
-          <Button variant="contained" size="large" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+          <LoadingButton
+            variant="contained"
+            size="large"
+            loading={saveMutation.isPending}
+            loadingText="저장 중..."
+            onClick={() => saveMutation.mutate()}
+          >
             저장
-          </Button>
+          </LoadingButton>
         </Stack>
       </Stack>
     </Card>

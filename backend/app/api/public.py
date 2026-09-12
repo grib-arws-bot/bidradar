@@ -45,9 +45,9 @@ def _authorize_notice_in_report(token: str, notice_id: int) -> dict:
 
 @router.get("/reports/{token}/notices/{notice_id}")
 def get_public_notice(token: str, notice_id: int) -> dict:
-    _authorize_notice_in_report(token, notice_id)
+    report = _authorize_notice_in_report(token, notice_id)
     with engine.connect() as conn:
-        notice_info = get_public_notice_summary(conn, notice_id)
+        notice_info = get_public_notice_summary(conn, notice_id, customer_id=report["customer_id"])
     if notice_info is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공고를 찾을 수 없습니다.")
     return notice_info

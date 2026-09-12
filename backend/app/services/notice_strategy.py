@@ -67,9 +67,14 @@ class NoticeNotFoundError(Exception):
     pass
 
 
-def get_public_notice_summary(conn: Connection, notice_id: int) -> dict | None:
+def get_public_notice_summary(conn: Connection, notice_id: int, *, customer_id: int | None = None) -> dict | None:
     """공개(비로그인) 공고 상세용 — 내부 전용 필드(담당자 배정·그립 자신 팔로우 여부·
-    자사 제품 충족판정 등)는 전부 뺀 고객 노출 안전 버전."""
+    자사 제품 충족판정 등)는 전부 뺀 고객 노출 안전 버전.
+
+    customer_id를 주면 "AI 사업 추진 전략"이 이 (고객, 공고) 조합으로 이미 생성돼 있는지도
+    같이 확인해 strategy 필드에 담는다(2026-09-12 — 이미 생성된 걸 다시 "생성" 버튼으로
+    보여주면 사용자가 헷갈려한다는 지적). 생성만 트리거하지 않고 조회만 한다 — LLM 호출
+    없음."""
     row = conn.execute(
         select(
             notice.c.id,
@@ -113,6 +118,16 @@ def get_public_notice_summary(conn: Connection, notice_id: int) -> dict | None:
         .limit(1)
     ).first()
     result["ai_summary"] = summary_row.summary if summary_row else None
+
+    result["strategy"] = None
+    if customer_id is not None:
+        strategy_row = conn.execute(
+            select(notice_strategy.c.status, notice_strategy.c.strategy_md)
+            .where(notice_strategy.c.customer_id == customer_id, notice_strategy.c.notice_id == notice_id)
+        ).first()
+        if strategy_row is not None and strategy_row.status == "done":
+            result["strategy"] = {"status": strategy_row.status, "strategy_md": strategy_row.strategy_md}
+
     return result
 
 

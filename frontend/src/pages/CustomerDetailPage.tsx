@@ -19,6 +19,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { fetchCustomersFull, updateCustomer, type CustomerDraft, type CustomerFull } from "@/api/customers";
 import { CustomerDocumentsSection } from "@/components/customer-detail/CustomerDocumentsSection";
 import { CustomerInterestSection } from "@/components/customer-detail/CustomerInterestSection";
+import { LoadingButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -209,13 +210,15 @@ export function CustomerDetailPage() {
           />
 
           <Stack direction="row" spacing={2} alignItems="center">
-            <Button
+            <LoadingButton
               variant="contained"
-              disabled={!draft.name.trim() || updateMutation.isPending}
+              loading={updateMutation.isPending}
+              loadingText="저장 중..."
+              disabled={!draft.name.trim()}
               onClick={() => updateMutation.mutate(draft)}
             >
               저장
-            </Button>
+            </LoadingButton>
           </Stack>
         </Stack>
       </Card>

@@ -399,6 +399,60 @@ def test_price_min_none_includes_everything(priced_notices):
     assert {priced_notices["notice_low"], priced_notices["notice_high"], priced_notices["notice_unknown"]} <= matched_ids
 
 
+# ---- 이미 마감된 공고는 추천에서 제외(2026-09-12 사용자 발견) ------------------------
+
+
+@pytest.fixture
+def deadline_notices():
+    """마감일이 다른 공고 세 건 — 이미 지난 마감일은 추천에서 빠져야 한다. 마감일이 없는
+    공고(발주계획·사전규격 등 실제로도 close_dt가 없는 stage)는 판단 근거가 없어 그대로
+    포함돼야 한다."""
+    with engine.connect() as conn:
+        from app.models import interest_topic
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        notice_closed = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 이미 마감된 공고",
+                url="https://example.grib-test.kr/notice/deadline-closed", close_dt=now - timedelta(days=1),
+            ).returning(notice.c.id)
+        ).scalar_one()
+        notice_open = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 아직 마감 전 공고",
+                url="https://example.grib-test.kr/notice/deadline-open", close_dt=now + timedelta(days=7),
+            ).returning(notice.c.id)
+        ).scalar_one()
+        notice_no_deadline = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="발주계획", title="[테스트] 마감일 없는 공고",
+                url="https://example.grib-test.kr/notice/deadline-none", close_dt=None,
+            ).returning(notice.c.id)
+        ).scalar_one()
+        ids = [notice_closed, notice_open, notice_no_deadline]
+        for nid in ids:
+            conn.execute(insert(notice_score).values(notice_id=nid, interest_topic_id=topic_id, l2_score=4, reason="테스트", rule_ver=1))
+
+    yield {"topic_id": topic_id, "notice_closed": notice_closed, "notice_open": notice_open, "notice_no_deadline": notice_no_deadline}
+
+    with engine.begin() as conn:
+        conn.execute(delete(notice_score).where(notice_score.c.notice_id.in_(ids)))
+        conn.execute(delete(notice).where(notice.c.id.in_(ids)))
+
+
+def test_already_closed_notice_excluded_from_recommendations(deadline_notices):
+    draft = InterestDraft(topic_ids=[deadline_notices["topic_id"]])
+    with engine.connect() as conn:
+        scored = _score_all(conn, draft, min_score=0)
+    matched_ids = {n["id"] for n, _s, _m in scored}
+    assert deadline_notices["notice_closed"] not in matched_ids
+    assert deadline_notices["notice_open"] in matched_ids
+    assert deadline_notices["notice_no_deadline"] in matched_ids
+
+
 # ---- 리포트 3단계 섹션(발주계획/사전규격·접수예정/입찰접수·접수중, 2026-09-07) ------------
 
 

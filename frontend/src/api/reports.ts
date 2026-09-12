@@ -110,6 +110,9 @@ export interface PublicNoticeDetail {
   notice_status_label: string;
   work_type_label: string;
   ai_summary: Record<string, unknown> | null;
+  // 이미 생성된 "AI 사업 추진 전략"이 있으면(2026-09-12) 다시 "생성" 버튼을 보여주지 않고
+  // 바로 그 내용을 보여주기 위함 — LLM을 다시 부르지 않는 조회 전용 필드.
+  strategy: { status: "done"; strategy_md: string } | null;
 }
 
 export async function fetchPublicNotice(token: string, noticeId: number): Promise<PublicNoticeDetail> {
