@@ -123,10 +123,14 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
 
   const summarizeMutation = useMutation({
     mutationFn: (model: LlmModel) => summarizeCustomerProfile(customerId, model),
-    onSuccess: ({ failed_urls }) => {
+    onSuccess: ({ failed_urls, auto_set_topics }) => {
       queryClient.invalidateQueries({ queryKey: ["customers-full"] });
       notify("success", "프로필 요약을 생성했습니다.");
       if (failed_urls.length > 0) notify("error", `${failed_urls.length}개 URL을 가져오지 못했습니다: ${failed_urls.join(" / ")}`);
+      if (auto_set_topics.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["interest-profile", customerId] });
+        notify("success", `관심주제를 자동 설정했습니다: ${auto_set_topics.join(", ")}`);
+      }
     },
     onError: (error) => notify("error", apiErrorMessage(error, "요약 생성에 실패했습니다.")),
   });
@@ -210,8 +214,11 @@ export function CustomerDocumentsSection({ customer }: { customer: CustomerFull 
         )}
       </List>
 
-      <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
+      <Typography variant="subtitle2" sx={{ mt: 2 }}>
         참고 URL
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+        요약 시 같은 도메인 내 다른 페이지도 함께 분석합니다(게시판류는 목록만 보고 더 들어가지 않음).
       </Typography>
       <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
         <TextField

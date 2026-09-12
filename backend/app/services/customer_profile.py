@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin, urlparse
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import Connection
@@ -19,8 +21,16 @@ from sqlalchemy.engine import Connection
 from app.config import settings
 from app.models import customer, customer_document
 from app.security.url_guard import fetch
+from app.services.customer_interest import (
+    TOPIC_PRIORITIES,
+    InterestDraft,
+    draft_from_profile,
+    get_interest_profile,
+    get_topic_catalog,
+    save_interest_profile,
+)
 from app.services.document_extract import extract_document
-from app.services.html_text import html_to_text
+from app.services.html_text import extract_text_and_links
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -58,6 +68,22 @@ _SYSTEM_PROMPT = """당신은 영업 지원 도구입니다. 회사가 올린 �
 "- 정보 없음"이라고 쓰세요. 관리자가 이후 직접 다듬을 수 있으므로 과도하게 길게 쓰지 말고
 핵심만 담으세요."""
 
+# 관심주제 자동 설정(2026-09-11 사용자 지시) — 프로필 요약이 처음 만들어질 때(관심주제가
+# 하나도 선택 안 돼 있을 때만, 관리자가 이미 고른 게 있으면 절대 안 건드림) 회사 프로필을
+# 보고 어울리는 관심주제를 미리 골라준다. 완전한 판정이 아니라 "출발점" 제공이라 관리자가
+# 언제든 관심주제 화면에서 그대로 고쳐 쓸 수 있다.
+_TOPIC_CLASSIFY_SYSTEM_PROMPT = """당신은 공공입찰 플랫폼의 고객 온보딩 도우미입니다. 회사
+프로필을 읽고, 주어진 관심주제 목록 중 이 회사의 사업과 실제로 관련 있는 것만 고르세요.
+
+규칙:
+- 목록에 있는 topic_id만 쓰세요. 목록에 없는 주제를 지어내지 마세요.
+- 근거가 약하면 포함하지 마세요 — 관련 없는 주제를 너무 많이 고르면 나중에 엉뚱한 공고가
+  추천됩니다. 보통 2~6개가 적당합니다.
+- priority는 그 회사의 핵심 사업이면 "high", 관련은 있지만 핵심은 아니면 "normal", 부차적
+  관심사면 "low"로 주세요.
+- 다른 설명 없이 JSON 배열만 출력하세요. 형식: [{"topic_id": 1, "priority": "high"}, ...]
+  관련 주제가 하나도 없으면 빈 배열 []을 출력하세요."""
+
 
 class NoDocumentsError(Exception):
     """추출 가능한 소개서 파일도, 읽어올 수 있는 참고 URL도 없음 — 먼저 하나는 등록해야 함."""
@@ -83,26 +109,154 @@ def _collect_document_text(conn: Connection, customer_id: int) -> str:
 
 _URL_FETCH_TIMEOUT_SECONDS = 30
 
+# 참고 URL 하나를 주면 같은 도메인 안의 페이지를 재귀적으로 따라가며 함께 분석한다
+# (2026-09-11 사용자 지시) — 무한 크롤링을 막기 위한 안전장치 2단(analysis_pilot.py의
+# 중첩 zip 깊이 제한과 같은 취지): 깊이 상한 + 총 페이지 수 상한.
+_MAX_CRAWL_DEPTH = 2
+_MAX_CRAWL_PAGES = 30
+_MAX_FAILED_URLS_REPORTED = 10
+
+# 게시판·게시글 목록처럼 페이지네이션이 끝없이 이어질 수 있는 URL은 그 페이지 본문은
+# 가져오되(사용자가 직접 지정했을 수도 있음) 그 안의 링크는 더 따라가지 않는다 — "게시판
+# 같은 경우에는 더 깊이 들어가지 않아도 된다"(2026-09-11 사용자 지시). 완벽한 판별은
+# 불가능하니 흔한 게시판 URL 패턴 + 위 깊이·페이지 수 상한을 함께 안전장치로 둔다.
+_BOARD_LIKE_URL_PATTERN = re.compile(r"(board|bbs|notice|news|article|list)", re.IGNORECASE)
+
+
+def _is_board_like(url: str) -> bool:
+    parsed = urlparse(url)
+    return bool(_BOARD_LIKE_URL_PATTERN.search(parsed.path)) or bool(_BOARD_LIKE_URL_PATTERN.search(parsed.query))
+
+
+def _fetch_page_text_and_links(url: str) -> tuple[str | None, list[str], str | None]:
+    """(본문, 이 페이지에서 찾은 링크 목록, 실패 사유). 본문을 못 구했으면 첫 번째 값이 None."""
+    try:
+        response = fetch(url, timeout=_URL_FETCH_TIMEOUT_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — SSRF 차단·타임아웃·연결 실패 등 원인이 다양해 전부 "이 URL 실패"로 처리
+        return None, [], str(exc)
+    content_type = response.headers.get("content-type", "")
+    if content_type and "html" not in content_type:
+        text = response.text
+        return (text if text.strip() else None), [], (None if text.strip() else "본문을 찾지 못했습니다")
+    text, links = extract_text_and_links(response.text)
+    return (text if text.strip() else None), links, (None if text.strip() else "본문을 찾지 못했습니다")
+
 
 def _collect_url_text(reference_urls: list[str]) -> tuple[str, list[str]]:
-    """참고 URL 본문을 가져와 합친다. 실패한 URL은 조용히 건너뛰지 않고 failed로 보고한다
-    (CLAUDE.md "조용한 빈 결과 금지") — SSRF 차단·네트워크 오류·빈 본문 등 원인은 다양하지만
-    호출부(summarize_customer_profile)가 반환값에 그대로 실어 화면에 보여준다."""
-    parts = []
-    failed = []
-    for url in reference_urls:
-        try:
-            response = fetch(url, timeout=_URL_FETCH_TIMEOUT_SECONDS)
-            content_type = response.headers.get("content-type", "")
-            text = html_to_text(response.text) if "html" in content_type or not content_type else response.text
-        except Exception as exc:  # noqa: BLE001 — SSRF 차단·타임아웃·연결 실패 등 원인이 다양해 전부 "이 URL 실패"로 처리
-            failed.append(f"{url} ({exc})")
+    """참고 URL마다 같은 도메인 안의 링크를 BFS로 따라가며 본문을 모은다. 실패한 URL은
+    조용히 건너뛰지 않고 failed로 보고한다(CLAUDE.md "조용한 빈 결과 금지") — 다만 크롤링
+    특성상 죽은 링크가 많을 수 있어 보고 개수는 상한을 둔다."""
+    parts: list[str] = []
+    failed: list[str] = []
+    visited: set[str] = set()
+    queue: list[tuple[str, int, str]] = [(url, 0, urlparse(url).netloc) for url in reference_urls]
+
+    while queue and len(visited) < _MAX_CRAWL_PAGES:
+        url, depth, domain = queue.pop(0)
+        normalized = url.split("#")[0]
+        if normalized in visited:
             continue
-        if text.strip():
-            parts.append(f"=== {url} ===\n{text}")
-        else:
-            failed.append(f"{url} (본문을 찾지 못했습니다)")
+        visited.add(normalized)
+
+        text, links, error = _fetch_page_text_and_links(normalized)
+        if text:
+            parts.append(f"=== {normalized} ===\n{text}")
+        elif len(failed) < _MAX_FAILED_URLS_REPORTED:
+            failed.append(f"{normalized} ({error})")
+
+        if depth >= _MAX_CRAWL_DEPTH or _is_board_like(normalized):
+            continue
+        for href in links:
+            absolute = urljoin(normalized, href).split("#")[0]
+            parsed = urlparse(absolute)
+            if parsed.scheme in ("http", "https") and parsed.netloc == domain and absolute not in visited:
+                queue.append((absolute, depth + 1, domain))
+
     return "\n\n".join(parts), failed
+
+
+def _call_anthropic(*, model: str, system_prompt: str, user_content: str, max_tokens: int) -> tuple[str, int, int]:
+    """공용 Anthropic 호출 — summarize_customer_profile(프로필 요약)과
+    _classify_interest_topics(관심주제 자동 설정)가 함께 쓴다. (응답 텍스트, input_tokens,
+    output_tokens)를 반환한다."""
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_content}],
+    }
+    response = fetch(
+        ANTHROPIC_MESSAGES_URL,
+        method="POST",
+        timeout=120,
+        headers={
+            "x-api-key": settings.anthropic_api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        },
+        data=json.dumps(payload).encode("utf-8"),
+    )
+    body = response.json()
+    if "error" in body:
+        raise RuntimeError(f"Anthropic API 오류: {body['error'].get('message', body['error'])}")
+
+    usage = body.get("usage", {})
+    text_block = next((b for b in body.get("content", []) if b.get("type") == "text"), None)
+    if text_block is None:
+        raise RuntimeError("모델이 텍스트로 응답하지 않았습니다.")
+    return text_block["text"], usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+
+
+def _cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    return (input_tokens / 1_000_000) * PRICING_PER_MTOK[model]["input"] + (
+        output_tokens / 1_000_000
+    ) * PRICING_PER_MTOK[model]["output"]
+
+
+def _classify_interest_topics(
+    conn: Connection, customer_id: int, summary_md: str, *, model: str
+) -> tuple[list[str], int, int]:
+    """프로필 요약 내용을 보고 관심주제 카탈로그 중 어울리는 것을 골라 저장한다. 호출부
+    (summarize_customer_profile)가 "관심주제가 하나도 없을 때만" 부르므로 여기선 그 조건을
+    다시 확인하지 않는다. 반환값은 (자동 선택된 주제 이름 목록, input_tokens, output_tokens)
+    — 하나도 못 고르거나 파싱에 실패해도 예외를 던지지 않는다(부가 기능이 본 요약을 막으면
+    안 됨), 대신 빈 목록을 반환한다."""
+    catalog = get_topic_catalog(conn)
+    if not catalog:
+        return [], 0, 0
+
+    catalog_text = "\n".join(f"- topic_id={t['id']}: {t['name']}" for t in catalog)
+    user_content = f"관심주제 목록:\n{catalog_text}\n\n회사 프로필:\n{summary_md}"
+    try:
+        raw_text, input_tokens, output_tokens = _call_anthropic(
+            model=model, system_prompt=_TOPIC_CLASSIFY_SYSTEM_PROMPT, user_content=user_content, max_tokens=1000
+        )
+        picks = json.loads(raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip())
+    except Exception:  # noqa: BLE001 — 부가 기능 실패가 본 요약 자체를 막으면 안 됨(사용자가 관심주제 화면에서 언제든 수동 설정 가능)
+        return [], 0, 0
+
+    catalog_ids = {t["id"] for t in catalog}
+    catalog_names = {t["id"]: t["name"] for t in catalog}
+    topic_ids: list[int] = []
+    topic_priorities: dict[int, str] = {}
+    for pick in picks if isinstance(picks, list) else []:
+        topic_id = pick.get("topic_id") if isinstance(pick, dict) else None
+        priority = pick.get("priority", "normal") if isinstance(pick, dict) else "normal"
+        if topic_id in catalog_ids and priority in TOPIC_PRIORITIES:
+            topic_ids.append(topic_id)
+            topic_priorities[topic_id] = priority
+
+    if not topic_ids:
+        return [], input_tokens, output_tokens
+
+    # 관심주제만 채우고 기존 검색어·팔로우 기관·금액 하한은 그대로 둔다(전체 치환 함수라
+    # 빈 draft로 부르면 다른 필드까지 지워짐).
+    draft = draft_from_profile(get_interest_profile(conn, customer_id))
+    draft.topic_ids = topic_ids
+    draft.topic_priorities = topic_priorities
+    save_interest_profile(conn, customer_id, draft)
+
+    return [catalog_names[t] for t in topic_ids], input_tokens, output_tokens
 
 
 def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str = "claude-sonnet-5") -> dict:
@@ -124,38 +278,24 @@ def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str
     if len(combined_text) > _MAX_DOC_CHARS:
         combined_text = combined_text[:_MAX_DOC_CHARS] + "\n\n[내용이 길어 이후는 잘렸습니다]"
 
-    payload = {
-        "model": model,
-        "max_tokens": 4000,
-        "system": _SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": f"다음은 회사 소개서·참고 자료 원문입니다.\n\n{combined_text}"}],
-    }
-    response = fetch(
-        ANTHROPIC_MESSAGES_URL,
-        method="POST",
-        timeout=120,
-        headers={
-            "x-api-key": settings.anthropic_api_key,
-            "anthropic-version": ANTHROPIC_VERSION,
-            "content-type": "application/json",
-        },
-        data=json.dumps(payload).encode("utf-8"),
+    summary_md, input_tokens, output_tokens = _call_anthropic(
+        model=model,
+        system_prompt=_SYSTEM_PROMPT,
+        user_content=f"다음은 회사 소개서·참고 자료 원문입니다.\n\n{combined_text}",
+        max_tokens=4000,
     )
-    body = response.json()
-    if "error" in body:
-        raise RuntimeError(f"Anthropic API 오류: {body['error'].get('message', body['error'])}")
+    cost = _cost_usd(model, input_tokens, output_tokens)
 
-    usage = body.get("usage", {})
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    text_block = next((b for b in body.get("content", []) if b.get("type") == "text"), None)
-    if text_block is None:
-        raise RuntimeError("모델이 텍스트로 응답하지 않았습니다.")
-    summary_md = text_block["text"]
-
-    cost = (input_tokens / 1_000_000) * PRICING_PER_MTOK[model]["input"] + (
-        output_tokens / 1_000_000
-    ) * PRICING_PER_MTOK[model]["output"]
+    # 관심주제 자동 설정(2026-09-11) — 하나도 선택 안 돼 있을 때만. 관리자가 이미 고른 게
+    # 있으면 재요약해도 절대 덮어쓰지 않는다(사용자 지시).
+    auto_set_topics: list[str] = []
+    if not get_interest_profile(conn, customer_id)["topic_ids"]:
+        topic_names, classify_in, classify_out = _classify_interest_topics(conn, customer_id, summary_md, model=model)
+        if topic_names:
+            auto_set_topics = topic_names
+            input_tokens += classify_in
+            output_tokens += classify_out
+            cost += _cost_usd(model, classify_in, classify_out)
 
     conn.execute(
         update(customer)
@@ -174,6 +314,7 @@ def summarize_customer_profile(conn: Connection, customer_id: int, *, model: str
         "output_tokens": output_tokens,
         "cost_usd": round(cost, 4),
         "failed_urls": failed_urls,
+        "auto_set_topics": auto_set_topics,
     }
 
 

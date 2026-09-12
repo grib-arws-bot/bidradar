@@ -95,6 +95,7 @@ export interface ProfileSummarizeResult {
   output_tokens: number;
   cost_usd: number;
   failed_urls: string[];
+  auto_set_topics: string[];
 }
 
 export async function summarizeCustomerProfile(customerId: number, model: LlmModel): Promise<ProfileSummarizeResult> {

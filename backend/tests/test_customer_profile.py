@@ -3,6 +3,7 @@ app/services/customer_profile.py 검증. 실제 api.anthropic.com에 나가지 �
 
 from __future__ import annotations
 
+import json
 import os
 from unittest import mock
 
@@ -24,6 +25,7 @@ from app.models import customer, customer_document
 from app.services.customer_profile import (
     LLMNotConfiguredError,
     NoDocumentsError,
+    _collect_url_text,
     save_manual_profile_summary,
     summarize_customer_profile,
 )
@@ -106,7 +108,7 @@ def test_summarize_saves_markdown_and_cost(temp_customer, monkeypatch):
     assert mock_fetch.call_args.kwargs["headers"]["x-api-key"] == "sk-ant-test"
     assert result == {
         "summary_md": _SUMMARY_MD, "input_tokens": 500, "output_tokens": 300,
-        "cost_usd": round(500 / 1e6 * 3.00 + 300 / 1e6 * 15.00, 4), "failed_urls": [],
+        "cost_usd": round(500 / 1e6 * 3.00 + 300 / 1e6 * 15.00, 4), "failed_urls": [], "auto_set_topics": [],
     }
 
     with engine.connect() as conn:
@@ -235,12 +237,200 @@ def test_summarize_reports_failed_url_without_blocking_others(temp_customer, mon
     assert "down.example.com" in result["failed_urls"][0]
 
 
+# ---- 참고 URL 같은 도메인 재귀 크롤링(2026-09-11) --------------------------------------
+
+
+def test_collect_url_text_follows_same_domain_links():
+    root = _html_response('<html><body>루트 본문<a href="/about">회사소개</a></body></html>')
+    about = _html_response("<html><body>회사소개 페이지 본문</body></html>")
+
+    def fetch_side_effect(url, **kwargs):
+        return root if url == "https://example.com" else about
+
+    with mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect):
+        text, failed = _collect_url_text(["https://example.com"])
+
+    assert "루트 본문" in text
+    assert "회사소개 페이지 본문" in text
+    assert failed == []
+
+
+def test_collect_url_text_does_not_follow_cross_domain_links():
+    root = _html_response('<html><body>루트 본문<a href="https://other.com/x">외부 링크</a></body></html>')
+
+    with mock.patch("app.services.customer_profile.fetch", return_value=root) as mock_fetch:
+        text, _ = _collect_url_text(["https://example.com"])
+
+    assert "루트 본문" in text
+    fetched_urls = [c.args[0] for c in mock_fetch.call_args_list]
+    assert "https://other.com/x" not in fetched_urls
+
+
+def test_collect_url_text_respects_max_depth():
+    """깊이 상한(2단계)을 넘는 페이지는 따라가지 않는다."""
+    pages = {
+        "https://example.com": '<html><body>0단계<a href="/d1">d1</a></body></html>',
+        "https://example.com/d1": '<html><body>1단계<a href="/d2">d2</a></body></html>',
+        "https://example.com/d2": '<html><body>2단계<a href="/d3">d3</a></body></html>',
+        "https://example.com/d3": "<html><body>3단계(도달하면 안 됨)</body></html>",
+    }
+
+    def fetch_side_effect(url, **kwargs):
+        return _html_response(pages[url])
+
+    with mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect) as mock_fetch:
+        text, _ = _collect_url_text(["https://example.com"])
+
+    assert "3단계" not in text
+    fetched_urls = {c.args[0] for c in mock_fetch.call_args_list}
+    assert "https://example.com/d3" not in fetched_urls
+
+
+def test_collect_url_text_stops_descending_from_board_like_pages():
+    """게시판류 URL은 본문은 가져오되 그 안의 링크는 따라가지 않는다."""
+    pages = {
+        "https://example.com": '<html><body>홈<a href="/board/notice">공지사항</a></body></html>',
+        "https://example.com/board/notice": '<html><body>공지사항 목록<a href="/board/notice/1">글1</a></body></html>',
+        "https://example.com/board/notice/1": "<html><body>게시글 본문(도달하면 안 됨)</body></html>",
+    }
+
+    def fetch_side_effect(url, **kwargs):
+        return _html_response(pages[url])
+
+    with mock.patch("app.services.customer_profile.fetch", side_effect=fetch_side_effect) as mock_fetch:
+        text, _ = _collect_url_text(["https://example.com"])
+
+    assert "공지사항 목록" in text
+    assert "게시글 본문" not in text
+    fetched_urls = {c.args[0] for c in mock_fetch.call_args_list}
+    assert "https://example.com/board/notice/1" not in fetched_urls
+
+
 def test_summarize_requires_at_least_one_document_or_url(temp_customer, monkeypatch):
     """문서도 URL도 전혀 없으면(빈 참고 URL 포함) 여전히 NoDocumentsError."""
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
     with engine.begin() as conn:
         with pytest.raises(NoDocumentsError):
             summarize_customer_profile(conn, temp_customer)
+
+
+# ---- 관심주제 자동 설정(2026-09-11) — 프로필 요약이 처음 만들어질 때(관심주제가 하나도
+# 없을 때만) 회사 프로필 기준으로 미리 골라준다 ------------------------------------------
+
+
+def _with_document(customer_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            insert(customer_document).values(
+                customer_id=customer_id, filename="회사소개서.hwpx", content_type="application/haansofthwp+zip",
+                content=b"fake", size_bytes=4,
+            )
+        )
+
+
+def _first_topic() -> tuple[int, str]:
+    from app.models import interest_topic
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(interest_topic.c.id, interest_topic.c.name).order_by(interest_topic.c.id).limit(1)
+        ).one()
+    return row.id, row.name
+
+
+def _classify_fetch_side_effect(classify_response_text: str):
+    def _fn(url, **kwargs):
+        payload = json.loads(kwargs["data"].decode("utf-8"))
+        if "topic_id" in payload["system"]:
+            return _mock_anthropic_response(classify_response_text)
+        return _mock_anthropic_response(_SUMMARY_MD)
+
+    return _fn
+
+
+def test_summarize_auto_sets_topics_when_none_selected(temp_customer, monkeypatch):
+    from app.services.customer_interest import get_interest_profile
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    _with_document(temp_customer)
+    topic_id, topic_name = _first_topic()
+
+    with mock.patch(
+        "app.services.customer_profile.extract_document",
+        return_value=mock.Mock(ok=True, text="소개 문단", error=None),
+    ), mock.patch(
+        "app.services.customer_profile.fetch",
+        side_effect=_classify_fetch_side_effect(json.dumps([{"topic_id": topic_id, "priority": "high"}])),
+    ):
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["auto_set_topics"] == [topic_name]
+    with engine.connect() as conn:
+        profile = get_interest_profile(conn, temp_customer)
+    assert profile["topic_ids"] == [topic_id]
+    assert profile["topic_priorities"] == {topic_id: "high"}
+
+
+def test_summarize_does_not_overwrite_existing_topics(temp_customer, monkeypatch):
+    """관리자가 이미 관심주제를 골라뒀으면 재요약해도 절대 덮어쓰지 않는다(사용자 지시)."""
+    from app.services.customer_interest import InterestDraft, get_interest_profile, save_interest_profile
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    _with_document(temp_customer)
+    topic_id, _ = _first_topic()
+    with engine.begin() as conn:
+        save_interest_profile(conn, temp_customer, InterestDraft(topic_ids=[topic_id], topic_priorities={topic_id: "low"}))
+
+    with mock.patch(
+        "app.services.customer_profile.extract_document",
+        return_value=mock.Mock(ok=True, text="소개 문단", error=None),
+    ), mock.patch("app.services.customer_profile.fetch", return_value=_mock_anthropic_response(_SUMMARY_MD)) as mock_fetch:
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["auto_set_topics"] == []
+    assert mock_fetch.call_count == 1  # 분류 호출 자체가 안 나감
+    with engine.connect() as conn:
+        profile = get_interest_profile(conn, temp_customer)
+    assert profile["topic_ids"] == [topic_id]
+    assert profile["topic_priorities"] == {topic_id: "low"}  # 그대로 유지
+
+
+def test_summarize_ignores_topic_ids_not_in_catalog(temp_customer, monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    _with_document(temp_customer)
+
+    with mock.patch(
+        "app.services.customer_profile.extract_document",
+        return_value=mock.Mock(ok=True, text="소개 문단", error=None),
+    ), mock.patch(
+        "app.services.customer_profile.fetch",
+        side_effect=_classify_fetch_side_effect(json.dumps([{"topic_id": 999999999, "priority": "high"}])),
+    ):
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["auto_set_topics"] == []
+
+
+def test_summarize_survives_malformed_classify_response(temp_customer, monkeypatch):
+    """분류 응답이 JSON이 아니어도(모델이 딴소리) 본 요약 자체는 그대로 성공해야 한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    _with_document(temp_customer)
+
+    with mock.patch(
+        "app.services.customer_profile.extract_document",
+        return_value=mock.Mock(ok=True, text="소개 문단", error=None),
+    ), mock.patch(
+        "app.services.customer_profile.fetch",
+        side_effect=_classify_fetch_side_effect("이건 JSON이 아닙니다"),
+    ):
+        with engine.begin() as conn:
+            result = summarize_customer_profile(conn, temp_customer)
+
+    assert result["summary_md"] == _SUMMARY_MD
+    assert result["auto_set_topics"] == []
 
 
 # ---- API 라우트 --------------------------------------------------------------------
