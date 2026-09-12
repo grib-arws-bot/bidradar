@@ -18,7 +18,7 @@ from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
 from app.services.report_commentary import ReportNotFoundError
 
-REPORT_LIMIT = 20
+REPORT_LIMIT = 50  # 2026-09-12 사용자 지시로 20→50 (customer_interest.py의 SECTION_LIMITS도 같이 조정)
 
 
 def _build_summary(notices: list[dict]) -> dict:

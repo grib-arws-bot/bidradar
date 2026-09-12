@@ -275,7 +275,9 @@ def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> lis
 # "사전규격" 단계 공고가 상위 20건에 아예 안 들 수 있었다. 섹션별로 자리를 미리 배정해서
 # 이른 단계 공고도 항상 일정 수는 노출되게 한다. 프런트가 이 값(stage/notice_type/
 # bid_status)으로 같은 3분류를 다시 계산해 탭으로 나눠 보여준다.
-SECTION_LIMITS = {"plan": 5, "prenotice": 5, "active": 10}
+# 2026-09-12 — 전체 상한을 20→50으로 올리며(사용자 지시) 기존 5:5:10(1:1:2) 비율을 그대로
+# 유지해 10:10:30으로 스케일업.
+SECTION_LIMITS = {"plan": 10, "prenotice": 10, "active": 30}
 
 
 def _section_of(n: dict) -> str:

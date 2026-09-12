@@ -434,7 +434,7 @@ def test_section_of_gov_support_closed_is_active_not_prenotice():
 
 @pytest.fixture
 def oversubscribed_plan_notices():
-    """SECTION_LIMITS["plan"](5)보다 많은 발주계획 공고를 같은 관심주제에 매칭시켜, top_matches가
+    """SECTION_LIMITS["plan"]보다 많은 발주계획 공고를 같은 관심주제에 매칭시켜, top_matches가
     섹션 상한을 실제로 지키는지 확인한다."""
     with engine.connect() as conn:
         from app.models import interest_topic
@@ -464,7 +464,8 @@ def oversubscribed_plan_notices():
 def test_top_matches_respects_section_limit(oversubscribed_plan_notices):
     # 공유 개발 DB라 같은 관심주제에 이미 매칭된 실제 발주계획 공고가 섞여 들어올 수 있어
     # (2026-09-05 등 세션 내내 반복된 이슈) 정확히 상한 개수를 맞히는 대신 "상한을 절대
-    # 넘지 않는다"만 확실히 검증한다 — 핵심은 8건을 넣었는데 5건 상한을 넘기지 않는 것.
+    # 넘지 않는다"만 확실히 검증한다 — 핵심은 상한(SECTION_LIMITS["plan"])보다 많이
+    # 넣었는데 그 상한을 넘기지 않는 것.
     draft = InterestDraft(topic_ids=[oversubscribed_plan_notices["topic_id"]])
     with engine.connect() as conn:
         matches = top_matches(conn, draft, limit=20, min_score=0)
