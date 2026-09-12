@@ -238,7 +238,14 @@ fi
 $localSmokePath = Join-Path $env:TEMP "bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').sh"
 $remoteSmokePath = "/tmp/bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').sh"
 try {
-    Set-Content -Path $localSmokePath -Value $smokeScript -Encoding utf8 -NoNewline
+    # [2026-09-12 발견/수정] `Set-Content -Encoding utf8`은 BOM을 붙이고(bash가 첫 줄의
+    # `set -e`를 BOM과 합쳐 읽어 "set: command not found"로 깨짐), 이 .ps1 파일 자체가
+    # CRLF로 저장돼 있어 히어스트링 안 줄바꿈도 그대로 CRLF로 남아(bash가 `\r`을 명령어의
+    # 일부로 읽어 `cd ~/bidradar\r` 같은 존재하지 않는 경로를 찾음) 스모크 테스트만 매번
+    # 거짓 실패했다 — 실제 배포·로그인은 정상이었음(수동 curl로 확인). BOM 없는 UTF-8 +
+    # LF로 강제 정규화해서 저장.
+    $normalizedSmokeScript = ($smokeScript -replace "`r`n", "`n") -replace "`r", "`n"
+    [System.IO.File]::WriteAllText($localSmokePath, $normalizedSmokeScript, (New-Object System.Text.UTF8Encoding($false)))
     scp $localSmokePath "${remoteHost}:${remoteSmokePath}" | Out-Null
     Assert-Success "스모크 테스트 스크립트 전송(scp)"
     $smokeResult = ssh $remoteHost "bash $remoteSmokePath"
