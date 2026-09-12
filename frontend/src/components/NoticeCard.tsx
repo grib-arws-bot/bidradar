@@ -117,7 +117,7 @@ export function NoticeCard({ notice, highlight, variant = "list" }: Props) {
         alignItems={isGrid ? "stretch" : "flex-start"}
         spacing={isGrid ? 1 : 2}
       >
-        <Box sx={{ minWidth: 0 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="h3"
             component={RouterLink}
@@ -160,9 +160,18 @@ export function NoticeCard({ notice, highlight, variant = "list" }: Props) {
           justifyContent={isGrid ? "space-between" : "flex-start"}
           alignItems={isGrid ? "center" : "flex-end"}
           spacing={0.5}
-          sx={{ flexShrink: 0, mt: isGrid ? 0.5 : 0 }}
+          sx={{ flexShrink: 0, maxWidth: isGrid ? "100%" : "45%", mt: isGrid ? 0.5 : 0 }}
         >
-          <Typography variant="h3" className="tnum" fontWeight={700} color="primary.main" sx={{ whiteSpace: "nowrap" }}>
+          {/* A2 요약의 project_budget은 가끔 한 문장 전체로 나올 만큼 길다(2026-09-13 실사용
+              발견 — 카드 밖으로 텍스트가 넘치던 버그) — wordBreak+overflowWrap+maxWidth 셋을
+              같이 둬야 어떤 길이든 이 블록 폭 안에서 줄바꿈된다. */}
+          <Typography
+            variant="h3"
+            className="tnum"
+            fontWeight={700}
+            color="primary.main"
+            sx={{ wordBreak: "keep-all", overflowWrap: "break-word", textAlign: isGrid ? "right" : "left" }}
+          >
             {budgetLabel}
           </Typography>
           {dday && (
