@@ -75,15 +75,16 @@ def test_overview_notices_shape(client: TestClient):
     assert response.status_code == 200
     body = response.json()
     assert {"cumulative_daily", "collected_daily"} <= body.keys()
-    # 최근 14일이 하루도 안 빠지고 다 나와야 한다(수집이 없었던 날도 0으로 채워짐).
-    assert len(body["cumulative_daily"]) == 14
-    for row in body["cumulative_daily"]:
-        assert "date" in row and "total" in row
-    assert len(body["collected_daily"]["dates"]) == 14
-    assert len(body["collected_daily"]["series"]) > 0
-    for s in body["collected_daily"]["series"]:
-        assert len(s["counts"]) == 14
-        assert "source_name" in s
+    for key in ("cumulative_daily", "collected_daily"):
+        # 최근 14일이 하루도 안 빠지고 다 나와야 한다(수집이 없었던 날도 0으로 채워짐).
+        assert len(body[key]["dates"]) == 14
+        assert len(body[key]["series"]) > 0
+        for s in body[key]["series"]:
+            assert len(s["counts"]) == 14
+            assert "source_name" in s
+        # 소스별 계열 외에 "전체" 합산 계열이 하나 더 있어야 한다(사용자 지시 "소스별과
+        # 전체소스를 그려줘").
+        assert any(s["source_name"] == "전체" and s["source_id"] is None for s in body[key]["series"])
 
 
 def test_last_n_months_returns_six_consecutive_months_ending_this_month():
@@ -110,23 +111,35 @@ def test_get_system_overview_returns_llm_and_resources():
     assert result["llm_usage"]["total_calls"] >= 0
 
 
-def test_get_notice_overview_cumulative_daily_is_non_decreasing():
-    """누적 총량은 러닝토탈이라 날짜가 지날수록 줄어들면 안 된다(공고는 삭제돼도 notice
-    테이블에서 아예 빠지므로, 이 창 안에서 다시 늘어나는 일은 있어도 줄지는 않는다)."""
+def _series_by_name(series: list[dict], name: str) -> dict:
+    return next(s for s in series if s["source_name"] == name)
+
+
+def test_get_notice_overview_cumulative_total_is_non_decreasing():
+    """"전체" 누적 총량은 러닝토탈이라 날짜가 지날수록 줄어들면 안 된다(공고는 삭제돼도
+    notice 테이블에서 아예 빠지므로, 이 창 안에서 다시 늘어나는 일은 있어도 줄지는 않는다)."""
     with engine.connect() as conn:
         result = get_notice_overview(conn)
-    totals = [row["total"] for row in result["cumulative_daily"]]
+    totals = _series_by_name(result["cumulative_daily"]["series"], "전체")["counts"]
     assert all(totals[i] <= totals[i + 1] for i in range(len(totals) - 1))
 
 
-def test_get_notice_overview_collected_daily_matches_cumulative_day_over_day_growth():
-    """소스별 일별 수집 건수를 그날 합산한 값은 누적 총량의 전날 대비 증가분과 같아야 한다
-    (둘 다 같은 notice.created_at 기준 카운트라 매일 정확히 일치)."""
+def test_get_notice_overview_cumulative_total_equals_sum_of_sources():
+    """"전체" 누적 계열은 소스별 누적 계열들의 합과 매 날짜마다 같아야 한다."""
     with engine.connect() as conn:
         result = get_notice_overview(conn)
-    totals = [row["total"] for row in result["cumulative_daily"]]
-    daily_sums = [
-        sum(s["counts"][i] for s in result["collected_daily"]["series"]) for i in range(len(totals))
-    ]
-    for i in range(1, len(totals)):
-        assert totals[i] - totals[i - 1] == daily_sums[i]
+    series = result["cumulative_daily"]["series"]
+    total = _series_by_name(series, "전체")["counts"]
+    per_source = [s for s in series if s["source_name"] != "전체"]
+    for i in range(len(total)):
+        assert total[i] == sum(s["counts"][i] for s in per_source)
+
+
+def test_get_notice_overview_collected_total_matches_cumulative_day_over_day_growth():
+    """"전체" 수집 건수(그날 신규)는 "전체" 누적 총량의 전날 대비 증가분과 같아야 한다."""
+    with engine.connect() as conn:
+        result = get_notice_overview(conn)
+    cumulative_total = _series_by_name(result["cumulative_daily"]["series"], "전체")["counts"]
+    collected_total = _series_by_name(result["collected_daily"]["series"], "전체")["counts"]
+    for i in range(1, len(cumulative_total)):
+        assert cumulative_total[i] - cumulative_total[i - 1] == collected_total[i]

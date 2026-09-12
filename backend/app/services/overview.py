@@ -138,69 +138,75 @@ def get_system_overview(conn: Connection) -> dict:
 
 
 NOTICE_DAILY_SERIES_DAYS = 14
+NOTICE_TOTAL_SOURCE_ID = None  # "전체" 합산 계열의 source_id — 실제 소스 id와 안 겹치게 None
 
 
-def _notice_daily_window(conn: Connection, days: int) -> tuple[int, dict[date, int]]:
-    """(window 시작 이전 누적 건수, {날짜: 그날 신규 건수}) — 전체 소스 합산. 분석상태별
-    구분(미분석/첨부분석완료/AI분석완료)은 2026-09-12 사용자 지시로 뺐다 — "값이 너무
-    차이나서(대부분 미분석) 의미가 없다"는 실사용 피드백."""
+def _notice_daily_raw_data(conn: Connection, days: int):
+    """두 그래프가 공통으로 쓰는 원자료 — (날짜 목록, 소스명 매핑, 소스별 window-이전 누적,
+    소스별 일별 신규 건수). 분석상태별 구분(미분석/첨부분석완료/AI분석완료)은 2026-09-12
+    사용자 지시로 뺐다 — "값이 너무 차이나서(대부분 미분석) 의미가 없다"는 실사용 피드백."""
     day_expr = func.date(func.timezone("Asia/Seoul", notice.c.created_at))
     start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
-    before_total = conn.execute(
-        select(func.count()).select_from(notice).where(day_expr < start_date)
-    ).scalar_one()
-    rows = conn.execute(
-        select(day_expr.label("day"), func.count().label("total"))
+    dates = [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
+
+    all_sources = {s["id"]: s["name"] for s in list_sources(conn)}
+    source_ids = sorted(conn.execute(select(notice.c.source_id).distinct()).scalars().all())
+
+    before_rows = conn.execute(
+        select(notice.c.source_id, func.count().label("total"))
         .select_from(notice)
-        .where(day_expr >= start_date)
-        .group_by(day_expr)
+        .where(day_expr < start_date)
+        .group_by(notice.c.source_id)
     ).mappings().all()
-    return before_total, {r["day"]: r["total"] for r in rows}
+    before_by_source = {r["source_id"]: r["total"] for r in before_rows}
 
-
-def _notice_cumulative_daily(conn: Connection, days: int) -> list[dict]:
-    """왼쪽 그래프 — 일별 "전체 소스 누적" 총량(현재까지 러닝토탈) 추이, 선 그래프 1개."""
-    before_total, by_day = _notice_daily_window(conn, days)
-    start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
-    running = before_total
-    result = []
-    for i in range(days):
-        d = start_date + timedelta(days=i)
-        running += by_day.get(d, 0)
-        result.append({"date": d.isoformat(), "total": running})
-    return result
-
-
-def _notice_daily_by_source(conn: Connection, days: int) -> dict:
-    """오른쪽 그래프 — 일별 "소스별" 신규 수집 건수, 선 그래프 여러 개(소스 수만큼)."""
-    day_expr = func.date(func.timezone("Asia/Seoul", notice.c.created_at))
-    start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
-    rows = conn.execute(
+    daily_rows = conn.execute(
         select(day_expr.label("day"), notice.c.source_id, func.count().label("total"))
         .select_from(notice)
         .where(day_expr >= start_date)
         .group_by(day_expr, notice.c.source_id)
     ).mappings().all()
-    by_key = {(r["day"], r["source_id"]): r["total"] for r in rows}
-    all_sources = {s["id"]: s["name"] for s in list_sources(conn)}
-    source_ids = sorted({r["source_id"] for r in rows})
-    dates = [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
-    series = [
-        {
-            "source_id": sid,
-            "source_name": all_sources.get(sid, f"소스 {sid}"),
-            "counts": [by_key.get((start_date + timedelta(days=i), sid), 0) for i in range(days)],
-        }
-        for sid in source_ids
-    ]
-    return {"dates": dates, "series": series}
+    daily_by_key = {(r["day"], r["source_id"]): r["total"] for r in daily_rows}
+
+    return start_date, dates, all_sources, source_ids, before_by_source, daily_by_key
 
 
 def get_notice_overview(conn: Connection) -> dict:
-    """카드 3(공고 데이터) — 최근 14일(KST) 기준 두 선 그래프: 전체 소스 누적 추이 +
-    소스별 일별 수집 추이. 삭제된 공고는 notice 테이블에서 이미 빠져 있으므로 "현재 살아있는
-    것만"이라는 조건이 별도 필터 없이 자동으로 성립한다."""
+    """카드 3(공고 데이터) — 최근 14일(KST) 기준 선 그래프 2개, 각각 소스별 계열 + "전체"
+    합산 계열(사용자 지시 "소스별과 전체소스를 그려줘"):
+    1. 누적 데이터 — 그 날짜까지의 러닝토탈(삭제된 공고는 notice 테이블에서 이미 빠져
+       있으므로 "삭제 데이터 제외"가 별도 필터 없이 자동으로 성립한다)
+    2. 수집 데이터 — 그 날 신규로 수집된 건수"""
+    days = NOTICE_DAILY_SERIES_DAYS
+    start_date, dates, all_sources, source_ids, before_by_source, daily_by_key = _notice_daily_raw_data(conn, days)
+
+    collected_series = []
+    cumulative_series = []
+    collected_grand_total = [0] * days
+    for sid in source_ids:
+        daily_counts = [daily_by_key.get((start_date + timedelta(days=i), sid), 0) for i in range(days)]
+        collected_series.append(
+            {"source_id": sid, "source_name": all_sources.get(sid, f"소스 {sid}"), "counts": daily_counts}
+        )
+        for i, c in enumerate(daily_counts):
+            collected_grand_total[i] += c
+
+        running = before_by_source.get(sid, 0)
+        cumulative_counts = []
+        for c in daily_counts:
+            running += c
+            cumulative_counts.append(running)
+        cumulative_series.append(
+            {"source_id": sid, "source_name": all_sources.get(sid, f"소스 {sid}"), "counts": cumulative_counts}
+        )
+
+    collected_series.append({"source_id": NOTICE_TOTAL_SOURCE_ID, "source_name": "전체", "counts": collected_grand_total})
+    cumulative_grand_total = [sum(s["counts"][i] for s in cumulative_series) for i in range(days)]
+    cumulative_series.append(
+        {"source_id": NOTICE_TOTAL_SOURCE_ID, "source_name": "전체", "counts": cumulative_grand_total}
+    )
+
     return {
-        "cumulative_daily": _notice_cumulative_daily(conn, NOTICE_DAILY_SERIES_DAYS),
-        "collected_daily": _notice_daily_by_source(conn, NOTICE_DAILY_SERIES_DAYS),
+        "cumulative_daily": {"dates": dates, "series": cumulative_series},
+        "collected_daily": {"dates": dates, "series": collected_series},
     }
