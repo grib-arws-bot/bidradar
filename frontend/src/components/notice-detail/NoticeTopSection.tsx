@@ -122,7 +122,11 @@ export function NoticeTopSection({
 
             {summary?.sub_business && <Field label="세부사업(내역사업)" value={summary.sub_business} />}
 
-            <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap alignItems="flex-end">
+            {/* alignItems를 flex-start로(2026-09-13 수정) — 사업비 값은 large(h3, 큰 폰트)라
+                박스 높이가 총사업기간보다 훨씬 큰데, flex-end(바닥 정렬)를 쓰면 값 높이 차이
+                때문에 "총사업기간"·"사업비" 라벨(캡션)의 위쪽이 서로 어긋나 보였다(사용자
+                제보 — "가로 정렬이 안 되어 있어"). 라벨을 위쪽 기준으로 맞추면 해결. */}
+            <Stack direction="row" spacing={4} flexWrap="wrap" useFlexGap alignItems="flex-start">
               <Field label="총사업기간" value={summary?.project_period || "미분석"} />
               {/* 사업비는 참여 판단에서 가장 먼저 보는 값이라 크게 강조(2026-09-05 요청) */}
               <Field

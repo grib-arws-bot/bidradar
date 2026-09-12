@@ -6,6 +6,7 @@ import {
   Alert,
   Box,
   Button,
+  Card,
   Chip,
   CircularProgress,
   Dialog,
@@ -262,26 +263,32 @@ export function NoticeExplorePage() {
         </Stack>
       </Stack>
 
-      {/* 제외 키워드(2026-09-13 사용자 지시) — 별도 관리 화면 대신 정렬 바로 아래 인라인
-          박스로 통합, 그룹 추가·삭제·적용/즉석 단어까지 여기서 전부 처리 */}
-      <NoticeExcludeWordsBox values={filters} onChange={handleFiltersChange} />
-
-      {/* 검색+필터링을 합쳐 실제로 몇 건이 나오는지 검색창 바로 옆에(2026-09-05 요청, "이
-          갯수는 검색 및 필터링에 의한 항목 갯수") */}
-      <Stack direction="row" spacing={1.5} alignItems="center">
-        <TextField
-          placeholder="공고명으로 검색"
-          size="small"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          sx={{ maxWidth: 420 }}
-        />
-        <Typography variant="body2" color="text.secondary" className="tnum" sx={{ fontWeight: 700 }}>
-          {total.toLocaleString("ko-KR")}건
-        </Typography>
+      {/* 정렬 줄 아래에 검색/필터(3/4)와 제외 키워드(1/4)를 나란히 배치(2026-09-13 사용자
+          지시 — "검색/필터도 박스 형태로, 오른쪽에 1/4 정도로 제외 키워드") */}
+      <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="flex-start">
+        <Card variant="outlined" sx={{ p: 2, flex: 3, width: "100%" }}>
+          <Stack spacing={1.5}>
+            {/* 검색+필터링을 합쳐 실제로 몇 건이 나오는지 검색창 바로 옆에(2026-09-05 요청,
+                "이 갯수는 검색 및 필터링에 의한 항목 갯수") */}
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <TextField
+                placeholder="공고명으로 검색"
+                size="small"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                sx={{ maxWidth: 420 }}
+              />
+              <Typography variant="body2" color="text.secondary" className="tnum" sx={{ fontWeight: 700 }}>
+                {total.toLocaleString("ko-KR")}건
+              </Typography>
+            </Stack>
+            <NoticeFilterBar options={filterOptionsQuery.data} values={filters} onChange={handleFiltersChange} />
+          </Stack>
+        </Card>
+        <Box sx={{ flex: 1, width: "100%" }}>
+          <NoticeExcludeWordsBox values={filters} onChange={handleFiltersChange} />
+        </Box>
       </Stack>
-
-      <NoticeFilterBar options={filterOptionsQuery.data} values={filters} onChange={handleFiltersChange} />
 
       <NoticeListBody
         view={cardView}

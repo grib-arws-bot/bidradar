@@ -16,7 +16,7 @@ from sqlalchemy import delete, insert
 from app.collector.runner import CollectionInProgressError
 from app.db import engine
 from app.models import source
-from app.scheduler import KST, _due_sources, run_due_sources
+from app.scheduler import KST, _due_sources, run_due_sources, run_pending_backlog
 
 
 def _make_temp_source(conn, *, name: str, schedule_times: list[str], active: bool = True) -> int:
@@ -99,3 +99,18 @@ def test_run_due_sources_triggers_only_due_sources_and_continues_past_failures()
     finally:
         with engine.begin() as conn:
             conn.execute(delete(source).where(source.c.id.in_(ids)))
+
+
+def test_run_pending_backlog_returns_counts_from_run_pending_analysis():
+    fake_result = {"extraction_candidates": 2, "auto_extracted": 2, "analyze_candidates": 8, "auto_analyzed": 8}
+    with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result) as mock_run:
+        result = run_pending_backlog()
+    mock_run.assert_called_once_with()
+    assert result == fake_result
+
+
+def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():
+    # run_due_sources(매 분)와 별개 잡이라 이번 회차 실패가 스케줄러 자체를 죽이면 안 됨.
+    with mock.patch("app.scheduler.run_pending_analysis", side_effect=RuntimeError("가짜 실패")):
+        result = run_pending_backlog()
+    assert result == {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}

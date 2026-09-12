@@ -31,6 +31,7 @@ from sqlalchemy import select
 from app.collector.runner import CollectionInProgressError, run_source_and_process_pending
 from app.db import engine
 from app.models import source
+from app.services.pending_analysis import run_pending_analysis
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(levelname)s %(message)s")
 logger = logging.getLogger("bidradar.scheduler")
@@ -67,10 +68,35 @@ def run_due_sources(now: datetime | None = None) -> list[int]:
     return attempted
 
 
+def run_pending_backlog() -> dict:
+    """`process_new_notices`(방금 수집한 공고 전용)가 못 잡는 잔고를 주기적으로 쓸어담는다
+    (2026-09-13, 의사결정_로그 126번). 웹 페이지의 "재분석" 버튼은 첨부 재추출(A1) 뒤 AI분석
+    (A2)을 브라우저에서 순차 호출하는데, 그 사이 탭을 닫는 등으로 두 번째 호출이 안 나가면
+    그 공고는 auto_analyze=true인 소스라도 다시는 자동으로 안 잡혔다(process_new_notices는
+    "이번에 새로 수집된 공고"만 봄) — 실사례(notice_id=5476)로 발견. 사용자 지시: "수집/분석
+    자동화는 웹 페이지가 떠 있든 말든 백그라운드에서 자동으로 되어야 한다" — run_due_sources와
+    별개로 몇 분마다 이 함수가 대신 훑어 마저 처리한다."""
+    try:
+        result = run_pending_analysis()
+    except Exception:  # noqa: BLE001 — 이번 회차 실패가 다음 예정 실행(run_due_sources 등)을 막으면 안 됨
+        logger.exception("잔고 처리(run_pending_analysis) 실패")
+        return {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
+    if result["auto_extracted"] or result["auto_analyzed"]:
+        logger.info(
+            "잔고 처리 완료: 추출대상=%s 추출성공=%s 분석대상=%s 분석성공=%s",
+            result["extraction_candidates"], result["auto_extracted"],
+            result["analyze_candidates"], result["auto_analyzed"],
+        )
+    return result
+
+
 def main() -> None:
     scheduler = BlockingScheduler(timezone=KST)
     scheduler.add_job(run_due_sources, CronTrigger(second=0), id="run_due_sources", max_instances=1)
-    logger.info("BidRadar 수집 스케줄러 시작(Asia/Seoul 기준, 매 분 정각 확인)")
+    # 10분마다 — 분 단위로 도는 run_due_sources보다 훨씬 드물게(잔고 처리는 급하지 않음, 분석
+    # 워커 동시실행 상한 2인 prod 사양 고려, CLAUDE.md S8).
+    scheduler.add_job(run_pending_backlog, CronTrigger(minute="*/10"), id="run_pending_backlog", max_instances=1)
+    logger.info("BidRadar 수집 스케줄러 시작(Asia/Seoul 기준, 매 분 정각 확인 + 10분마다 잔고 처리)")
     scheduler.start()
 
 

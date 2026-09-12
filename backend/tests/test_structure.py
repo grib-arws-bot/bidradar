@@ -372,6 +372,36 @@ def test_structure_route_happy_path_then_requirements_visible(done_analysis, mon
     assert conflict.status_code == 409
 
 
+def test_requirements_falls_back_to_last_completed_summary_when_reextracted(done_analysis, monkeypatch, client: TestClient):
+    """2026-09-13 실사례(notice_id=5476) 재현 — ver=1이 A2까지 끝난 뒤, 첨부문서만 다시
+    추출(재추출)한 ver=2가 쌓이면(A1_extract만 done, summary 없음) 상세 화면이 "AI분석
+    미완료·사업비 미공개"로 잘못 보이면 안 된다. summary는 ver=1 걸 그대로 보여주되
+    summary_outdated로 "재추출됨, 재분석 필요"를 알려야 한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    notice_id = _notice_id_of(done_analysis)
+    raw_items = [{"category": "성능", "req_text": "초당 30프레임 이상", "req_value": "30", "req_unit": "fps", "op": "gte", "cite": "제3장 (1)"}]
+
+    with mock.patch("app.services.analysis.structure.fetch", return_value=_mock_anthropic_response(raw_items)):
+        assert client.post(f"/api/notices/{notice_id}/structure", json={"model": "haiku"}).status_code == 200
+
+    with engine.begin() as conn:
+        ver2_id = conn.execute(
+            insert(analysis).values(
+                notice_id=notice_id, source_kind="notice", input_ref="x", status="done", step="A1_extract", ver=2,
+            ).returning(analysis.c.id)
+        ).scalar_one()
+
+    try:
+        got = client.get(f"/api/notices/{notice_id}/requirements").json()
+        assert got["step"] == "A1_extract"  # 진짜 최신(ver=2) 기준 — 재분석 버튼 라벨·재사용 판단용
+        assert got["summary"] == _SAMPLE_SUMMARY  # 하지만 내용은 ver=1의 완료된 결과를 그대로 보여줌
+        assert got["summary_outdated"] is True
+        assert len(got["requirements"]) == 1  # ver=1이 저장한 요구사양도 같이 보여야 함
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(analysis).where(analysis.c.id == ver2_id))
+
+
 def test_structure_route_501_without_api_key(done_analysis, monkeypatch, client: TestClient):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     notice_id = _notice_id_of(done_analysis)

@@ -21,6 +21,8 @@ interface Props {
 // 제목 제외 키워드(2026-09-13, 사용자 지시로 별도 관리 화면 대신 공고 탐색 페이지 인라인
 // 박스로 통합) — 그룹(관리 편의상 1개뿐, 영구 저장 목록)을 이 박스에서 직접 추가·삭제하고
 // 켜고 끄며, 이번 조회에만 쓸 즉석 단어(저장 안 됨)도 같은 박스에서 더할 수 있다.
+// 검색/필터 박스 오른쪽에 1/4 폭으로 배치되므로(2026-09-13 두 번째 배치 조정) 좁은 폭에서도
+// 안 깨지도록 각 줄을 세로로 쌓는다.
 export function NoticeExcludeWordsBox({ values, onChange }: Props) {
   const queryClient = useQueryClient();
   const { notify } = useToast();
@@ -84,16 +86,16 @@ export function NoticeExcludeWordsBox({ values, onChange }: Props) {
           )}
         </Stack>
 
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack spacing={1}>
           <TextField
             size="small"
+            fullWidth
             placeholder="예: 감리, 모집, 고도화, 유지보수"
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleAdd();
             }}
-            sx={{ maxWidth: 280 }}
           />
           <Chip
             icon={<AddIcon fontSize="small" />}
@@ -103,6 +105,7 @@ export function NoticeExcludeWordsBox({ values, onChange }: Props) {
             variant="outlined"
             onClick={handleAdd}
             disabled={!term.trim() || createMutation.isPending}
+            sx={{ alignSelf: "flex-start" }}
           />
         </Stack>
 

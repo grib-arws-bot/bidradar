@@ -497,7 +497,16 @@ def run_structuring_for_notice(conn: Connection, notice_id: int, *, model: str =
 def get_requirements(conn: Connection, notice_id: int) -> dict | None:
     """공고 상세 화면 조회용 — 가장 최근 분석의 요구사양 목록. judgement/matched_product_id는
     A2 단계에선 의미 없는 값(항상 unknown/NULL)이라 화면에 혼동을 주지 않도록 응답에서 뺀다
-    (A3가 실제 판정을 붙이기 전까지)."""
+    (A3가 실제 판정을 붙이기 전까지).
+
+    2026-09-13 발견 — 첨부분석(A1)만 다시 실행하면(재추출) 새 ver가 쌓이는데, 그 새 ver는
+    아직 AI분석(A2)을 안 거쳐 summary가 없다. 여기서 무조건 "가장 최근 ver"만 보면, 이전
+    ver에서 이미 완료된 A2 결과(사업비 등)가 화면에서 통째로 사라져 "AI분석 미공개"로
+    잘못 보였다(실사례: notice_id=5476, ver=1 A2 완료 뒤 ver=2가 A1만 재실행). 목록 카드
+    (notice_query.py의 _latest_analysis_summary_subquery)는 원래부터 "summary가 있는
+    ver 중 최신"만 봐서 이 문제가 없었다 — 상세 화면도 같은 방식으로 맞춘다. 단 step/status는
+    여전히 "진짜 최신 ver" 기준으로 둬서 재분석 버튼 라벨·재추출 재사용 판단(canReuse)이
+    틀어지지 않게 하고, summary만 이전 ver에서 가져왔다면 summary_outdated로 알린다."""
     row = conn.execute(
         select(analysis.c.id, analysis.c.status, analysis.c.step, analysis.c.summary)
         .where(analysis.c.notice_id == notice_id)
@@ -505,6 +514,21 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
     ).first()
     if row is None:
         return None
+
+    summary = row.summary
+    summary_analysis_id = row.id
+    summary_outdated = False
+    if summary is None:
+        fallback = conn.execute(
+            select(analysis.c.id, analysis.c.summary)
+            .where(analysis.c.notice_id == notice_id, analysis.c.summary.is_not(None))
+            .order_by(analysis.c.ver.desc())
+            .limit(1)
+        ).first()
+        if fallback is not None:
+            summary = fallback.summary
+            summary_analysis_id = fallback.id
+            summary_outdated = True
 
     reqs = conn.execute(
         select(
@@ -516,7 +540,7 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
             analysis_requirement.c.cite,
             analysis_requirement.c.task_ref,
         )
-        .where(analysis_requirement.c.analysis_id == row.id)
+        .where(analysis_requirement.c.analysis_id == summary_analysis_id)
         .order_by(analysis_requirement.c.id)
     ).mappings().all()
 
@@ -524,6 +548,7 @@ def get_requirements(conn: Connection, notice_id: int) -> dict | None:
         "analysis_id": row.id,
         "status": row.status,
         "step": row.step,
-        "summary": row.summary,
+        "summary": summary,
+        "summary_outdated": summary_outdated,
         "requirements": [dict(r) for r in reqs],
     }

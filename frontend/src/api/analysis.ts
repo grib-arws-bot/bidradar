@@ -115,6 +115,9 @@ export interface RequirementsResult {
   status: string;
   step: string | null;
   summary: AnalysisSummary | null;
+  // true면 summary가 "진짜 최신 분석"이 아니라 그 이전에 AI분석까지 완료된 버전에서 가져온
+  // 값이다 — 첨부문서만 다시 추출(재추출)하고 아직 AI분석은 안 돌린 상태(2026-09-13).
+  summary_outdated: boolean;
   requirements: Requirement[];
 }
 

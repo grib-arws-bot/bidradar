@@ -32,6 +32,7 @@ export function AnalysisTabsSection({
   // "채널별로 다르게"가 아니라 "완료 여부를 보여달라"는 취지 — 지금은 IRIS는 이미 실행했고
   // 나라장터는 아직 안 해서 결과적으로 채널마다 다르게 보일 뿐).
   const analysisDone = requirementsData?.step === "A2_structure";
+  const summaryOutdated = !!summary && !!requirementsData?.summary_outdated;
   const extractionDone = !!extraction && (extraction.docs?.length ?? 0) > 0;
 
   // 원문 첨부 목록("분석대상 파일")은 페이지 최하단 별도 섹션(AnalyzedDocumentsSection)으로
@@ -48,10 +49,10 @@ export function AnalysisTabsSection({
           variant={extractionDone ? "filled" : "outlined"}
         />
         <Chip
-          label={analysisDone ? "AI분석 완료" : "AI분석 미완료"}
+          label={summaryOutdated ? "AI분석 완료(첨부 재추출됨 — 재분석 필요)" : analysisDone ? "AI분석 완료" : "AI분석 미완료"}
           size="small"
-          color={analysisDone ? "success" : "default"}
-          variant={analysisDone ? "filled" : "outlined"}
+          color={summaryOutdated ? "warning" : analysisDone ? "success" : "default"}
+          variant={analysisDone || summaryOutdated ? "filled" : "outlined"}
         />
       </Stack>
 
@@ -59,6 +60,12 @@ export function AnalysisTabsSection({
         {!summary && (
           <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
             아직 분석되지 않았습니다 — 위 "AI분석 실행" 버튼을 눌러주세요.
+          </Typography>
+        )}
+        {summaryOutdated && (
+          <Typography variant="body2" color="warning.main" sx={{ mb: 2 }}>
+            첨부문서가 새로 추출된 뒤 아직 AI분석을 다시 실행하지 않았습니다 — 아래 내용은 이전
+            버전 분석 결과입니다. 최신 첨부 기준으로 갱신하려면 위 "재분석"을 실행하세요.
           </Typography>
         )}
 
