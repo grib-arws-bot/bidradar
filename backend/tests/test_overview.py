@@ -62,6 +62,8 @@ def test_overview_system_shape(client: TestClient):
     assert "available" in body["resources"]
     if body["resources"]["available"]:
         assert {"cpu", "memory", "disk"} <= body["resources"].keys()
+        # BidRadar 자체 디스크 사용량(pg_database_size) — 2026-09-12, DB가 살아있는 한 항상 채워짐.
+        assert body["resources"]["disk"]["app_used_bytes"] > 0
     assert {"total_calls", "total_tokens", "total_cost_usd", "breakdown"} <= body["llm_usage"].keys()
     # 수집 대상만(schedule_times가 있는 소스) — 실제 운영 중인 5개 소스만 나와야 하고,
     # 15개 전체 소스가 다 나오면 안 됨(수집 안 하는 소스까지 섞이는 회귀 방지).
@@ -72,11 +74,16 @@ def test_overview_notices_shape(client: TestClient):
     response = client.get("/api/overview/notices")
     assert response.status_code == 200
     body = response.json()
-    assert {"cumulative", "yesterday", "yesterday_date"} <= body.keys()
+    assert {"cumulative", "daily"} <= body.keys()
     assert len(body["cumulative"]) > 0
     for row in body["cumulative"]:
         assert row["total"] == row["ai_analyzed"] + row["extracted_only"] + row["unanalyzed"]
         assert "source_name" in row
+    # 최근 14일이 하루도 안 빠지고 다 나와야 한다(수집이 없었던 날도 0으로 채워짐).
+    assert len(body["daily"]) == 14
+    for row in body["daily"]:
+        assert row["total"] == row["ai_analyzed"] + row["extracted_only"] + row["unanalyzed"]
+        assert "date" in row
 
 
 def test_last_n_months_returns_six_consecutive_months_ending_this_month():
@@ -103,11 +110,10 @@ def test_get_system_overview_returns_llm_and_resources():
     assert result["llm_usage"]["total_calls"] >= 0
 
 
-def test_get_notice_overview_yesterday_is_subset_pattern_of_cumulative():
-    """어제 수집분은 누적 안에 포함된 부분집합 성격이라, 어제치 total이 누적 total보다
-    클 수는 없다(같은 source_id 기준)."""
+def test_get_notice_overview_daily_total_is_subset_of_cumulative():
+    """하루치(전체 소스 합산) total이 모든 소스를 합친 누적 total보다 클 수는 없다."""
     with engine.connect() as conn:
         result = get_notice_overview(conn)
-    cumulative_by_source = {r["source_id"]: r["total"] for r in result["cumulative"]}
-    for row in result["yesterday"]:
-        assert row["total"] <= cumulative_by_source.get(row["source_id"], 0)
+    cumulative_total = sum(r["total"] for r in result["cumulative"])
+    for row in result["daily"]:
+        assert row["total"] <= cumulative_total

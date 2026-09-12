@@ -43,7 +43,9 @@ export interface SystemResources {
   error?: string;
   cpu?: { cores: number; host_percent: number; container_percent: number };
   memory?: SystemResourceMetric;
-  disk?: { host_percent: number; host_used_bytes: number; host_total_bytes: number };
+  // app_used_bytes: BidRadar 자체 디스크 사용량(pg_database_size — 첨부파일도 DB에 저장되므로
+  // 사실상 DB+파일을 전부 포함, 2026-09-12). 도커 이미지·로그·백업 파일은 미포함.
+  disk?: { host_percent: number; host_used_bytes: number; host_total_bytes: number; app_used_bytes?: number };
 }
 
 export interface LlmUsageBucket {
@@ -91,10 +93,17 @@ export interface NoticeSourceBreakdown {
   unanalyzed: number;
 }
 
+export interface NoticeDailyPoint {
+  date: string; // "YYYY-MM-DD"(KST)
+  total: number;
+  ai_analyzed: number;
+  extracted_only: number;
+  unanalyzed: number;
+}
+
 export interface NoticeOverview {
   cumulative: NoticeSourceBreakdown[];
-  yesterday: NoticeSourceBreakdown[];
-  yesterday_date: string;
+  daily: NoticeDailyPoint[]; // 최근 14일, 전체 소스 합산
 }
 
 export async function fetchNoticeOverview(): Promise<NoticeOverview> {

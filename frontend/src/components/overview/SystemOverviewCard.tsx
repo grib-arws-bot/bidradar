@@ -1,26 +1,7 @@
-import {
-  Alert,
-  Card,
-  Chip,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  Typography,
-} from "@mui/material";
+import { Alert, Card, Table, TableBody, TableCell, TableHead, TableRow, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchSystemOverview } from "@/api/overview";
-
-const STATUS_LABEL: Record<string, { label: string; color: "success" | "warning" | "error" | "default" }> = {
-  ok: { label: "정상", color: "success" },
-  warn: { label: "주의", color: "warning" },
-  fail: { label: "실패", color: "error" },
-  inactive: { label: "비활성", color: "default" },
-  no_run_yet: { label: "수집 전", color: "default" },
-};
 
 function formatGB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)}GB`;
@@ -38,7 +19,8 @@ const CALL_TYPE_LABELS: Record<string, string> = {
 };
 
 // 카드 2: 시스템 현황(2026-09-12 재설계, ARWS의 "서버 자원" 표 구성 이식 — 항목(CPU/메모리/
-// 디스크) x 열(서버 전체/backend 자체), Docker 소켓 없이 cgroup 파일 직접 읽기).
+// 디스크) x 열(전체/사용(BidRadar)/유휴), Docker 소켓 없이 cgroup 파일 직접 읽기). 데이터
+// 수집채널 상태는 같은 날 별도 카드(ChannelStatusCard)로 분리했다(사용자 지시).
 export function SystemOverviewCard() {
   const { data, isLoading } = useQuery({ queryKey: ["overview-system"], queryFn: fetchSystemOverview });
 
@@ -52,7 +34,7 @@ export function SystemOverviewCard() {
     );
   }
 
-  const { resources, llm_usage, channels } = data;
+  const { resources, llm_usage } = data;
 
   return (
     <Card sx={{ p: 3, height: "100%" }}>
@@ -108,8 +90,8 @@ export function SystemOverviewCard() {
                   </Typography>
                 </TableCell>
                 <TableCell align="right" className="tnum">
-                  {(100 - resources.memory!.host_percent).toFixed(1)}%{" "}
-                  {formatGB(resources.memory!.host_total_bytes - resources.memory!.host_used_bytes)}
+                  {(100 - resources.memory!.host_percent).toFixed(1)}% (
+                  {formatGB(resources.memory!.host_total_bytes - resources.memory!.host_used_bytes)})
                 </TableCell>
               </TableRow>
               <TableRow>
@@ -118,26 +100,33 @@ export function SystemOverviewCard() {
                   {formatGB(resources.disk!.host_total_bytes)}
                 </TableCell>
                 <TableCell align="right" className="tnum" sx={{ color: pctColor(resources.disk!.host_percent) }}>
-                  {resources.disk!.host_percent.toFixed(1)}% ({formatGB(resources.disk!.host_used_bytes)})
+                  <Typography component="div" variant="body2" className="tnum">
+                    {resources.disk!.host_percent.toFixed(1)}% ({formatGB(resources.disk!.host_used_bytes)})
+                  </Typography>
+                  {resources.disk!.app_used_bytes != null && (
+                    <Typography component="div" variant="caption" color="text.secondary" className="tnum">
+                      BidRadar {formatGB(resources.disk!.app_used_bytes)}
+                    </Typography>
+                  )}
                 </TableCell>
                 <TableCell align="right" className="tnum">
-                  {(100 - resources.disk!.host_percent).toFixed(1)}%{" "}
-                  {formatGB(resources.disk!.host_total_bytes - resources.disk!.host_used_bytes)}
+                  {(100 - resources.disk!.host_percent).toFixed(1)}% (
+                  {formatGB(resources.disk!.host_total_bytes - resources.disk!.host_used_bytes)})
                 </TableCell>
               </TableRow>
             </TableBody>
           </Table>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-            디스크는 backend 컨테이너 자체 사용량을 별도로 측정하지 않아 서버 전체 값만 표시합니다.
+            BidRadar 사용량은 DB 크기 기준(첨부파일도 DB에 저장됨) — 도커 이미지·로그·백업 파일은 포함하지 않습니다.
           </Typography>
         </>
       )}
 
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Claude API 사용량 — 누적 {llm_usage.total_calls}건 · {llm_usage.total_tokens.toLocaleString()} 토큰 · $
+        Claude API 사용량 — 이번 달 누적 {llm_usage.total_calls}건 · {llm_usage.total_tokens.toLocaleString()} 토큰 · $
         {llm_usage.total_cost_usd.toFixed(2)}
       </Typography>
-      <Table size="small" sx={{ mb: 2 }}>
+      <Table size="small">
         <TableHead>
           <TableRow>
             <TableCell>호출 유형</TableCell>
@@ -163,28 +152,6 @@ export function SystemOverviewCard() {
           ))}
         </TableBody>
       </Table>
-
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        데이터 수집채널 상태
-      </Typography>
-      <Stack spacing={0.75}>
-        {channels.map((c) => {
-          const meta = STATUS_LABEL[c.status] ?? STATUS_LABEL.no_run_yet;
-          return (
-            <Stack key={c.id} direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
-                {c.name}
-              </Typography>
-              <Stack direction="row" spacing={1.5} alignItems="center" flexShrink={0}>
-                <Typography variant="caption" color="text.secondary">
-                  {c.last_run_at ? new Date(c.last_run_at).toLocaleString("ko-KR") : "수집 이력 없음"}
-                </Typography>
-                <Chip label={meta.label} size="small" color={meta.color} />
-              </Stack>
-            </Stack>
-          );
-        })}
-      </Stack>
     </Card>
   );
 }
