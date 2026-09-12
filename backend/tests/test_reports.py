@@ -276,3 +276,144 @@ def test_ensure_notices_extracted_runs_for_never_attempted(notice_without_analys
     with mock.patch("app.services.interest_report.run_extraction_pilot") as mock_run:
         _ensure_notices_extracted([notice_without_analysis])
     mock_run.assert_called_once()
+
+
+# ---- 보고서 삭제(수동·자동 보관기간)·발송(2026-09-12) --------------------------------
+
+
+def test_delete_report_removes_it(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    response = client.delete(f"/api/customers/{grib_customer_id}/reports/{created['id']}")
+    assert response.status_code == 204
+
+    listed = client.get(f"/api/customers/{grib_customer_id}/reports").json()
+    assert all(r["id"] != created["id"] for r in listed)
+
+
+def test_delete_report_404_for_unknown_report(client: TestClient, grib_customer_id: int):
+    response = client.delete(f"/api/customers/{grib_customer_id}/reports/999999999")
+    assert response.status_code == 404
+
+
+def test_delete_report_404_when_customer_mismatched(client: TestClient, grib_customer_id: int):
+    """다른 고객 소유 보고서를 자기 고객 id로 지우려 하면 거부돼야 한다(권한 우회 방지)."""
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    response = client.delete(f"/api/customers/999999999/reports/{created['id']}")
+    assert response.status_code == 404
+
+
+def test_send_report_calls_mailer_with_recipients_and_link(client: TestClient, grib_customer_id: int):
+    from app.models import customer
+
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=["a@example.com"])
+        )
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+
+    with mock.patch("app.services.mailer.smtplib.SMTP") as mock_smtp, mock.patch(
+        "app.config.settings.smtp_host", "smtp.example.com"
+    ), mock.patch("app.config.settings.smtp_user", "u"), mock.patch("app.config.settings.smtp_password", "p"):
+        response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+
+    assert response.status_code == 200
+    assert response.json()["sent_to"] == ["a@example.com"]
+    mock_smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+
+
+def test_send_report_422_without_recipients(client: TestClient, grib_customer_id: int):
+    from app.models import customer
+
+    with engine.begin() as conn:
+        conn.execute(customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=[]))
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+
+    with mock.patch("app.config.settings.smtp_host", "smtp.example.com"), mock.patch(
+        "app.config.settings.smtp_user", "u"
+    ), mock.patch("app.config.settings.smtp_password", "p"):
+        response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+    assert response.status_code == 422
+
+
+def test_send_report_501_when_smtp_not_configured(client: TestClient, grib_customer_id: int):
+    from app.models import customer
+
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=["a@example.com"])
+        )
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+
+    with mock.patch("app.config.settings.smtp_host", ""):
+        response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+    assert response.status_code == 501
+
+
+def test_send_report_404_for_unknown_report(client: TestClient, grib_customer_id: int):
+    response = client.post(f"/api/customers/{grib_customer_id}/reports/999999999/send")
+    assert response.status_code == 404
+
+
+def test_delete_expired_reports_removes_only_old_ones(grib_customer_id: int):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import newsletter_report
+    from app.services.app_settings import set_report_retention_days
+    from app.services.interest_report import delete_expired_reports
+
+    with engine.begin() as conn:
+        old_id = conn.execute(
+            newsletter_report.insert()
+            .values(customer_id=grib_customer_id, token="test-old-token", notices=[], summary={})
+            .returning(newsletter_report.c.id)
+        ).scalar_one()
+        conn.execute(
+            newsletter_report.update()
+            .where(newsletter_report.c.id == old_id)
+            .values(generated_at=datetime.now(timezone.utc) - timedelta(days=100))
+        )
+        recent_id = conn.execute(
+            newsletter_report.insert()
+            .values(customer_id=grib_customer_id, token="test-recent-token", notices=[], summary={})
+            .returning(newsletter_report.c.id)
+        ).scalar_one()
+        set_report_retention_days(conn, 90)
+
+    try:
+        with engine.begin() as conn:
+            deleted = delete_expired_reports(conn)
+        assert deleted >= 1
+
+        with engine.connect() as conn:
+            remaining_ids = set(
+                conn.execute(select(newsletter_report.c.id).where(newsletter_report.c.customer_id == grib_customer_id)).scalars()
+            )
+        assert old_id not in remaining_ids
+        assert recent_id in remaining_ids
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(newsletter_report).where(newsletter_report.c.id.in_([old_id, recent_id])))
+            set_report_retention_days(conn, None)
+
+
+def test_delete_expired_reports_noop_when_retention_not_set(grib_customer_id: int):
+    from app.models import newsletter_report
+    from app.services.app_settings import set_report_retention_days
+    from app.services.interest_report import delete_expired_reports
+
+    with engine.begin() as conn:
+        set_report_retention_days(conn, None)
+        old_id = conn.execute(
+            newsletter_report.insert()
+            .values(customer_id=grib_customer_id, token="test-noop-token", notices=[], summary={})
+            .returning(newsletter_report.c.id)
+        ).scalar_one()
+
+    try:
+        with engine.begin() as conn:
+            assert delete_expired_reports(conn) == 0
+        with engine.connect() as conn:
+            assert conn.execute(select(newsletter_report.c.id).where(newsletter_report.c.id == old_id)).first() is not None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(newsletter_report).where(newsletter_report.c.id == old_id))

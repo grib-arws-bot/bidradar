@@ -35,7 +35,8 @@ from app.services.customer_profile import (
     save_manual_profile_summary,
     summarize_customer_profile,
 )
-from app.services.interest_report import generate_report, list_reports
+from app.services.interest_report import delete_report, generate_report, list_reports, send_report_email
+from app.services.mailer import SmtpNotConfiguredError
 from app.services.report_commentary import (
     LLMNotConfiguredError as CommentaryLLMNotConfiguredError,
     MODEL_ALIASES as MODEL_ALIASES_COMMENTARY,
@@ -215,6 +216,28 @@ def post_report(customer_id: int, _email: str = Depends(require_auth)) -> dict:
 def get_reports(customer_id: int, _email: str = Depends(require_auth)) -> list[dict]:
     with engine.connect() as conn:
         return list_reports(conn, customer_id)
+
+
+@router.delete("/{customer_id}/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def delete_report_route(customer_id: int, report_id: int, _email: str = Depends(require_auth)) -> None:
+    with engine.begin() as conn:
+        found = delete_report(conn, customer_id, report_id)
+    if not found:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="보고서를 찾을 수 없습니다.")
+
+
+@router.post("/{customer_id}/reports/{report_id}/send")
+def post_send_report(customer_id: int, report_id: int, _email: str = Depends(require_auth)) -> dict:
+    """설정된 보고서 수신자 이메일로 즉시 발송한다(관리자가 누를 때만 — 자동 발송 아님)."""
+    with engine.connect() as conn:
+        try:
+            return send_report_email(conn, customer_id, report_id)
+        except ReportNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except SmtpNotConfiguredError as exc:
+            raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 class ProfileSummarizeRequest(BaseModel):

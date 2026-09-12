@@ -1,4 +1,6 @@
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import {
   Alert,
   Box,
@@ -9,10 +11,11 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  IconButton,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
-  MenuItem,
   Radio,
   RadioGroup,
   Stack,
@@ -27,7 +30,8 @@ import { Link as RouterLink } from "react-router-dom";
 import type { LlmModel } from "@/api/analysis";
 import { fetchCustomers } from "@/api/customerInterests";
 import { fetchCustomersFull, generateReportCommentary } from "@/api/customers";
-import { fetchReports, generateReport } from "@/api/reports";
+import { deleteReport, fetchReports, generateReport, sendReport } from "@/api/reports";
+import { fetchSettings, updateSettings } from "@/api/settings";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -36,9 +40,9 @@ const SELECTABLE_MODELS: { value: LlmModel; label: string }[] = [
   { value: "sonnet", label: "Sonnet (기본, 고품질)" },
 ];
 
-// 보고서 관리(2026-09-05 메뉴 재정리 — 기존 "고객 관심 주제" 화면에서 리포트 부분만 분리) —
-// 고객마다 여러 건씩 쌓이는 리포트를 다루는 화면이라 고객 상세(1건짜리 설정)와는 별도가 맞다고
-// 판단. 매칭 조건 설정은 "고객 관리 > 상세" 화면에서.
+// 보고서 관리(2026-09-05 메뉴 재정리, 2026-09-12 목록형으로 재구성 — 고객이 늘어나면
+// 드롭다운보다 왼쪽 목록에서 바로 훑어보는 편이 낫다는 사용자 지시) — 왼쪽 고객 목록, 오른쪽
+// 선택된 고객의 보고서 목록(생성·발송·삭제). 매칭 조건 설정은 "고객 관리 > 상세" 화면에서.
 export function ReportsManagementPage() {
   const queryClient = useQueryClient();
   const { notify } = useToast();
@@ -72,8 +76,24 @@ export function ReportsManagementPage() {
     onError: (error) => notify("error", apiErrorMessage(error, "리포트 생성에 실패했습니다.")),
   });
 
+  const deleteReportMutation = useMutation({
+    mutationFn: (reportId: number) => deleteReport(customerId!, reportId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reports", customerId] });
+      notify("success", "보고서를 삭제했습니다.");
+    },
+    onError: (error) => notify("error", apiErrorMessage(error, "보고서 삭제에 실패했습니다.")),
+  });
+
+  const sendReportMutation = useMutation({
+    mutationFn: (reportId: number) => sendReport(customerId!, reportId),
+    onSuccess: ({ sent_to }) => notify("success", `발송했습니다: ${sent_to.join(", ")}`),
+    onError: (error) => notify("error", apiErrorMessage(error, "보고서 발송에 실패했습니다.")),
+  });
+
   const currentCustomer = (customersFullQuery.data ?? []).find((c) => c.id === customerId);
   const hasProfileSummary = Boolean(currentCustomer?.profile_summarized_at);
+  const hasRecipients = (currentCustomer?.report_recipient_emails.length ?? 0) > 0;
 
   const [commentaryTargetReportId, setCommentaryTargetReportId] = useState<number | null>(null);
   const [commentaryModel, setCommentaryModel] = useState<LlmModel>("sonnet");
@@ -93,84 +113,152 @@ export function ReportsManagementPage() {
     commentaryMutation.mutate(reportId);
   }
 
+  // 보고서 자동 삭제 보관기간 설정(2026-09-12 사용자 지시) — 생성 후 N일 지나면 다음 리포트
+  // 생성 시점에 자동으로 지워진다(app/services/interest_report.py delete_expired_reports).
+  const settingsQuery = useQuery({ queryKey: ["app-settings"], queryFn: fetchSettings });
+  const [retentionInput, setRetentionInput] = useState("");
+  useEffect(() => {
+    if (settingsQuery.data) setRetentionInput(settingsQuery.data.report_retention_days?.toString() ?? "");
+  }, [settingsQuery.data]);
+  const saveSettingsMutation = useMutation({
+    mutationFn: (days: number | null) => updateSettings({ report_retention_days: days }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["app-settings"] });
+      notify("success", "설정을 저장했습니다.");
+    },
+    onError: (error) => notify("error", apiErrorMessage(error, "설정 저장에 실패했습니다.")),
+  });
+
   return (
-    <Stack spacing={3} sx={{ maxWidth: 720 }}>
+    <Stack spacing={3}>
       <Box>
         <Typography variant="h2">보고서 관리</Typography>
         <Typography variant="body2" color="text.secondary">
-          고객별 관심분야 리포트를 생성·발송 전 확인합니다. 매칭 조건은 "고객 관리" 상세
-          화면에서 설정합니다.
+          고객별 관심분야 리포트를 생성·발송·삭제합니다. 매칭 조건은 "고객 관리" 상세 화면에서
+          설정합니다.
         </Typography>
       </Box>
 
-      <TextField
-        select
-        label="고객"
-        sx={{ maxWidth: 320 }}
-        value={customerId ?? ""}
-        onChange={(e) => setCustomerId(Number(e.target.value))}
-      >
-        {(customersQuery.data ?? []).map((c) => (
-          <MenuItem key={c.id} value={c.id}>
-            {c.name} {c.plan_tier === "internal" ? "(그립 자신)" : `(${c.plan_tier})`}
-          </MenuItem>
-        ))}
-      </TextField>
-
       <Card sx={{ p: 3 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="h3">리포트 목록</Typography>
-          <Button
+        <Typography variant="h3" sx={{ mb: 1.5 }}>
+          설정
+        </Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <TextField
             size="small"
+            type="number"
+            label="보고서 자동 삭제 보관기간(일)"
+            value={retentionInput}
+            onChange={(e) => setRetentionInput(e.target.value)}
+            slotProps={{ htmlInput: { min: 1 } }}
+            sx={{ width: 260 }}
+            helperText="생성 후 이 기간이 지나면 자동 삭제됩니다. 비워두면 자동 삭제하지 않습니다."
+          />
+          <Button
             variant="outlined"
-            disabled={generateReportMutation.isPending || customerId === null}
-            onClick={() => generateReportMutation.mutate()}
+            disabled={saveSettingsMutation.isPending}
+            onClick={() => saveSettingsMutation.mutate(retentionInput.trim() === "" ? null : Number(retentionInput))}
           >
-            지금 생성
+            저장
           </Button>
         </Stack>
-        {copiedToken && (
-          <Typography variant="caption" color="success.main" sx={{ display: "block", mb: 1 }}>
-            링크가 클립보드에 복사됐습니다: /r/{copiedToken}
+      </Card>
+
+      <Stack direction="row" spacing={3} alignItems="flex-start">
+        <Card sx={{ width: 280, flexShrink: 0 }}>
+          <Typography variant="h3" sx={{ p: 2, pb: 1 }}>
+            고객
           </Typography>
-        )}
-        <List dense disablePadding>
-          {(reportsQuery.data ?? []).map((r) => (
-            <ListItem
-              key={r.id}
-              disableGutters
-              secondaryAction={
-                <Tooltip title={hasProfileSummary ? "" : "고객 프로필 요약을 먼저 생성하세요(고객 관리 상세 화면)"}>
-                  <span>
-                    <Button
-                      size="small"
-                      startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
-                      disabled={!hasProfileSummary || commentaryMutation.isPending}
-                      onClick={() => setCommentaryTargetReportId(r.id)}
-                    >
-                      {r.ai_generated_at ? "AI 코멘트 재생성" : "AI 코멘트 생성"}
-                    </Button>
-                  </span>
-                </Tooltip>
-              }
+          <List dense disablePadding>
+            {(customersQuery.data ?? []).map((c) => (
+              <ListItem key={c.id} disablePadding>
+                <ListItemButton selected={c.id === customerId} onClick={() => setCustomerId(c.id)}>
+                  <ListItemText
+                    primary={c.name}
+                    secondary={c.plan_tier === "internal" ? "그립 자신" : c.plan_tier}
+                  />
+                </ListItemButton>
+              </ListItem>
+            ))}
+          </List>
+        </Card>
+
+        <Card sx={{ p: 3, flexGrow: 1 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+            <Typography variant="h3">리포트 목록</Typography>
+            <Button
+              variant="outlined"
+              disabled={generateReportMutation.isPending || customerId === null}
+              onClick={() => generateReportMutation.mutate()}
             >
-              <ListItemText
-                primary={`${new Date(r.generated_at).toLocaleDateString("ko-KR")} · ${r.summary.total}건`}
-                secondary={
-                  <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
-                    /r/{r.token} (조회 {r.view_count}회)
-                  </RouterLink>
-                }
-              />
-            </ListItem>
-          ))}
-          {(reportsQuery.data ?? []).length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              아직 생성한 리포트가 없습니다.
+              보고서 생성
+            </Button>
+          </Stack>
+          {copiedToken && (
+            <Typography variant="caption" color="success.main" sx={{ display: "block", mb: 1 }}>
+              링크가 클립보드에 복사됐습니다: /r/{copiedToken}
             </Typography>
           )}
-        </List>
-      </Card>
+          <List dense disablePadding>
+            {(reportsQuery.data ?? []).map((r) => (
+              <ListItem
+                key={r.id}
+                disableGutters
+                secondaryAction={
+                  <Stack direction="row" spacing={0.5}>
+                    <Tooltip title={hasProfileSummary ? "" : "고객 프로필 요약을 먼저 생성하세요(고객 관리 상세 화면)"}>
+                      <span>
+                        <Button
+                          size="small"
+                          startIcon={<AutoAwesomeOutlinedIcon fontSize="small" />}
+                          disabled={!hasProfileSummary || commentaryMutation.isPending}
+                          onClick={() => setCommentaryTargetReportId(r.id)}
+                        >
+                          {r.ai_generated_at ? "AI 코멘트 재생성" : "AI 코멘트 생성"}
+                        </Button>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title={hasRecipients ? "설정된 수신자에게 발송" : "고객 상세 화면에서 보고서 수신자 이메일을 먼저 등록하세요"}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          disabled={!hasRecipients || sendReportMutation.isPending}
+                          onClick={() => sendReportMutation.mutate(r.id)}
+                        >
+                          <SendOutlinedIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title="삭제">
+                      <IconButton
+                        size="small"
+                        disabled={deleteReportMutation.isPending}
+                        onClick={() => deleteReportMutation.mutate(r.id)}
+                      >
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                }
+              >
+                <ListItemText
+                  primary={`${new Date(r.generated_at).toLocaleDateString("ko-KR")} · ${r.summary.total}건`}
+                  secondary={
+                    <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
+                      /r/{r.token} (조회 {r.view_count}회)
+                    </RouterLink>
+                  }
+                />
+              </ListItem>
+            ))}
+            {(reportsQuery.data ?? []).length === 0 && (
+              <Typography variant="body2" color="text.secondary">
+                아직 생성한 리포트가 없습니다.
+              </Typography>
+            )}
+          </List>
+        </Card>
+      </Stack>
 
       <Dialog open={commentaryTargetReportId !== null} onClose={() => setCommentaryTargetReportId(null)} maxWidth="xs" fullWidth>
         <DialogTitle>AI 코멘트 생성</DialogTitle>

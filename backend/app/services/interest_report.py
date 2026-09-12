@@ -8,13 +8,15 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import desc, insert, select, update
+from sqlalchemy import delete, desc, insert, select, update
 from sqlalchemy.engine import Connection
 
 from app.db import engine
 from app.models import analysis, customer, newsletter_report, source
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
+from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
+from app.services.report_commentary import ReportNotFoundError
 
 REPORT_LIMIT = 20
 
@@ -88,9 +90,35 @@ def _ensure_notices_extracted(notice_ids: list[int]) -> None:
             pass
 
 
+def delete_expired_reports(conn: Connection) -> int:
+    """보관기간(app_settings.get_report_retention_days, 설정 안 하면 자동 삭제 없음)이 지난
+    리포트를 지운다(2026-09-12 사용자 지시 — "생성 후 N일 지나면 자동 삭제"). notice_cleanup.py의
+    "수집 시 자동 정리"와 같은 방식으로, 별도 스케줄러 없이 generate_report() 호출 시마다 같이
+    돈다."""
+    retention_days = get_report_retention_days(conn)
+    if retention_days is None:
+        return 0
+    result = conn.execute(
+        delete(newsletter_report).where(newsletter_report.c.generated_at < datetime.now(timezone.utc) - timedelta(days=retention_days))
+    )
+    return result.rowcount
+
+
+def delete_report(conn: Connection, customer_id: int, report_id: int) -> bool:
+    result = conn.execute(
+        delete(newsletter_report).where(
+            newsletter_report.c.id == report_id, newsletter_report.c.customer_id == customer_id
+        )
+    )
+    return result.rowcount > 0
+
+
 def generate_report(customer_id: int) -> dict | None:
     """이번 시점 관심도 계산 결과를 스냅샷으로 고정해 저장한다. 이후 재계산되지 않으므로,
     이메일에 링크를 실어 보낸 뒤 원본 데이터가 바뀌어도 고객이 보는 리포트는 안 흔들린다."""
+    with engine.begin() as conn:
+        delete_expired_reports(conn)
+
     with engine.connect() as conn:
         profile = get_interest_profile(conn, customer_id)
         if profile is None:
@@ -119,6 +147,45 @@ def generate_report(customer_id: int) -> dict | None:
         "summary": summary,
         "generated_at": row.generated_at.isoformat(),
     }
+
+
+def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dict:
+    """설정된 보고서 수신자 이메일(customer.report_recipient_emails)로 리포트 링크를 보낸다.
+    관리자가 "발송" 버튼을 눌렀을 때만 실행 — 자동 발송 아님. 요약만 이메일에 담고 상세는
+    토큰 링크로 유도한다(reports.py 모듈 설명과 같은 설계, 2026-09-01 결정)."""
+    from app.config import settings
+    from app.services.mailer import send_email
+
+    row = conn.execute(
+        select(
+            newsletter_report.c.token, newsletter_report.c.summary, newsletter_report.c.generated_at,
+            customer.c.name, customer.c.report_recipient_emails,
+        )
+        .select_from(newsletter_report)
+        .join(customer, customer.c.id == newsletter_report.c.customer_id)
+        .where(newsletter_report.c.id == report_id, newsletter_report.c.customer_id == customer_id)
+    ).mappings().first()
+    if row is None:
+        raise ReportNotFoundError(f"보고서를 찾을 수 없습니다: {report_id}")
+
+    recipients = row["report_recipient_emails"] or []
+    if not recipients:
+        raise ValueError("보고서 수신자 이메일이 설정되지 않았습니다 — 고객 상세 화면에서 먼저 등록하세요.")
+    report_url = f"{settings.public_base_url}/r/{row['token']}"
+    summary = row["summary"]
+    subject = f"[BidRadar] {row['name']} 관심 공고 리포트 — 신규 {summary.get('total', 0)}건"
+    text_body = (
+        f"{row['name']}님을 위한 관심 공고 리포트가 도착했습니다.\n\n"
+        f"총 {summary.get('total', 0)}건, 마감임박 {summary.get('closing_soon', 0)}건.\n\n"
+        f"자세히 보기: {report_url}\n"
+    )
+    html_body = (
+        f"<p>{row['name']}님을 위한 관심 공고 리포트가 도착했습니다.</p>"
+        f"<p>총 <b>{summary.get('total', 0)}건</b>, 마감임박 <b>{summary.get('closing_soon', 0)}건</b>.</p>"
+        f'<p><a href="{report_url}">자세히 보기</a></p>'
+    )
+    send_email(to=recipients, subject=subject, html_body=html_body, text_body=text_body)
+    return {"sent_to": recipients}
 
 
 def list_reports(conn: Connection, customer_id: int) -> list[dict]:

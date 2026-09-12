@@ -46,6 +46,14 @@ services:
       # ARWS deploy-to-production.ps1과 동일 패턴). stg는 보통 비워둬도 무방.
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # 보고서 이메일 발송(2026-09-12) — 하이웍스 SMTP(ARWS와 동일). 미설정이면 발송 API가
+      # 501로 명시적으로 거부한다(조용히 실패하지 않음, app/services/mailer.py).
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-report@grib.co.kr}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:13200}
     ports:
       # 브라우저는 이 포트를 직접 호출하지 않음(nginx가 /api를 리버스 프록시, U3에서 추가) —
       # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출.

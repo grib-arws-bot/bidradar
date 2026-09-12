@@ -72,6 +72,20 @@ export async function fetchReports(customerId: number): Promise<ReportListItem[]
   return data;
 }
 
+export async function deleteReport(customerId: number, reportId: number): Promise<void> {
+  await apiClient.delete(`/customers/${customerId}/reports/${reportId}`);
+}
+
+export interface SendReportResult {
+  sent_to: string[];
+}
+
+// 설정된 보고서 수신자 이메일로 즉시 발송(2026-09-12) — 관리자가 누를 때만, 자동 발송 아님.
+export async function sendReport(customerId: number, reportId: number): Promise<SendReportResult> {
+  const { data } = await apiClient.post<SendReportResult>(`/customers/${customerId}/reports/${reportId}/send`);
+  return data;
+}
+
 export async function fetchPublicReport(token: string): Promise<PublicReport> {
   const { data } = await apiClient.get<PublicReport>(`/public/reports/${token}`);
   return data;

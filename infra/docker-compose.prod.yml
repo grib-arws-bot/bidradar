@@ -24,6 +24,8 @@ services:
       # config.py의 secure 쿠키 플래그가 이 값으로만 결정된다(X-Forwarded-Proto 판단 없음 — ARWS
       # Secure 플래그 사고 재현 방지, app/api/auth.py 주석 참고) — prod에서 반드시 있어야 한다.
       - ENVIRONMENT=production
+      # 보고서 이메일의 링크(/r/{token})를 실제 도메인으로 만들기 위함(기본값은 stg용 localhost).
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://thingx.grib-iot.com:3300}
 
   # scheduler는 애초에 호스트 포트를 안 쓰므로(docker-compose.yml에 ports 자체가 없음) 여기 별도
   # 오버라이드가 불필요 — ENVIRONMENT는 스케줄러 자체 동작(수집 로직)엔 영향 없어 생략.
