@@ -15,6 +15,15 @@ g2b 계열(입찰공고·사전규격·발주계획) 첨부 발견 로직은 이
 아는 일반 안내 문서는 건너뛴다(_SKIP_NAME_KEYWORDS). zip은 더 이상 통째로 건너뛰지 않는다 —
 이름이 걸러지지 않으면(예: "제안요청서(RFP) 등 관련서식.zip") 열어서 안의 모든 파일을
 개별적으로 추출한다(내부 파일에도 같은 이름 필터 적용).
+
+IRIS 상세페이지 "공고문" 폴백(2026-09-12, 사용자 지시) — "모든 내용은 첨부파일에 다 들어
+있으니, 첨부파일 다운로드/추출이 실패한 경우에만" 상세페이지의 "■ 공고문" 섹션(스마트에디터로
+작성된 자유서술 본문, `class="se-contents"`)을 대체 텍스트로 쓴다. 실측 확인(2026-09-12,
+IRIS 공고 2건): 이 클래스는 페이지에 정확히 1번만 나타나 "공고문" 섹션만 정확히 골라낼 수
+있고, "사업담당자/연락처"(PII) 필드는 완전히 별도 위치(`<li>` 항목)에 있어 이 섹션 안에는
+섞여 들어오지 않는다. g2b.go.kr 상세페이지는 반대로 WebSquare SPA라 정적으로 받은 HTML에
+메뉴 정의 데이터만 있고 실제 공고 내용은 JS가 별도 API를 호출해 그려서(Playwright 미도입
+상태론 접근 불가, 2026-09-12 재확인) 같은 폴백을 적용할 수 없다.
 """
 
 from __future__ import annotations
@@ -24,6 +33,7 @@ import io
 import re
 import zipfile
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from urllib.parse import quote, unquote
 
 from sqlalchemy import select
@@ -62,6 +72,50 @@ def _discover_iris_attachments(html: str) -> list[dict]:
         )
         found.append({"name": file_name, "download_url": download_url, "inline_text": None})
     return found
+
+
+class _IrisNoticeBodyParser(HTMLParser):
+    """`class="se-contents"` div 하나만 골라 텍스트로 뽑는다. bs4/lxml 없이 표준 라이브러리만
+    사용 — div 중첩 깊이를 세어 안쪽 `</div>`에서 엉뚱하게 잘리지 않게 한다."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._in_target = False
+        self._depth = 0
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "div":
+            if self._in_target and tag in ("br", "p", "tr", "li"):
+                self._chunks.append("\n")
+            return
+        if not self._in_target:
+            classes = (dict(attrs).get("class") or "").split()
+            if "se-contents" in classes:
+                self._in_target = True
+                self._depth = 1
+            return
+        self._depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._in_target and tag == "div":
+            self._depth -= 1
+            if self._depth == 0:
+                self._in_target = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_target and data.strip():
+            self._chunks.append(data.strip())
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self._chunks).strip()
+
+
+def _extract_iris_notice_body(html: str) -> str | None:
+    parser = _IrisNoticeBodyParser()
+    parser.feed(html)
+    return parser.text or None
 
 
 def _kind_from_filename(filename: str) -> str:
@@ -215,10 +269,12 @@ def run_extraction_pilot(conn: Connection, notice_id: int, *, prefetched_raw_ite
         ).returning(analysis.c.id)
     ).scalar_one()
 
+    is_iris = "iris.go.kr" in notice_url
+    iris_html: str | None = None
     try:
-        if "iris.go.kr" in notice_url:
-            html = fetch(notice_url).text
-            attachments = _discover_iris_attachments(html)
+        if is_iris:
+            iris_html = fetch(notice_url).text
+            attachments = _discover_iris_attachments(iris_html)
         else:
             anchor_dt = row.open_dt or row.created_at
             attachments = _discover_g2b_attachments(
@@ -299,6 +355,23 @@ def run_extraction_pilot(conn: Connection, notice_id: int, *, prefetched_raw_ite
                 else:
                     doc_row = _extract_one(file_name, content)
                     any_ok = any_ok or doc_row["extract_ok"]
+                    conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+                    docs_result.append(doc_row)
+
+            # IRIS 상세페이지 "공고문" 폴백(2026-09-12) — 첨부가 아예 없거나(attachments=0)
+            # 있어도 전부 다운로드/추출 실패한(any_ok=False) 경우에만 발동. 첨부가 정상
+            # 추출됐으면 이미 "모든 내용이 첨부파일에 들어있다"(사용자 확인)는 전제로 건드리지
+            # 않는다.
+            if is_iris and not any_ok and iris_html:
+                body_text = _extract_iris_notice_body(iris_html)
+                if body_text:
+                    text_bytes = body_text.encode("utf-8")
+                    doc_row = {
+                        "name": "공고문(상세페이지)", "kind": "text", "bytes": len(text_bytes),
+                        "sha256": hashlib.sha256(text_bytes).hexdigest(), "extract_method": "iris_detail_page_fallback",
+                        "extract_ok": True, "error": None, "text": body_text,
+                    }
+                    any_ok = True
                     conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
                     docs_result.append(doc_row)
     except Exception as exc:  # noqa: BLE001 — 조용한 실패 금지: "running"에 멈추는 대신 반드시 failed로 기록

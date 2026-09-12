@@ -127,6 +127,15 @@ def test_should_skip_by_name_ignores_whitespace_inside_keyword():
     assert _should_skip_by_name("붙임 03. 관련 법령 및 규정.zip") is True
 
 
+_IRIS_NOTICE_BODY_HTML = """
+<li class="write col-md-6"><strong>사업담당자<br>연락처</strong>홍길동(010-1234-5678)</li>
+<strong class="title">■ 공고문</strong>
+<div class="se-contents">
+  <div class="se-para-div"><p>테스트 공고문 본문입니다.</p></div>
+</div>
+"""
+
+
 def test_discover_iris_attachments_filters_by_name_keyword_not_zip():
     found = _discover_iris_attachments(_SAMPLE_HTML)
     names = [f["name"] for f in found]
@@ -213,6 +222,75 @@ def test_run_extraction_pilot_end_to_end(iris_notice):
     assert latest["status"] == "done"
     assert len(latest["docs"]) == 3  # zip 안의 관련서식.pdf까지 별도 행으로
     assert any("공고문 본문" in (d["text"] or "") for d in latest["docs"])
+
+
+def test_run_extraction_pilot_iris_falls_back_to_notice_body_when_no_attachments(iris_notice):
+    """2026-09-12 사용자 지시 — "모든 내용은 첨부파일에 다 들어있지만, 실패하는 경우에만"
+    상세페이지 "■ 공고문" 섹션을 대체 텍스트로 쓴다. 첨부 자체가 없는 경우(가장 흔한 케이스:
+    _discover_iris_attachments가 0건)."""
+    with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
+        html_resp = mock.Mock()
+        html_resp.text = _IRIS_NOTICE_BODY_HTML  # 첨부 onclick 스크립트가 아예 없음
+        mock_fetch.return_value = html_resp
+
+        with engine.begin() as conn:
+            result = run_extraction_pilot(conn, iris_notice)
+
+    assert result["status"] == "done"
+    assert result["attachments_found"] == 0
+    assert len(result["docs"]) == 1
+    doc = result["docs"][0]
+    assert doc["extract_ok"] is True
+    assert doc["extract_method"] == "iris_detail_page_fallback"
+    assert "테스트 공고문 본문입니다" in doc["text"]
+    # PII(사업담당자/연락처)는 별도 <li>에 있어 se-contents 섹션 안에 섞여 들어오면 안 된다.
+    assert "사업담당자" not in doc["text"]
+    assert "010-1234-5678" not in doc["text"]
+
+
+def test_run_extraction_pilot_iris_falls_back_when_all_attachments_fail(iris_notice):
+    """첨부는 발견됐지만 다운로드가 전부 실패한 경우에도 공고문 폴백이 발동해 결과적으로
+    "done"이 된다(원래는 이 경우 "failed"였음)."""
+    with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
+        html_resp = mock.Mock()
+        html_resp.text = _SAMPLE_HTML + _IRIS_NOTICE_BODY_HTML
+
+        def _side_effect(url, *args, **kwargs):
+            if url == "https://www.iris.go.kr/contents/retrieveBsnsAncmView.do?ancmId=999999":
+                return html_resp
+            raise RuntimeError("다운로드 실패(테스트)")
+
+        mock_fetch.side_effect = _side_effect
+
+        with engine.begin() as conn:
+            result = run_extraction_pilot(conn, iris_notice)
+
+    assert result["status"] == "done"
+    assert result["attachments_found"] == 3  # 공고문.pdf·안내서.hwpx·제안요청서zip(end-to-end 테스트와 동일)
+    fallback_docs = [d for d in result["docs"] if d.get("extract_method") == "iris_detail_page_fallback"]
+    assert len(fallback_docs) == 1
+    other_docs = [d for d in result["docs"] if d.get("extract_method") != "iris_detail_page_fallback"]
+    assert len(other_docs) == 3
+    assert all(not d["extract_ok"] for d in other_docs)
+
+
+def test_run_extraction_pilot_iris_skips_fallback_when_attachment_succeeds(iris_notice):
+    """첨부가 정상 추출되면 "모든 내용은 첨부파일에 들어있다"는 전제로 폴백을 발동하지 않는다
+    (불필요한 중복 문서 방지)."""
+    with mock.patch("app.services.analysis_pilot.fetch") as mock_fetch:
+        html_resp = mock.Mock()
+        html_resp.text = _SAMPLE_HTML + _IRIS_NOTICE_BODY_HTML
+        mock_fetch.side_effect = [html_resp, _fake_pdf_response(), _fake_hwpx_response()]
+
+        with engine.begin() as conn:
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "공고문 본문 텍스트"
+                MockReader.return_value.pages = [fake_page]
+                result = run_extraction_pilot(conn, iris_notice)
+
+    assert result["status"] == "done"
+    assert not any(d.get("extract_method") == "iris_detail_page_fallback" for d in result["docs"])
 
 
 @pytest.fixture
