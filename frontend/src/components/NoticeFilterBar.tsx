@@ -1,7 +1,9 @@
 import CloseIcon from "@mui/icons-material/Close";
-import { Autocomplete, Chip, MenuItem, Stack, TextField } from "@mui/material";
+import { Autocomplete, Chip, FormControlLabel, MenuItem, Stack, Switch, TextField, Tooltip } from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
 
 import type { FilterOptions } from "@/api/notices";
+import { fetchNoticeExcludeWords } from "@/api/noticeExcludeWords";
 
 export interface NoticeFilterValues {
   domain: number[];
@@ -19,6 +21,10 @@ export interface NoticeFilterValues {
   close_in: string;
   status: string;
   qualified: string;
+  // 제목 제외 키워드(2026-09-13) — exclude_group은 "제외 키워드" 관리 화면에 저장된 목록
+  // 전체를 켜고 끄는 스위치, exclude_extra는 이 화면에서 그때그때 추가하는 단어(저장 안 됨).
+  exclude_group: boolean;
+  exclude_extra: string[];
 }
 
 export const EMPTY_FILTERS: NoticeFilterValues = {
@@ -35,6 +41,8 @@ export const EMPTY_FILTERS: NoticeFilterValues = {
   close_in: "",
   status: "",
   qualified: "",
+  exclude_group: false,
+  exclude_extra: [],
 };
 
 interface Props {
@@ -196,7 +204,54 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
           <MenuItem value="false">미충족</MenuItem>
         </TextField>
       </Stack>
+      <ExcludeWordsRow values={values} onChange={onChange} />
       <AppliedChips options={options} values={values} onChange={onChange} />
+    </Stack>
+  );
+}
+
+// 제목 제외 키워드(2026-09-13) — "제외 키워드" 관리 화면(/admin/notice-exclude-words)에
+// 저장된 목록을 스위치 하나로 켜고 끄고, 그 옆에서 이번 조회에만 쓸 단어를 즉석으로 더
+// 추가할 수 있다(저장 안 됨, freeSolo 다중입력).
+function ExcludeWordsRow({
+  values,
+  onChange,
+}: {
+  values: NoticeFilterValues;
+  onChange: (values: NoticeFilterValues) => void;
+}) {
+  const { data: excludeWords } = useQuery({
+    queryKey: ["notice-exclude-words"],
+    queryFn: fetchNoticeExcludeWords,
+  });
+  const terms = excludeWords?.map((w) => w.term) ?? [];
+
+  return (
+    <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap alignItems="center">
+      <Tooltip title={terms.length > 0 ? `저장된 단어: ${terms.join(", ")}` : "등록된 제외 단어가 없습니다"}>
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={values.exclude_group}
+              onChange={(e) => onChange({ ...values, exclude_group: e.target.checked })}
+            />
+          }
+          label={`제외 키워드 그룹 적용 (${terms.length}개)`}
+        />
+      </Tooltip>
+      <Autocomplete
+        multiple
+        freeSolo
+        size="small"
+        sx={{ minWidth: 260 }}
+        options={[]}
+        value={values.exclude_extra}
+        onChange={(_, selected) => onChange({ ...values, exclude_extra: selected as string[] })}
+        renderInput={(params) => (
+          <TextField {...params} label="이번 조회에만 제외할 단어(엔터로 추가)" />
+        )}
+      />
     </Stack>
   );
 }
@@ -290,6 +345,20 @@ function AppliedChips({ options, values, onChange }: Props) {
       onDelete: () => onChange({ ...values, qualified: "" }),
     });
   }
+  if (values.exclude_group) {
+    chips.push({
+      key: "exclude_group",
+      label: "제외 키워드 그룹 적용 중",
+      onDelete: () => onChange({ ...values, exclude_group: false }),
+    });
+  }
+  values.exclude_extra.forEach((w) =>
+    chips.push({
+      key: `exclude_extra-${w}`,
+      label: `제외: ${w}`,
+      onDelete: () => onChange({ ...values, exclude_extra: values.exclude_extra.filter((v) => v !== w) }),
+    }),
+  );
 
   if (chips.length === 0) return null;
 

@@ -11,6 +11,7 @@ import { CustomersPage } from "@/pages/CustomersPage";
 import { DataChannelsPage } from "@/pages/DataChannelsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
+import { NoticeExcludeWordsPage } from "@/pages/NoticeExcludeWordsPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { PublicNoticeDetailPage } from "@/pages/PublicNoticeDetailPage";
@@ -68,6 +69,7 @@ function AppRoutes() {
         <Route path="/admin/channels" element={<DataChannelsPage />} />
         <Route path="/admin/agencies" element={<AgencyStatusPage />} />
         <Route path="/admin/topics" element={<TopicsPage />} />
+        <Route path="/admin/notice-exclude-words" element={<NoticeExcludeWordsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

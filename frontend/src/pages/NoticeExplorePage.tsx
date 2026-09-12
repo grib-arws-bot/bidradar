@@ -86,6 +86,8 @@ function paramsToFilters(sp: URLSearchParams): NoticeFilterValues {
     close_in: sp.get("close_in") ?? "",
     status: sp.get("status") ?? "",
     qualified: sp.get("qualified") ?? "",
+    exclude_group: sp.get("exclude_group") === "true",
+    exclude_extra: sp.getAll("exclude_extra[]"),
   };
 }
 
@@ -165,6 +167,8 @@ export function NoticeExplorePage() {
       close_in: next.close_in || null,
       status: next.status || null,
       qualified: next.qualified || null,
+      exclude_group: next.exclude_group ? "true" : null,
+      "exclude_extra[]": next.exclude_extra,
       page: null,
     });
   }
