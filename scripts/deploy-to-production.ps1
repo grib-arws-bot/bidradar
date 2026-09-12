@@ -206,28 +206,36 @@ if ($httpCode -notmatch '^2\d\d$') {
 }
 # 실제 사용자가 겪는 경로(tls-proxy의 TLS 종료 → frontend nginx의 /api 리버스 프록시 → backend)를
 # 그대로 통과해서 로그인 API를 호출해 실제로 세션이 발급되는지까지 확인한다.
-$remoteSmokePath = "/tmp/bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').js"
-try {
-    $smokeScript = @'
-const https = require('https');
-const loginBody = JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
-const req = https.request({ hostname: 'tls-proxy', port: 3300, path: '/api/auth/login', method: 'POST', rejectUnauthorized: false, headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(loginBody) } }, (res) => {
-  let d = ''; res.on('data', c => d += c); res.on('end', () => {
-    console.log(res.statusCode === 200 && d.includes('"email"') ? 'SMOKE_TEST_PASS' : 'SMOKE_TEST_FAIL: ' + res.statusCode + ' ' + d);
-  });
-});
-req.on('error', (e) => console.log('SMOKE_TEST_FAIL: ' + e.message));
-req.write(loginBody);
-req.end();
+#
+# [2026-09-12 발견/수정] 예전엔 이 스모크 테스트를 backend 컨테이너 안에서 Node 스크립트로
+# 돌렸는데(ARWS의 backend가 Node라 그 구조를 그대로 복제한 흔적 — CLAUDE.md "n8n·Baserow
+# 관련 부분만 뺀다"였지 이 부분은 못 걸러냄), BidRadar의 backend는 Python(FastAPI) 이미지라
+# node 자체가 없어 매번 "executable file not found"로 실패했다(로그인 자체는 정상이었는데도
+# 스모크 테스트만 거짓 실패). curl은 서버 호스트에 이미 있으므로 컨테이너 exec 없이 호스트에서
+# 직접 호출 — 어느 백엔드 스택이든 무관하게 동작.
+$smokeScript = @'
+set -e
+cd ~/bidradar
+EMAIL=$(grep -m1 '^ADMIN_EMAIL=' infra/.env | cut -d= -f2-)
+PASS=$(grep -m1 '^ADMIN_PASSWORD=' infra/.env | cut -d= -f2-)
+BODY=$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PASS")
+RESP=$(curl -sk -w '\nHTTPCODE:%{http_code}' -X POST https://localhost:3300/api/auth/login -H 'Content-Type: application/json' -d "$BODY")
+CODE=$(echo "$RESP" | grep -o 'HTTPCODE:[0-9]*')
+if echo "$RESP" | grep -q '"email"' && [ "$CODE" = "HTTPCODE:200" ]; then
+  echo SMOKE_TEST_PASS
+else
+  echo "SMOKE_TEST_FAIL: $CODE"
+fi
 '@
-    $localSmokePath = Join-Path $env:TEMP "bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').js"
+# 예전 node 스크립트와 같은 이유로(PowerShell -> ssh 인자 전달 시 멀티라인/따옴표가 깨지기 쉬움)
+# 로컬 파일로 저장 후 scp로 옮기고, 호스트에서 bash로 직접 실행한다(컨테이너 exec 불필요).
+$localSmokePath = Join-Path $env:TEMP "bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').sh"
+$remoteSmokePath = "/tmp/bidradar-smoke-$(Get-Date -Format 'yyyyMMddHHmmss').sh"
+try {
     Set-Content -Path $localSmokePath -Value $smokeScript -Encoding utf8 -NoNewline
     scp $localSmokePath "${remoteHost}:${remoteSmokePath}" | Out-Null
     Assert-Success "스모크 테스트 스크립트 전송(scp)"
-    ssh $remoteHost "docker cp $remoteSmokePath bidradar-backend-1:/tmp/smoke.js" | Out-Null
-    Assert-Success "스모크 테스트 스크립트를 backend 컨테이너로 복사"
-    $smokeResult = ssh $remoteHost "docker exec bidradar-backend-1 node /tmp/smoke.js"
-    Remove-Item $localSmokePath -Force -ErrorAction SilentlyContinue
+    $smokeResult = ssh $remoteHost "bash $remoteSmokePath"
     if ($smokeResult -match "SMOKE_TEST_PASS") {
         Write-Host "    로그인 스모크 테스트: 통과"
         foreach ($base in $imageBaseNames) {
@@ -236,6 +244,7 @@ req.end();
         ssh $remoteHost "cp $remoteDir/.last-deployed-sha.candidate-previous $remoteDir/.last-deployed-sha.previous 2>/dev/null || true"
     } else {
         Write-Host "    로그인 스모크 테스트: 실패 — $smokeResult" -ForegroundColor Red
+        Write-Host "    (참고: 로그인 자체가 아니라 infra/.env의 평문 ADMIN_PASSWORD가 ADMIN_PASSWORD_HASH와 어긋난 경우일 수도 있음 — 서버 infra/.env 확인)"
         Write-Host "    문제가 있으면 scripts\rollback-production.ps1 로 직전 버전으로 되돌리세요."
         exit 1
     }
@@ -243,7 +252,8 @@ req.end();
     Write-Host "    로그인 스모크 테스트 실행 실패 — 직접 확인 필요: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 } finally {
-    ssh $remoteHost "rm -f $remoteSmokePath; docker exec bidradar-backend-1 rm -f /tmp/smoke.js" 2>$null | Out-Null
+    Remove-Item $localSmokePath -Force -ErrorAction SilentlyContinue
+    ssh $remoteHost "rm -f $remoteSmokePath" 2>$null | Out-Null
 }
 
 Write-Host ""
