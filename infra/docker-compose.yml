@@ -49,7 +49,7 @@ services:
       # 보고서 이메일 발송(2026-09-12) — 하이웍스 SMTP(ARWS와 동일). 미설정이면 발송 API가
       # 501로 명시적으로 거부한다(조용히 실패하지 않음, app/services/mailer.py).
       - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_PORT=${SMTP_PORT:-465}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-report@grib.co.kr}

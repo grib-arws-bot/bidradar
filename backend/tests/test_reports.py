@@ -311,7 +311,7 @@ def test_send_report_calls_mailer_with_recipients_and_link(client: TestClient, g
         )
     created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
 
-    with mock.patch("app.services.mailer.smtplib.SMTP") as mock_smtp, mock.patch(
+    with mock.patch("app.services.mailer.smtplib.SMTP_SSL") as mock_smtp, mock.patch(
         "app.config.settings.smtp_host", "smtp.example.com"
     ), mock.patch("app.config.settings.smtp_user", "u"), mock.patch("app.config.settings.smtp_password", "p"):
         response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")

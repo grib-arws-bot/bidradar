@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # 의사결정_로그 8번 — 정식 오픈 시점에 전용 ESP 전환 재검토). n8n 없이 백엔드가 smtplib로
     # 직접 발송한다(CLAUDE.md n8n 금지). 미설정이면 발송 API가 명시적으로 거부한다.
     smtp_host: str = ""
-    smtp_port: int = 587
+    smtp_port: int = 465  # 하이웍스는 465(암시적 SSL)만 지원 — 587(STARTTLS) 아님
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "report@grib.co.kr"

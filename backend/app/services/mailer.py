@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from app.config import settings
@@ -31,7 +32,8 @@ def send_email(*, to: list[str], subject: str, html_body: str, text_body: str) -
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
-        smtp.starttls()
+    # 하이웍스는 465포트 암시적 SSL(smtps.hiworks.com)만 지원 — STARTTLS(587)가 아니다
+    # (2026-09-12 실제 안내 화면 확인). SMTP_SSL로 연결 시작부터 TLS를 건다.
+    with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30, context=ssl.create_default_context()) as smtp:
         smtp.login(settings.smtp_user, settings.smtp_password)
         smtp.send_message(msg)
