@@ -384,6 +384,16 @@ def test_send_report_calls_mailer_with_recipients_and_link(client: TestClient, g
     assert response.json()["sent_to"] == ["a@example.com"]
     mock_smtp.return_value.__enter__.return_value.send_message.assert_called_once()
 
+    # 2026-09-12 — 전체 현황 "보고서 발송 수" 월간 추이를 위해 발송할 때마다 로그가 남아야 함.
+    from app.models import report_send_log
+
+    with engine.connect() as conn:
+        log_row = conn.execute(
+            select(report_send_log.c.recipients).where(report_send_log.c.report_id == created["id"])
+        ).first()
+    assert log_row is not None
+    assert log_row.recipients == ["a@example.com"]
+
 
 def test_send_report_email_body_includes_notice_list(client: TestClient, grib_customer_id: int):
     """2026-09-12 사용자 지시 — "메일 본문에 관심공고 페이지를 바로 보여줄 수 있도록" —

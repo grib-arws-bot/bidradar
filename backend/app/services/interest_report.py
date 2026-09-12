@@ -12,7 +12,7 @@ from sqlalchemy import delete, desc, insert, select, update
 from sqlalchemy.engine import Connection
 
 from app.db import engine
-from app.models import analysis, customer, newsletter_report, source
+from app.models import analysis, customer, newsletter_report, report_send_log, source
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
 from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
@@ -248,6 +248,10 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
         "</div>"
     )
     send_email(to=recipients, subject=subject, html_body=html_body, text_body=text_body)
+    conn.execute(
+        insert(report_send_log).values(report_id=report_id, customer_id=customer_id, recipients=recipients)
+    )
+    conn.commit()
     return {"sent_to": recipients}
 
 

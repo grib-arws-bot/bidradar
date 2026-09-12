@@ -30,6 +30,19 @@ newsletter_report = Table(
     Column("ai_cost_usd", Numeric(10, 4), nullable=False, server_default="0"),
 )
 
+# 보고서 발송 이력(2026-09-12, 전체 현황 "보고서 발송 수" 월간 추이용) — newsletter_report에
+# "마지막 발송 시각" 하나만 두면 몇 번 보냈는지·언제언제 보냈는지(월별 추이)를 알 수 없어
+# 발송할 때마다 한 행씩 남기는 별도 로그 테이블로 잡았다.
+report_send_log = Table(
+    "report_send_log",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("report_id", Integer, ForeignKey("newsletter_report.id", ondelete="CASCADE"), nullable=False),
+    Column("customer_id", Integer, ForeignKey("customer.id", ondelete="CASCADE"), nullable=False),
+    Column("recipients", JSONB, nullable=False),
+    Column("sent_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
 # 공고별 "AI 사업 추진 전략"(2026-09-05) — 공개 리포트에서 고객이 공고를 눌러 들어가면 보는
 # 별도 페이지. 미리 만들어두지 않고 고객이 처음 열 때만 생성하되, (customer_id, notice_id)
 # unique 제약으로 중복 생성을 막는다 — INSERT ... ON CONFLICT DO NOTHING이 원자적 "선점"

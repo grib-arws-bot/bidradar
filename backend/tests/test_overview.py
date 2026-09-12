@@ -1,4 +1,4 @@
-"""관리자 홈 대시보드(전체 시스템 현황) 검증."""
+"""관리자 홈 대시보드(2026-09-12 재설계 — 고객 현황/시스템 현황/공고 데이터 3카드) 검증."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.db import engine
 from app.main import app
+from app.services.overview import _last_n_months, get_customer_overview, get_notice_overview, get_system_overview
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -28,18 +29,85 @@ def client() -> TestClient:
     return c
 
 
-def test_overview_requires_auth():
-    response = TestClient(app).get("/api/overview")
-    assert response.status_code == 401
+def test_overview_customers_requires_auth():
+    assert TestClient(app).get("/api/overview/customers").status_code == 401
 
 
-def test_overview_shape(client: TestClient):
-    response = client.get("/api/overview")
+def test_overview_system_requires_auth():
+    assert TestClient(app).get("/api/overview/system").status_code == 401
+
+
+def test_overview_notices_requires_auth():
+    assert TestClient(app).get("/api/overview/notices").status_code == 401
+
+
+def test_overview_customers_shape(client: TestClient):
+    response = client.get("/api/overview/customers")
     assert response.status_code == 200
     body = response.json()
-    assert {"sources", "notices", "customers", "reports", "pending_analysis", "recent_reports"} <= body.keys()
-    assert body["notices"]["total"] > 0
-    assert body["customers"]["total"] > 0
-    assert sum(body["sources"]["counts"].values()) == len(body["sources"]["sources"])
-    assert {"total", "added_7d", "with_ai_commentary", "total_views"} <= body["reports"].keys()
-    assert {"extraction", "analyze"} <= body["pending_analysis"].keys()
+    assert body["total_customers"] > 0
+    assert {"months", "customer_total", "reports_generated", "reports_sent"} <= body["monthly"].keys()
+    assert len(body["monthly"]["months"]) == 6
+    assert len(body["monthly"]["customer_total"]) == 6
+    assert isinstance(body["recent_reports"], list)
+
+
+def test_overview_system_shape(client: TestClient):
+    response = client.get("/api/overview/system")
+    assert response.status_code == 200
+    body = response.json()
+    assert {"resources", "llm_usage", "channels"} <= body.keys()
+    # 개발 PC(Windows, 컨테이너 밖)에선 /proc·cgroup이 없어 available=False로 응답한다 —
+    # 실제 리눅스 컨테이너 안에서의 값 자체는 test_system_resources.py가 모킹으로 검증한다.
+    assert "available" in body["resources"]
+    if body["resources"]["available"]:
+        assert {"cpu", "memory", "disk"} <= body["resources"].keys()
+    assert {"total_calls", "total_tokens", "total_cost_usd", "breakdown"} <= body["llm_usage"].keys()
+    # 수집 대상만(schedule_times가 있는 소스) — 실제 운영 중인 5개 소스만 나와야 하고,
+    # 15개 전체 소스가 다 나오면 안 됨(수집 안 하는 소스까지 섞이는 회귀 방지).
+    assert 0 < len(body["channels"]) < 15
+
+
+def test_overview_notices_shape(client: TestClient):
+    response = client.get("/api/overview/notices")
+    assert response.status_code == 200
+    body = response.json()
+    assert {"cumulative", "yesterday", "yesterday_date"} <= body.keys()
+    assert len(body["cumulative"]) > 0
+    for row in body["cumulative"]:
+        assert row["total"] == row["ai_analyzed"] + row["extracted_only"] + row["unanalyzed"]
+        assert "source_name" in row
+
+
+def test_last_n_months_returns_six_consecutive_months_ending_this_month():
+    from datetime import datetime, timezone
+
+    months = _last_n_months(6)
+    assert len(months) == 6
+    assert months[-1] == datetime.now(timezone.utc).strftime("%Y-%m")
+    assert months == sorted(months)  # 오래된 순
+
+
+def test_get_customer_overview_monthly_totals_are_non_decreasing():
+    """고객 수는 누적(생성만 되고 삭제 안 됨)이라 월이 지날수록 줄어들면 안 된다."""
+    with engine.connect() as conn:
+        result = get_customer_overview(conn)
+    totals = result["monthly"]["customer_total"]
+    assert all(totals[i] <= totals[i + 1] for i in range(len(totals) - 1))
+
+
+def test_get_system_overview_returns_llm_and_resources():
+    with engine.connect() as conn:
+        result = get_system_overview(conn)
+    assert "available" in result["resources"]  # 개발 PC에선 False, 실제 컨테이너에선 True
+    assert result["llm_usage"]["total_calls"] >= 0
+
+
+def test_get_notice_overview_yesterday_is_subset_pattern_of_cumulative():
+    """어제 수집분은 누적 안에 포함된 부분집합 성격이라, 어제치 total이 누적 total보다
+    클 수는 없다(같은 source_id 기준)."""
+    with engine.connect() as conn:
+        result = get_notice_overview(conn)
+    cumulative_by_source = {r["source_id"]: r["total"] for r in result["cumulative"]}
+    for row in result["yesterday"]:
+        assert row["total"] <= cumulative_by_source.get(row["source_id"], 0)
