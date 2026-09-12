@@ -43,6 +43,14 @@ export function NoticeDetailPage() {
   const extractMutation = useMutation({
     mutationFn: () => runExtraction(noticeId),
     onSuccess: (result) => queryClient.setQueryData(["notice-extraction", noticeId], result),
+    // onError가 없어서(2026-09-12 발견) run_extraction_pilot 자체가 실제 HTTP 에러(네트워크
+    // 장애 등, status:"failed" 정상 응답과는 다름 — 그건 아래 runAiAnalysis에서 따로 처리)를
+    // 던지면 "버튼을 눌러도 반응이 없다"로만 보였다. structureMutation과 같은 패턴으로 표시.
+    onError: (error) => {
+      setAnalysisError(
+        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "첨부문서 추출에 실패했습니다."
+      );
+    },
   });
 
   const requirementsQuery = useQuery({
@@ -83,7 +91,14 @@ export function NoticeDetailPage() {
   async function runAiAnalysis(model: LlmModel) {
     setAnalysisError(null);
     const canReuse = extractionQuery.data?.status === "done" && !alreadyAnalyzed && (extractionQuery.data.docs?.length ?? 0) > 0;
-    const extraction = canReuse ? extractionQuery.data! : await extractMutation.mutateAsync();
+    let extraction;
+    try {
+      extraction = canReuse ? extractionQuery.data! : await extractMutation.mutateAsync();
+    } catch {
+      // 실제 HTTP 에러는 위 extractMutation.onError가 이미 analysisError에 표시했다 — 여기선
+      // unhandled rejection으로 새지 않게 멈추기만 하면 된다.
+      return;
+    }
     if (extraction.status !== "done") {
       // run_extraction_pilot은 실패해도 예외를 던지지 않고 정상 응답(status:"failed")으로
       // 돌아온다 — extractMutation.error로는 안 잡히므로 여기서 직접 확인해야 한다.

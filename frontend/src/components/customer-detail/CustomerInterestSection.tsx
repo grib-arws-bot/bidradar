@@ -53,20 +53,31 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
   // 재조회할 때마다) 무조건 draft를 덮어썼다. 사용자가 우선순위를 "높음"으로 바꾸고 "저장"을
   // 누르기 전에 어떤 이유로든 재조회가 한 번 일어나면 방금 바꾼 값이 저장 전에 조용히 서버의
   // 예전 값(대부분 "보통")으로 되돌아간다 — "우선순위가 계속 보통으로 바뀐다"는 제보의 원인.
-  // customerId가 실제로 바뀌었을 때(고객 전환)만 draft를 다시 채우고, 같은 고객 화면에 있는
-  // 동안의 배경 재조회는 진행 중인 편집을 건드리지 않는다.
-  const draftInitializedFor = useRef<number | null>(null);
+  //
+  // 2026-09-12 재수정 — 위 수정을 "customerId가 실제로 바뀌었을 때만 동기화"로 했더니, 이번엔
+  // 반대 문제가 생겼다: AI 프로필 요약이 관심주제를 자동 설정해도(customer_profile.py) 같은
+  // 고객 화면에 머무는 동안은 재조회돼도 화면에 반영이 안 돼 새로고침해야만 보였다. 진짜
+  // 구분해야 할 기준은 "고객이 바뀌었는가"가 아니라 "사용자가 마지막 동기화 이후 직접 뭔가
+  // 편집했는가"다 — 편집한 적 없으면(=draft가 마지막으로 동기화한 서버값 그대로면) 서버가
+  // 뭘로 바꿨든 안전하게 반영해도 되고, 편집 중이면 그대로 안 건드린다.
+  const lastSyncedRef = useRef<{ customerId: number; draft: InterestDraft } | null>(null);
   useEffect(() => {
-    if (profileQuery.data && draftInitializedFor.current !== customerId) {
-      setDraft({
-        topic_ids: profileQuery.data.topic_ids,
-        topic_priorities: profileQuery.data.topic_priorities,
-        terms: profileQuery.data.terms,
-        followed_org_ids: profileQuery.data.followed_org_ids,
-        price_min: profileQuery.data.price_min,
-      });
-      draftInitializedFor.current = customerId;
+    if (!profileQuery.data) return;
+    const serverDraft: InterestDraft = {
+      topic_ids: profileQuery.data.topic_ids,
+      topic_priorities: profileQuery.data.topic_priorities,
+      terms: profileQuery.data.terms,
+      followed_org_ids: profileQuery.data.followed_org_ids,
+      price_min: profileQuery.data.price_min,
+    };
+    const last = lastSyncedRef.current;
+    const isCustomerSwitch = last?.customerId !== customerId;
+    const isUntouchedSinceLastSync = last?.customerId === customerId && JSON.stringify(draft) === JSON.stringify(last.draft);
+    if (isCustomerSwitch || isUntouchedSinceLastSync) {
+      setDraft(serverDraft);
+      lastSyncedRef.current = { customerId, draft: serverDraft };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft는 비교용으로만 읽는다(동기화 트리거로 넣으면 매 편집마다 재실행돼 의미가 없어짐)
   }, [profileQuery.data, customerId]);
 
   // saveMutation에 onError가 없어서 저장이 실패해도 아무 표시가 없던 문제(2026-09-07 발견,

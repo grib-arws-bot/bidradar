@@ -13,7 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchCustomersFull, updateCustomer, type CustomerDraft, type CustomerFull } from "@/api/customers";
@@ -49,9 +49,24 @@ export function CustomerDetailPage() {
   const [draft, setDraft] = useState<CustomerDraft | null>(null);
   const [recipientInput, setRecipientInput] = useState("");
 
+  // 2026-09-12 수정 — customer는 ["customers-full"]이 무효화될 때마다(파일 업로드·참고 URL
+  // 추가·프로필 요약 등 이 페이지 안의 다른 어떤 동작이든) 새 참조로 바뀌는데, 이 effect가
+  // 그때마다 draft를 무조건 덮어써서 "고객 정보" 폼을 편집하다가 다른 섹션에서 버튼을 누르면
+  // 저장 전 내용이 조용히 사라졌다(CustomerInterestSection.tsx의 2026-09-10 버그와 같은
+  // 계열). 마지막으로 동기화한 서버값 그대로 손 안 댔을 때만(또는 고객 전환 시) 다시 채운다.
+  const lastSyncedRef = useRef<{ customerId: number; draft: CustomerDraft } | null>(null);
   useEffect(() => {
-    if (customer) setDraft(toDraft(customer));
-  }, [customer]);
+    if (!customer) return;
+    const serverDraft = toDraft(customer);
+    const last = lastSyncedRef.current;
+    const isCustomerSwitch = last?.customerId !== customerId;
+    const isUntouchedSinceLastSync = last?.customerId === customerId && JSON.stringify(draft) === JSON.stringify(last.draft);
+    if (isCustomerSwitch || isUntouchedSinceLastSync) {
+      setDraft(serverDraft);
+      lastSyncedRef.current = { customerId, draft: serverDraft };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft는 비교용으로만 읽는다
+  }, [customer, customerId]);
 
   // onError가 없어서 저장이 실패해도 아무 표시가 없던 문제(2026-09-07 발견) — 성공·실패
   // 모두 토스트로 알린다.
