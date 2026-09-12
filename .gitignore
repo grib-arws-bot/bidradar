@@ -67,3 +67,7 @@ frontend/public/*white*paper*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# GitHub Actions self-hosted 러너(D:\actions-runner-bidradar) 실행 중 리포지토리 루트에
+# 남기는 부산물(2026-09-12 러너 설치 후 발견) — 워킹트리 clean 검사에 걸려 배포가 막힌다.
+update.finished
