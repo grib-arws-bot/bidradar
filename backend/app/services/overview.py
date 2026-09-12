@@ -1,10 +1,10 @@
 """관리자 홈 대시보드 — 3개 카드로 재구성(2026-09-12 사용자 지시, 2026-09-01/05 4카드 설계에서
 변경):
-1. 고객 현황 — 고객 수, 보고서 생성·발송 수(월간 추이)
+1. 고객 현황(보고서 현황) — 고객 수, 보고서 생성·발송 수(월간 추이)
 2. 시스템 현황 — 서버 자원(system_resources.py), Claude API 사용량(llm_usage.py), 데이터
    수집채널 상태(수집 대상만 — schedule_times가 있는 소스)
-3. 공고 데이터 — 소스별 수집/분석 현황(누적) + 최근 14일 일별 수집 추이(미분석/첨부분석완료/
-   AI분석완료로 분류)
+3. 공고 데이터 — 최근 14일 일별 추이 선 그래프 2개: 전체 소스 누적 총량 + 소스별 신규
+   수집 건수(분석상태 구분 없음, 2026-09-12 — "값이 너무 차이나서 의미가 없다"는 피드백으로 뺌)
 
 별도 캐시 테이블 없이 조회 시점에 계산 — 이 정도 규모(공고 수만 건)에서는 무리 없다는
 기존 판단(2026-09-01) 그대로 유지."""
@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import desc, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import analysis, customer, customer_interest, newsletter_report, notice, report_send_log
+from app.models import customer, customer_interest, newsletter_report, notice, report_send_log
 from app.services.llm_usage import get_llm_usage_summary
 from app.services.source_registry import list_sources
 from app.services.system_resources import get_system_resources
@@ -137,100 +137,70 @@ def get_system_overview(conn: Connection) -> dict:
     }
 
 
-# 미분석/첨부분석완료/AI분석완료는 서로 배타적 — 실패 이력은 "아직 쓸모있게 분석되지
-# 않음"으로 보아 미분석에 합친다(재시도로 회복 가능한 일시적 상태라 별도 라벨을 늘리지
-# 않음, AnalysisTabsSection.tsx의 analysisDone/extractionDone 판정 기준과 동일).
-def _notice_breakdown_by_source(conn: Connection, *, kst_date: "date | None" = None) -> list[dict]:
-    latest_analysis_sq = (
-        select(analysis.c.notice_id, analysis.c.step, analysis.c.status)
-        .distinct(analysis.c.notice_id)
-        .order_by(analysis.c.notice_id, analysis.c.ver.desc())
-        .subquery()
-    )
-    stmt = (
-        select(
-            notice.c.source_id,
-            func.count().label("total"),
-            func.count().filter(latest_analysis_sq.c.step == "A2_structure", latest_analysis_sq.c.status == "done").label("ai_analyzed"),
-            func.count().filter(latest_analysis_sq.c.step == "A1_extract", latest_analysis_sq.c.status == "done").label("extracted_only"),
-        )
-        .select_from(notice)
-        .join(latest_analysis_sq, latest_analysis_sq.c.notice_id == notice.c.id, isouter=True)
-        .group_by(notice.c.source_id)
-    )
-    if kst_date is not None:
-        stmt = stmt.where(func.date(func.timezone("Asia/Seoul", notice.c.created_at)) == kst_date)
-    rows = conn.execute(stmt).mappings().all()
-    return [
-        {
-            "source_id": r["source_id"],
-            "total": r["total"],
-            "ai_analyzed": r["ai_analyzed"],
-            "extracted_only": r["extracted_only"],
-            "unanalyzed": r["total"] - r["ai_analyzed"] - r["extracted_only"],
-        }
-        for r in rows
-    ]
-
-
 NOTICE_DAILY_SERIES_DAYS = 14
 
 
-def _notice_daily_series(conn: Connection, days: int) -> list[dict]:
-    """최근 `days`일(KST, 오늘 포함)의 일별 수집 추이 — "누적 스냅샷 하나로는 매일매일의
-    변화가 안 보인다"는 2026-09-12 사용자 지시로 "어제" 단일 스냅샷을 대체. 소스별로 나누면
-    선이 너무 많아져 안 보이므로 전체 소스를 합산한 분석상태별(미분석/첨부분석완료/AI분석완료)
-    3계열로만 집계한다. 수집이 없었던 날도 0으로 채워 날짜가 끊기지 않게 한다."""
-    latest_analysis_sq = (
-        select(analysis.c.notice_id, analysis.c.step, analysis.c.status)
-        .distinct(analysis.c.notice_id)
-        .order_by(analysis.c.notice_id, analysis.c.ver.desc())
-        .subquery()
-    )
+def _notice_daily_window(conn: Connection, days: int) -> tuple[int, dict[date, int]]:
+    """(window 시작 이전 누적 건수, {날짜: 그날 신규 건수}) — 전체 소스 합산. 분석상태별
+    구분(미분석/첨부분석완료/AI분석완료)은 2026-09-12 사용자 지시로 뺐다 — "값이 너무
+    차이나서(대부분 미분석) 의미가 없다"는 실사용 피드백."""
     day_expr = func.date(func.timezone("Asia/Seoul", notice.c.created_at))
     start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
-    stmt = (
-        select(
-            day_expr.label("day"),
-            func.count().label("total"),
-            func.count().filter(latest_analysis_sq.c.step == "A2_structure", latest_analysis_sq.c.status == "done").label("ai_analyzed"),
-            func.count().filter(latest_analysis_sq.c.step == "A1_extract", latest_analysis_sq.c.status == "done").label("extracted_only"),
-        )
+    before_total = conn.execute(
+        select(func.count()).select_from(notice).where(day_expr < start_date)
+    ).scalar_one()
+    rows = conn.execute(
+        select(day_expr.label("day"), func.count().label("total"))
         .select_from(notice)
-        .join(latest_analysis_sq, latest_analysis_sq.c.notice_id == notice.c.id, isouter=True)
         .where(day_expr >= start_date)
         .group_by(day_expr)
-    )
-    by_day = {r["day"]: r for r in conn.execute(stmt).mappings().all()}
+    ).mappings().all()
+    return before_total, {r["day"]: r["total"] for r in rows}
 
+
+def _notice_cumulative_daily(conn: Connection, days: int) -> list[dict]:
+    """왼쪽 그래프 — 일별 "전체 소스 누적" 총량(현재까지 러닝토탈) 추이, 선 그래프 1개."""
+    before_total, by_day = _notice_daily_window(conn, days)
+    start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
+    running = before_total
     result = []
     for i in range(days):
         d = start_date + timedelta(days=i)
-        r = by_day.get(d)
-        total = r["total"] if r else 0
-        ai_analyzed = r["ai_analyzed"] if r else 0
-        extracted_only = r["extracted_only"] if r else 0
-        result.append(
-            {
-                "date": d.isoformat(),
-                "total": total,
-                "ai_analyzed": ai_analyzed,
-                "extracted_only": extracted_only,
-                "unanalyzed": total - ai_analyzed - extracted_only,
-            }
-        )
+        running += by_day.get(d, 0)
+        result.append({"date": d.isoformat(), "total": running})
     return result
 
 
-def get_notice_overview(conn: Connection) -> dict:
-    """카드 3(공고 데이터) — 소스별 누적(현재 살아있는 것만 — 삭제된 건 notice 테이블에서
-    이미 빠져 있으므로 별도 필터 불필요) + 최근 14일 일별 수집 추이(전체 소스 합산)."""
+def _notice_daily_by_source(conn: Connection, days: int) -> dict:
+    """오른쪽 그래프 — 일별 "소스별" 신규 수집 건수, 선 그래프 여러 개(소스 수만큼)."""
+    day_expr = func.date(func.timezone("Asia/Seoul", notice.c.created_at))
+    start_date: date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
+    rows = conn.execute(
+        select(day_expr.label("day"), notice.c.source_id, func.count().label("total"))
+        .select_from(notice)
+        .where(day_expr >= start_date)
+        .group_by(day_expr, notice.c.source_id)
+    ).mappings().all()
+    by_key = {(r["day"], r["source_id"]): r["total"] for r in rows}
     all_sources = {s["id"]: s["name"] for s in list_sources(conn)}
+    source_ids = sorted({r["source_id"] for r in rows})
+    dates = [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
+    series = [
+        {
+            "source_id": sid,
+            "source_name": all_sources.get(sid, f"소스 {sid}"),
+            "counts": [by_key.get((start_date + timedelta(days=i), sid), 0) for i in range(days)],
+        }
+        for sid in source_ids
+    ]
+    return {"dates": dates, "series": series}
 
-    def _attach_names(rows: list[dict]) -> list[dict]:
-        return [dict(r, source_name=all_sources.get(r["source_id"], f"소스 {r['source_id']}")) for r in rows]
 
+def get_notice_overview(conn: Connection) -> dict:
+    """카드 3(공고 데이터) — 최근 14일(KST) 기준 두 선 그래프: 전체 소스 누적 추이 +
+    소스별 일별 수집 추이. 삭제된 공고는 notice 테이블에서 이미 빠져 있으므로 "현재 살아있는
+    것만"이라는 조건이 별도 필터 없이 자동으로 성립한다."""
     return {
-        "cumulative": _attach_names(_notice_breakdown_by_source(conn)),
-        "daily": _notice_daily_series(conn, NOTICE_DAILY_SERIES_DAYS),
+        "cumulative_daily": _notice_cumulative_daily(conn, NOTICE_DAILY_SERIES_DAYS),
+        "collected_daily": _notice_daily_by_source(conn, NOTICE_DAILY_SERIES_DAYS),
     }

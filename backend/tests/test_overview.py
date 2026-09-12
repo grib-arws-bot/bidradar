@@ -74,16 +74,16 @@ def test_overview_notices_shape(client: TestClient):
     response = client.get("/api/overview/notices")
     assert response.status_code == 200
     body = response.json()
-    assert {"cumulative", "daily"} <= body.keys()
-    assert len(body["cumulative"]) > 0
-    for row in body["cumulative"]:
-        assert row["total"] == row["ai_analyzed"] + row["extracted_only"] + row["unanalyzed"]
-        assert "source_name" in row
+    assert {"cumulative_daily", "collected_daily"} <= body.keys()
     # 최근 14일이 하루도 안 빠지고 다 나와야 한다(수집이 없었던 날도 0으로 채워짐).
-    assert len(body["daily"]) == 14
-    for row in body["daily"]:
-        assert row["total"] == row["ai_analyzed"] + row["extracted_only"] + row["unanalyzed"]
-        assert "date" in row
+    assert len(body["cumulative_daily"]) == 14
+    for row in body["cumulative_daily"]:
+        assert "date" in row and "total" in row
+    assert len(body["collected_daily"]["dates"]) == 14
+    assert len(body["collected_daily"]["series"]) > 0
+    for s in body["collected_daily"]["series"]:
+        assert len(s["counts"]) == 14
+        assert "source_name" in s
 
 
 def test_last_n_months_returns_six_consecutive_months_ending_this_month():
@@ -110,10 +110,23 @@ def test_get_system_overview_returns_llm_and_resources():
     assert result["llm_usage"]["total_calls"] >= 0
 
 
-def test_get_notice_overview_daily_total_is_subset_of_cumulative():
-    """하루치(전체 소스 합산) total이 모든 소스를 합친 누적 total보다 클 수는 없다."""
+def test_get_notice_overview_cumulative_daily_is_non_decreasing():
+    """누적 총량은 러닝토탈이라 날짜가 지날수록 줄어들면 안 된다(공고는 삭제돼도 notice
+    테이블에서 아예 빠지므로, 이 창 안에서 다시 늘어나는 일은 있어도 줄지는 않는다)."""
     with engine.connect() as conn:
         result = get_notice_overview(conn)
-    cumulative_total = sum(r["total"] for r in result["cumulative"])
-    for row in result["daily"]:
-        assert row["total"] <= cumulative_total
+    totals = [row["total"] for row in result["cumulative_daily"]]
+    assert all(totals[i] <= totals[i + 1] for i in range(len(totals) - 1))
+
+
+def test_get_notice_overview_collected_daily_matches_cumulative_day_over_day_growth():
+    """소스별 일별 수집 건수를 그날 합산한 값은 누적 총량의 전날 대비 증가분과 같아야 한다
+    (둘 다 같은 notice.created_at 기준 카운트라 매일 정확히 일치)."""
+    with engine.connect() as conn:
+        result = get_notice_overview(conn)
+    totals = [row["total"] for row in result["cumulative_daily"]]
+    daily_sums = [
+        sum(s["counts"][i] for s in result["collected_daily"]["series"]) for i in range(len(totals))
+    ]
+    for i in range(1, len(totals)):
+        assert totals[i] - totals[i - 1] == daily_sums[i]

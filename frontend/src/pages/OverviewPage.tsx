@@ -1,14 +1,13 @@
 import { Box, Stack, Typography } from "@mui/material";
 
-import { ChannelStatusCard } from "@/components/overview/ChannelStatusCard";
 import { CustomerOverviewCard } from "@/components/overview/CustomerOverviewCard";
 import { NoticeOverviewCard } from "@/components/overview/NoticeOverviewCard";
 import { SystemOverviewCard } from "@/components/overview/SystemOverviewCard";
 
 // "전체 시스템 운영을 위한 관리자 페이지"(2026-09-01 요청) — 로그인 후 첫 화면.
-// 3개 카드로 재구성(2026-09-12 요청, 같은 날 레이아웃 추가 조정): 왼쪽에 보고서 현황·
-// 데이터 수집채널 상태를 세로로 쌓고, 그 오른쪽에 시스템 현황을 배치. 공고 데이터는 그 아래
-// 전체 폭으로. 각 카드는 자체 API를 쓰고(overview.ts) 독립적으로 로딩된다.
+// 3개 카드로 재구성(2026-09-12 요청): 보고서 현황·시스템 현황을 가로로, 공고 데이터(데이터
+// 수집채널 상태 포함, 같은 날 재배치)를 그 아래 전체 폭으로. 각 카드는 자체 API를 쓰고
+// (overview.ts) 독립적으로 로딩된다.
 export function OverviewPage() {
   return (
     <Stack spacing={3}>
@@ -24,13 +23,10 @@ export function OverviewPage() {
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
           gap: 2,
-          alignItems: "start",
+          alignItems: "stretch",
         }}
       >
-        <Stack spacing={2}>
-          <CustomerOverviewCard />
-          <ChannelStatusCard />
-        </Stack>
+        <CustomerOverviewCard />
         <SystemOverviewCard />
       </Box>
 

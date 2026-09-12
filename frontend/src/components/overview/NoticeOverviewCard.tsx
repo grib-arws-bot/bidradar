@@ -1,34 +1,32 @@
-import { Card, Grid, Stack, Typography } from "@mui/material";
+import { Card, Chip, Grid, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import Chart from "react-apexcharts";
 
-import { fetchNoticeOverview, type NoticeSourceBreakdown } from "@/api/overview";
+import { fetchNoticeOverview, fetchSystemOverview } from "@/api/overview";
 
-const SERIES_COLORS = ["#9e9e9e", "#42a5f5", "#2e7d32"]; // 미분석 / 첨부분석완료 / AI분석완료
+const STATUS_LABEL: Record<string, { label: string; color: "success" | "warning" | "error" | "default" }> = {
+  ok: { label: "정상", color: "success" },
+  warn: { label: "주의", color: "warning" },
+  fail: { label: "실패", color: "error" },
+  inactive: { label: "비활성", color: "default" },
+  no_run_yet: { label: "수집 전", color: "default" },
+};
 
-function toSourceSeries(rows: NoticeSourceBreakdown[]) {
-  const categories = rows.map((r) => r.source_name);
-  return {
-    categories,
-    series: [
-      { name: "미분석", data: rows.map((r) => r.unanalyzed) },
-      { name: "첨부분석완료", data: rows.map((r) => r.extracted_only) },
-      { name: "AI분석완료", data: rows.map((r) => r.ai_analyzed) },
-    ],
-  };
-}
+const LINE_COLORS = ["#1a73e8", "#66bb6a", "#f4511e", "#8e24aa", "#00897b", "#fbc02d"];
 
 function monthDayLabel(iso: string): string {
   const [, m, d] = iso.split("-");
   return `${Number(m)}/${Number(d)}`;
 }
 
-// 카드 3: 공고 데이터(2026-09-12 재설계) — 왼쪽은 소스별 누적 현황(가로 스택 막대), 오른쪽은
-// 최근 14일 일별 수집 추이(시계열 — 사용자 지시 "매일매일의 변화를 볼 수 있게"). 시계열은
-// 전체 소스를 합산한 3계열(미분석/첨부분석완료/AI분석완료) 스택 막대로 — 소스별로 나누면
-// 계열이 너무 많아져 하루 단위 변화가 오히려 안 보인다.
+// 카드 3: 공고 데이터(2026-09-12 재설계 — 사용자 지시 "매일매일의 변화 추세를 선그래프로") —
+// 왼쪽은 전체 소스 누적 총량의 일별 추이(선 1개), 오른쪽은 소스별 일별 신규 수집 건수(선
+// 여러 개) — 분석상태(미분석/첨부완료/AI완료) 구분은 값 차이가 너무 커서 의미가 없다는
+// 피드백으로 뺐다. 데이터 수집채널 상태도 같은 지시로 이 카드 안(하단)에 병합했다 — API는
+// 시스템 현황과 같은 쿼리 키("overview-system")를 그대로 재사용.
 export function NoticeOverviewCard() {
   const { data, isLoading } = useQuery({ queryKey: ["overview-notices"], queryFn: fetchNoticeOverview });
+  const { data: systemData } = useQuery({ queryKey: ["overview-system"], queryFn: fetchSystemOverview });
 
   if (isLoading || !data) {
     return (
@@ -40,9 +38,8 @@ export function NoticeOverviewCard() {
     );
   }
 
-  const cumulativeTotal = data.cumulative.reduce((sum, r) => sum + r.total, 0);
-  const { categories: sourceCategories, series: sourceSeries } = toSourceSeries(data.cumulative);
-  const dailyCategories = data.daily.map((d) => monthDayLabel(d.date));
+  const cumulativeCategories = data.cumulative_daily.map((d) => monthDayLabel(d.date));
+  const collectedCategories = data.collected_daily.dates.map(monthDayLabel);
 
   return (
     <Card sx={{ p: 3 }}>
@@ -52,56 +49,70 @@ export function NoticeOverviewCard() {
       <Grid container spacing={4}>
         <Grid size={{ xs: 12, md: 6 }}>
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            누적 데이터(현재 기준) — 전체 {cumulativeTotal}건
+            누적 데이터(일별, 전체 소스 합산)
           </Typography>
-          {data.cumulative.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              데이터가 없습니다.
-            </Typography>
-          ) : (
-            <Chart
-              type="bar"
-              height={Math.max(180, sourceCategories.length * 46)}
-              options={{
-                chart: { toolbar: { show: false }, stacked: true },
-                plotOptions: { bar: { horizontal: true, barHeight: "60%" } },
-                xaxis: { categories: sourceCategories },
-                dataLabels: { enabled: false },
-                colors: SERIES_COLORS,
-                legend: { position: "bottom" },
-                grid: { padding: { left: 8, right: 8 } },
-              }}
-              series={sourceSeries}
-            />
-          )}
+          <Chart
+            type="line"
+            height={260}
+            options={{
+              chart: { toolbar: { show: false } },
+              xaxis: { categories: cumulativeCategories },
+              yaxis: { labels: { formatter: (v: number) => v.toFixed(0) } },
+              stroke: { width: 3, curve: "smooth" },
+              dataLabels: { enabled: false },
+              colors: ["#1a73e8"],
+              grid: { padding: { left: 8, right: 8 } },
+            }}
+            series={[{ name: "누적 건수", data: data.cumulative_daily.map((d) => d.total) }]}
+          />
         </Grid>
         <Grid size={{ xs: 12, md: 6 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="baseline">
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              최근 14일 일별 수집 추이(전체 소스 합산)
-            </Typography>
-          </Stack>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            수집 데이터(일별, 소스별)
+          </Typography>
           <Chart
-            type="bar"
-            height={280}
+            type="line"
+            height={260}
             options={{
-              chart: { toolbar: { show: false }, stacked: true },
-              plotOptions: { bar: { columnWidth: "65%" } },
-              xaxis: { categories: dailyCategories },
+              chart: { toolbar: { show: false } },
+              xaxis: { categories: collectedCategories },
               yaxis: { labels: { formatter: (v: number) => v.toFixed(0) } },
+              stroke: { width: 2, curve: "smooth" },
               dataLabels: { enabled: false },
-              colors: SERIES_COLORS,
+              colors: LINE_COLORS,
               legend: { position: "bottom" },
               grid: { padding: { left: 8, right: 8 } },
             }}
-            series={[
-              { name: "미분석", data: data.daily.map((d) => d.unanalyzed) },
-              { name: "첨부분석완료", data: data.daily.map((d) => d.extracted_only) },
-              { name: "AI분석완료", data: data.daily.map((d) => d.ai_analyzed) },
-            ]}
+            series={data.collected_daily.series.map((s) => ({ name: s.source_name, data: s.counts }))}
           />
         </Grid>
       </Grid>
+
+      {systemData && (
+        <>
+          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1 }}>
+            데이터 수집채널 상태
+          </Typography>
+          <Stack spacing={0.75}>
+            {systemData.channels.map((c) => {
+              const meta = STATUS_LABEL[c.status] ?? STATUS_LABEL.no_run_yet;
+              return (
+                <Stack key={c.id} direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
+                    {c.name}
+                  </Typography>
+                  <Stack direction="row" spacing={1.5} alignItems="center" flexShrink={0}>
+                    <Typography variant="caption" color="text.secondary">
+                      {c.last_run_at ? new Date(c.last_run_at).toLocaleString("ko-KR") : "수집 이력 없음"}
+                    </Typography>
+                    <Chip label={meta.label} size="small" color={meta.color} />
+                  </Stack>
+                </Stack>
+              );
+            })}
+          </Stack>
+        </>
+      )}
     </Card>
   );
 }

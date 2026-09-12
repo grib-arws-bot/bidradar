@@ -84,26 +84,20 @@ export async function fetchSystemOverview(): Promise<SystemOverview> {
   return data;
 }
 
-export interface NoticeSourceBreakdown {
-  source_id: number;
-  source_name: string;
-  total: number;
-  ai_analyzed: number;
-  extracted_only: number;
-  unanalyzed: number;
+export interface NoticeCumulativeDailyPoint {
+  date: string; // "YYYY-MM-DD"(KST)
+  total: number; // 그 날짜까지의 전체 소스 누적 총량(러닝토탈)
 }
 
-export interface NoticeDailyPoint {
-  date: string; // "YYYY-MM-DD"(KST)
-  total: number;
-  ai_analyzed: number;
-  extracted_only: number;
-  unanalyzed: number;
+export interface NoticeSourceDailySeries {
+  source_id: number;
+  source_name: string;
+  counts: number[]; // NoticeOverview.collected_daily.dates와 같은 길이·순서
 }
 
 export interface NoticeOverview {
-  cumulative: NoticeSourceBreakdown[];
-  daily: NoticeDailyPoint[]; // 최근 14일, 전체 소스 합산
+  cumulative_daily: NoticeCumulativeDailyPoint[]; // 최근 14일, 선 그래프 1개
+  collected_daily: { dates: string[]; series: NoticeSourceDailySeries[] }; // 소스별 선 그래프 여러 개
 }
 
 export async function fetchNoticeOverview(): Promise<NoticeOverview> {
