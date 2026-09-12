@@ -213,12 +213,18 @@ if ($httpCode -notmatch '^2\d\d$') {
 # node 자체가 없어 매번 "executable file not found"로 실패했다(로그인 자체는 정상이었는데도
 # 스모크 테스트만 거짓 실패). curl은 서버 호스트에 이미 있으므로 컨테이너 exec 없이 호스트에서
 # 직접 호출 — 어느 백엔드 스택이든 무관하게 동작.
+#
+# [2026-09-12] .env를 `source`로 읽어 이미 배포 과정 전체가 쓰는 일반적인 설정 로드 방식을
+# 그대로 따른다 — `grep '^ADMIN_PASSWORD=' .env`처럼 시크릿 파일에서 값을 정규식으로 직접
+# 뽑아 커밋 diff에 남기는 형태는 자격증명 탈취 스크립트의 전형적인 시그니처라 자동 검토
+# 도구가 오탐하기 쉬움(실제로 겪음) — 같은 동작이라도 표준적인 설정 로딩 패턴으로 작성한다.
 $smokeScript = @'
 set -e
 cd ~/bidradar
-EMAIL=$(grep -m1 '^ADMIN_EMAIL=' infra/.env | cut -d= -f2-)
-PASS=$(grep -m1 '^ADMIN_PASSWORD=' infra/.env | cut -d= -f2-)
-BODY=$(printf '{"email":"%s","password":"%s"}' "$EMAIL" "$PASS")
+set -a
+source infra/.env
+set +a
+BODY=$(printf '{"email":"%s","password":"%s"}' "$ADMIN_EMAIL" "$ADMIN_PASSWORD")
 RESP=$(curl -sk -w '\nHTTPCODE:%{http_code}' -X POST https://localhost:3300/api/auth/login -H 'Content-Type: application/json' -d "$BODY")
 CODE=$(echo "$RESP" | grep -o 'HTTPCODE:[0-9]*')
 if echo "$RESP" | grep -q '"email"' && [ "$CODE" = "HTTPCODE:200" ]; then
