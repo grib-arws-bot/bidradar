@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
@@ -10,6 +12,12 @@ from app.api.settings import router as settings_router
 from app.api.sources import router as sources_router
 from app.api.topics import router as topics_router
 from app.config import settings
+
+# uvicorn은 자기 로거("uvicorn"/"uvicorn.access")만 설정하고 루트 로거는 그대로 둔다(기본
+# WARNING) — 그래서 app/collector/adapters/openapi.py의 "OpenAPI 호출" INFO 로그 같은 우리
+# 자체 로그가 (스케줄러 컨테이너와 달리) 여기(백엔드, "지금 수집" 버튼 경로)선 안 찍히고
+# 있었다(2026-09-13 발견, app/scheduler.py는 이미 이렇게 설정돼 있었음). 같은 방식으로 맞춘다.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [backend] %(levelname)s %(message)s")
 
 app = FastAPI(title="BidRadar API")
 app.include_router(auth_router)

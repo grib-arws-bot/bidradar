@@ -233,6 +233,34 @@ def test_fetch_openapi_items_paginates_until_total_pages_reached(monkeypatch):
     assert mock_fetch.call_args_list[1].kwargs["data"]["pageIndex"] == "2"
 
 
+def test_fetch_openapi_items_logs_each_real_http_call_with_masked_service_key(monkeypatch, caplog):
+    # 2026-09-13 — 사용자 지적("일일 호출 한도가 그렇게 쉽게 넘어갈 리 없는데, 로그를 남기고
+    # 있나?")으로 추가. 그동안 raw_payload는 수집 1회분을 통째로 1행 저장해서(페이지별 아님)
+    # 실제 호출 횟수를 로그 없이는 items_fetched÷numOfRows로 추정만 할 수 있었다 — 이제 호출
+    # 마다 로그가 남아 페이지 수를 정확히 셀 수 있어야 하고, ServiceKey는 로그에 그대로 새면
+    # 안 된다.
+    page1 = mock.Mock()
+    page1.json.return_value = {"response": {"body": {"items": [{"a": 1}]}}}
+    page2 = mock.Mock()
+    page2.json.return_value = {"response": {"body": {"items": []}}}
+    mock_fetch = mock.Mock(side_effect=[page1, page2])
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock_fetch)
+
+    config = {
+        "endpoint": "https://apis.data.go.kr/1230000/ao/BidPublicInfoService/getBidPblancListInfoServc",
+        "params": {"numOfRows": "100"},
+        "pagination": {"page_param": "pageNo", "max_pages": 20},
+    }
+    now = datetime.now(timezone.utc)
+    with caplog.at_level("INFO", logger="bidradar.collector.openapi"):
+        fetch_openapi_items(config, "super-secret-key", begin=now, end=now)
+
+    call_logs = [r.message for r in caplog.records if "OpenAPI 호출" in r.message]
+    assert len(call_logs) == 2  # 실제 fetch()가 2번 불렸다는 걸 로그로도 확인 가능해야 함
+    assert all("super-secret-key" not in msg for msg in call_logs)
+    assert all("***" in msg for msg in call_logs)
+
+
 def test_fetch_openapi_items_pagination_stops_on_empty_page(monkeypatch):
     # total_path가 없거나 응답이 이상해도 빈 페이지가 나오면 멈춘다(안전장치).
     page1 = mock.Mock()

@@ -7,6 +7,7 @@ feed/html은 실제로 필요해지는 U13(소스 등록 마법사)에서 채운
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 from xml.etree import ElementTree
@@ -14,6 +15,13 @@ from xml.etree import ElementTree
 from jsonpath_ng.ext import parse as jsonpath_parse
 
 from app.security.url_guard import fetch
+
+# 2026-09-13 — 실제 HTTP 호출 횟수를 로그로 남긴다. 그동안 이 어댑터가 몇 번 호출됐는지는
+# raw_payload(수집 1회분 전체를 통째로 1행 저장, 페이지별 기록 아님)로도 알 수 없어서,
+# "일일 서비스 요청제한 초과"가 났을 때 실제 호출 횟수를 items_fetched÷numOfRows로 추정만
+# 할 수 있었다(사용자 지적 — "그 정도로 초과됐다는 게 이해가 안 된다, 로그를 남기고 있나?").
+# 앞으로는 이 로그로 정확한 횟수를 셀 수 있다. ServiceKey는 마스킹한다.
+logger = logging.getLogger("bidradar.collector.openapi")
 
 
 def _xml_element_to_dict(elem: ElementTree.Element):
@@ -70,6 +78,8 @@ def _raise_if_error_envelope(payload: Any) -> None:
 
 
 def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict) -> Any:
+    safe_params = {k: ("***" if k == "ServiceKey" else v) for k, v in params.items()}
+    logger.info("OpenAPI 호출: %s %s params=%s", method, endpoint, safe_params)
     if method == "POST":
         response = fetch(endpoint, method="POST", data=params)
     else:
