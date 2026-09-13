@@ -87,6 +87,15 @@ def seed_prod() -> None:
     print("prod 최소 시드 완료(관심주제·키워드·소스·발주기관만 — 고객은 비워둠).")
 
 
+def add_source_cmd(name: str) -> None:
+    """이미 운영 중인 DB에 SOURCE_SEED 소스 하나만 추가한다(2026-09-13 신설) — seed-prod는
+    전체를 다시 넣어 중복이 나므로, 새 소스가 하나씩 추가되는 지금 단계엔 이 명령이 맞다."""
+    from app.seed_data import add_source
+
+    source_id = add_source(engine, name)
+    print(f"소스 추가 완료: {name!r} (id={source_id})")
+
+
 def backfill_org_categories_cmd() -> None:
     """이미 수집된 발주기관 중 category(업종/분야)가 비어있는 행을 기관명 패턴으로 일괄
     분류한다(2026-09-11) — 신규 기관은 수집 시점에 자동 분류되므로 1회만 실행하면 된다."""
@@ -228,6 +237,9 @@ def main() -> None:
     subparsers.add_parser("seed-prod")
     subparsers.add_parser("backfill-org-categories")
 
+    add_source_parser = subparsers.add_parser("add-source")
+    add_source_parser.add_argument("--name", required=True, help="app/seed_constants.py SOURCE_SEED의 소스명과 정확히 일치해야 함")
+
     collect_parser = subparsers.add_parser("collect")
     collect_parser.add_argument("--source-id", type=int, required=True)
     collect_parser.add_argument("--service-key", default=None, help="공공데이터포털 인증키(발급받은 경우)")
@@ -267,6 +279,8 @@ def main() -> None:
         seed_prod()
     elif args.command == "backfill-org-categories":
         backfill_org_categories_cmd()
+    elif args.command == "add-source":
+        add_source_cmd(args.name)
     elif args.command == "collect":
         collect(args.source_id, args.service_key, args.max_lookback_days)
     elif args.command == "check-compliance":

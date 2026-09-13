@@ -1,8 +1,11 @@
 """수집 파이프라인 오케스트레이션: fetch → map → upsert notice → L1/L2 채점 (U11).
 
-새 소스를 추가할 때 이 파일을 고치지 않아도 되게 하는 게 설계안 04-1의 핵심 원칙이라,
-여기는 "openapi 어댑터를 어떻게 조합하는가"만 안다 — 소스별 분기는 source_config에 있다.
-"""
+같은 어댑터 타입의 소스를 추가할 때 이 파일을 고치지 않아도 되게 하는 게 설계안 04-1의 핵심
+원칙이라, 여기는 "어댑터가 무엇을 돌려주는가"만 안다 — 소스별 필드 매핑은 source_config·
+source_field_map에 있다. 어댑터 타입 자체(openapi/html)는 두 종류뿐이라 여기서 분기하지만,
+같은 타입 안에서 소스가 늘어나는 것(예: 나라장터 API가 하나 더 생김)은 config만 추가하면 된다
+(2026-09-13 html 어댑터 도입, app/collector/adapters/html.py 참고 — 공공데이터포털 API가
+없는 자체 전자조달 사이트를 위한 것)."""
 
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, insert, select, update
 from sqlalchemy.engine import Connection
 
+from app.collector.adapters.html import fetch_html_items
 from app.collector.adapters.openapi import fetch_openapi_items
 from app.collector.mapper import map_item, validate_field_maps
 from app.collector.pii import mask_pii
@@ -161,8 +165,8 @@ def run_source(
     src = conn.execute(select(source).where(source.c.id == source_id)).mappings().first()
     if src is None:
         raise ValueError(f"소스를 찾을 수 없습니다: {source_id}")
-    if src["adapter_type"] != "openapi":
-        raise ValueError(f"U11 범위는 openapi 어댑터만 지원합니다(소스 타입: {src['adapter_type']})")
+    if src["adapter_type"] not in ("openapi", "html"):
+        raise ValueError(f"지원하지 않는 어댑터 타입입니다: {src['adapter_type']}")
     # 공고 자동 수집 on/off(2026-09-05, 관리자 화면 토글) — 관리자가 의도적으로 끈 소스는
     # 관리자 화면에서 다시 켜기 전엔 우회할 방법이 없다(법적 등급 C와 같은 성격 — 명시적 배제).
     if not src["active"]:
@@ -205,8 +209,9 @@ def run_source(
         effective_max_lookback = cfg["config"].get("max_lookback_days", max_lookback_days)
         begin, end = _collection_window(conn, source_id, max_lookback_days=effective_max_lookback)
 
+    fetch_items = fetch_openapi_items if src["adapter_type"] == "openapi" else fetch_html_items
     try:
-        raw_items = fetch_openapi_items(cfg["config"], service_key, begin=begin, end=end)
+        raw_items = fetch_items(cfg["config"], service_key, begin=begin, end=end)
     except Exception as exc:  # noqa: BLE001 — 실패도 source_run에 남겨야 "조용한 사망"이 안 됨(CLAUDE.md)
         if run_id is not None:
             _finish_run(run_id, status="fail", items_fetched=0, error_message=str(exc))

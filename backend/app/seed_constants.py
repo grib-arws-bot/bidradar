@@ -302,6 +302,17 @@ SOURCE_SEED = [
      "https://www.msit.go.kr/bbs/list.do?sCode=user&mId=311&mPid=121", "사업공고", "openapi", False, True, 1440,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15074634/openapi.do"),
+    # 2026-09-13 — 나라장터·IRIS 외 신규 소스 조사(자체조달 갭분석)에서 추가. 국가철도공단은
+    # data.go.kr에 전용 API가 없어 첫 html 어댑터로 도입(app/collector/adapters/html.py).
+    # KR전자조달시스템(ebid.kr.or.kr) robots.txt 전면허용(Allow: /), 이용약관(/html/clause.html,
+    # KR전자조달시스템입찰자이용약관)은 전자입찰 참가자 대상 조항뿐 — 크롤링·재배포 금지 조항
+    # 없음(2026-09-13 직접 확인). 다만 공공데이터포털의 명시적 '제한없음' 라이선스 같은 적극적
+    # 허가는 없는 상태라 IRIS와 동일한 근거로 법적등급 B(조건부) — 원문 전문은 안 쌓는다(목록에
+    # 나오는 구조화 필드만 매핑, 첨부파일 다운로드는 이번 범위 밖).
+    ("국가철도공단 입찰공고", "국가철도공단", "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
+     "https://ebid.kr.or.kr/", "입찰공고", "html", False, False, 60,
+     "B", "robots.txt 전면허용, 이용약관에 크롤링·재배포 금지 조항 없음(전자입찰 참가자 대상 조항뿐, 2026-09-13 확인)",
+     "https://ebid.kr.or.kr/robots.txt"),
 ]
 # "관리자 등록 예시 소스"(테스트용 자리표시자) 2026-09-05 삭제(사용자 지시) — 실 소스만 남긴다.
 
@@ -324,6 +335,7 @@ ATTRIBUTION_TEXT = {
     "IRIS 접수중": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "IRIS 공모예고": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": "출처: 과학기술정보통신부 사업공고(공공데이터포털)",
+    "국가철도공단 입찰공고": "출처: 국가철도공단 KR전자조달시스템 — 원문은 공고 링크에서 확인하세요",
 }
 
 # U11 collector가 실제로 소비하는 정확한 config/필드매핑. 나머지 소스는 U13(등록마법사) 전까지
@@ -771,6 +783,42 @@ REAL_OPENAPI_CONFIG = {
             ("extra:sprtMxRsctAm", "$.sprtMxRsctAm", None),
             ("extra:sprtPridSe", "$.sprtPridSe", None),
             ("extra:bsnsSpchClSeNm", "$.bsnsSpchClSeNm", None),
+        ],
+    },
+    # 2026-09-13 — html 어댑터(app/collector/adapters/html.py) 첫 도입. 목록 페이지(GET,
+    # fromDate/endDate로 날짜범위, pageIndex로 페이지네이션) 표 한 행이 공고구분/공고번호/
+    # 공고명(+상세 파라미터가 담긴 링크)/금액/공고게시일/개찰예정일/처리상태 7개 셀 — 직접
+    # 확인(2026-09-13). notice.biz_type 컬럼은 소스 단위 상수만 지원해(app/collector/runner.py
+    # `cfg["config"].get("biz_type")`) 공고구분(용역/구매/공사/물품 혼재)을 담을 수 없으므로
+    # extra:biz_type_raw로 원문을 보존한다. 발주기관은 이 소스 전체가 항상 국가철도공단 하나뿐이라
+    # const:로 고정(과학기술정보통신부 사업공고와 동일 패턴, advisory INBOX #2). 첨부파일 다운로드는
+    # 이번 범위 밖(A1 첨부분석은 g2b/IRIS 전용 핸들러만 있어 이 소스는 항상 "첨부 0건"으로 끝남 —
+    # 필요해지면 별도 작업으로 추가).
+    "국가철도공단 입찰공고": {
+        "config": {
+            "endpoint": "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
+            "params": {"menuNo": "14000"},
+            "date_range_params": {"begin": "fromDate", "end": "endDate", "format": "%Y-%m-%d"},
+            "pagination": {"page_param": "pageIndex", "max_pages": 60},
+            "table_class": "tbl01",
+            "columns": ["biz_type_raw", "notice_no", "title", "est_price", "open_dt", "close_dt", "status"],
+            "detail_link_column_index": 2,
+            "detail_endpoint": "https://ebid.kr.or.kr/bid/anc/bidAncDetail.do",
+            "detail_param_names": [
+                "gyErBeonho", "crSangtae", "ggDrIrja", "ggNyeondo", "ggIrBeonho",
+                "ygGeumaeg", "ggChasu", "cjbcDrMyeong", "irBeonho", "ggGubun",
+            ],
+        },
+        "field_maps": [
+            ("title", "$.title", None),
+            ("org_name", "const:국가철도공단", None),
+            ("url", "$.url", None),
+            ("notice_no", "$.notice_no", None),
+            ("est_price", "$.est_price", None),
+            ("open_dt", "$.open_dt", "%Y-%m-%d"),
+            ("close_dt", "$.close_dt", "%Y-%m-%d"),
+            ("extra:biz_type_raw", "$.biz_type_raw", None),
+            ("extra:status", "$.status", None),
         ],
     },
 }

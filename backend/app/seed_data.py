@@ -7,7 +7,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Engine, insert
+from sqlalchemy import Engine, insert, select
 
 from app.models import (
     analysis,
@@ -151,55 +151,86 @@ def _seed_orgs(conn, source_id_by_name: dict[str, int]) -> list[int]:
     return ids
 
 
+def _seed_one_source(conn, seed_row: tuple) -> tuple[int, int]:
+    """SOURCE_SEED 한 행을 실제로 insert한다(source+source_config+source_field_map+
+    source_credential) — _seed_sources()(전체 시드)와 add_source()(운영 DB에 소스 하나만
+    추가, 2026-09-13 신설) 둘 다 이 함수를 공유한다."""
+    (
+        name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1, frequency_minutes,
+        legal_tier, license_note, license_evidence_url,
+    ) = seed_row
+
+    row = conn.execute(
+        insert(source).values(
+            name=name, org_name=org_name, channel_name=derive_channel_name(name, org_name),
+            base_url=url, homepage_url=homepage_url,
+            stage=stage, adapter_type=adapter,
+            frequency_minutes=frequency_minutes, is_system=is_system, skip_l1=skip_l1, active=True,
+            legal_tier=legal_tier, license_note=license_note, license_evidence_url=license_evidence_url,
+            # 시드 시점을 "확인 시각"으로 남긴다 — 실제 운영에서는 INBOX #6 준법 재확인 도구가
+            # robots.txt를 다시 읽어 이 값을 갱신한다(app/collector/compliance.py).
+            legal_verified_at=_now(),
+            attribution_text=ATTRIBUTION_TEXT.get(name),
+            auto_extract=name in AUTO_EXTRACT_SOURCES,
+        ).returning(source.c.id)
+    ).one()
+
+    real = REAL_OPENAPI_CONFIG.get(name)
+    config = real["config"] if real else {"adapter": adapter, "endpoint": url}
+
+    cfg_row = conn.execute(
+        insert(source_config).values(
+            source_id=row.id, ver=1, config=config, created_by="report@grib.co.kr",
+        ).returning(source_config.c.id)
+    ).one()
+
+    field_maps = real["field_maps"] if real else [
+        ("title", "$.title", None), ("org_name", "$.org", None),
+        ("open_dt", "$.openDate", None), ("url", "$.url", None),
+    ]
+    for target_field, path, format_hint in field_maps:
+        conn.execute(
+            insert(source_field_map).values(
+                source_config_id=cfg_row.id, target_field=target_field, source_path=path, format_hint=format_hint,
+            )
+        )
+
+    # 실제 인증키는 infra/.env의 DATA_GO_KR_SERVICE_KEY를 통해 별도로 넣는다(U13에서 관리자
+    # 화면으로 대체 예정) — 시드는 자리표시자만 넣어 "인증키 없음" 상태를 명시적으로 남긴다.
+    # html 어댑터(서비스키 자체가 없는 사이트 스크레이핑)에도 그냥 넣어둔다 — source_credential이
+    # 있어야 하느냐 없느냐로 어댑터 종류를 구분하는 코드가 없어, 없으면 오히려 조회 쪽에서
+    # "일부 소스만 행이 없음"이라는 특이 케이스가 생긴다.
+    conn.execute(insert(source_credential).values(source_id=row.id, kind="service_key", value="__NOT_SET__"))
+
+    return row.id, cfg_row.id
+
+
 def _seed_sources(conn) -> tuple[list[int], list[int]]:
     source_ids: list[int] = []
     config_ids: list[int] = []
-    for (
-        name, org_name, url, homepage_url, stage, adapter, is_system, skip_l1, frequency_minutes,
-        legal_tier, license_note, license_evidence_url,
-    ) in SOURCE_SEED:
-        row = conn.execute(
-            insert(source).values(
-                name=name, org_name=org_name, channel_name=derive_channel_name(name, org_name),
-                base_url=url, homepage_url=homepage_url,
-                stage=stage, adapter_type=adapter,
-                frequency_minutes=frequency_minutes, is_system=is_system, skip_l1=skip_l1, active=True,
-                legal_tier=legal_tier, license_note=license_note, license_evidence_url=license_evidence_url,
-                # 시드 시점을 "확인 시각"으로 남긴다 — 실제 운영에서는 INBOX #6 준법 재확인 도구가
-                # robots.txt를 다시 읽어 이 값을 갱신한다(app/collector/compliance.py).
-                legal_verified_at=_now(),
-                attribution_text=ATTRIBUTION_TEXT.get(name),
-                auto_extract=name in AUTO_EXTRACT_SOURCES,
-            ).returning(source.c.id)
-        ).one()
-        source_ids.append(row.id)
-
-        real = REAL_OPENAPI_CONFIG.get(name)
-        config = real["config"] if real else {"adapter": adapter, "endpoint": url}
-
-        cfg_row = conn.execute(
-            insert(source_config).values(
-                source_id=row.id, ver=1, config=config, created_by="report@grib.co.kr",
-            ).returning(source_config.c.id)
-        ).one()
-        config_ids.append(cfg_row.id)
-
-        field_maps = real["field_maps"] if real else [
-            ("title", "$.title", None), ("org_name", "$.org", None),
-            ("open_dt", "$.openDate", None), ("url", "$.url", None),
-        ]
-        for target_field, path, format_hint in field_maps:
-            conn.execute(
-                insert(source_field_map).values(
-                    source_config_id=cfg_row.id, target_field=target_field, source_path=path, format_hint=format_hint,
-                )
-            )
-
-        # 실제 인증키는 infra/.env의 DATA_GO_KR_SERVICE_KEY를 통해 별도로 넣는다(U13에서 관리자
-        # 화면으로 대체 예정) — 시드는 자리표시자만 넣어 "인증키 없음" 상태를 명시적으로 남긴다.
-        conn.execute(insert(source_credential).values(source_id=row.id, kind="service_key", value="__NOT_SET__"))
-
+    for seed_row in SOURCE_SEED:
+        source_id, config_id = _seed_one_source(conn, seed_row)
+        source_ids.append(source_id)
+        config_ids.append(config_id)
     return source_ids, config_ids
+
+
+def add_source(engine: Engine, name: str) -> int:
+    """이미 운영 중인 DB(prod 포함)에 SOURCE_SEED·REAL_OPENAPI_CONFIG에 정의된 소스를 하나만
+    추가한다(2026-09-13, 국가철도공단 추가 건 — seed-prod를 통째로 다시 돌리면 기존 15개
+    소스가 전부 중복 생성되므로, 한 건만 안전하게 추가할 방법이 없었다). name은 SOURCE_SEED의
+    소스명과 정확히 일치해야 한다. 이미 같은 이름의 소스가 있으면 거부한다(CLAUDE.md "기존 행
+    덮어쓰기 금지"와 같은 취지 — 실수로 두 번 추가하면 중복 수집이 된다)."""
+    seed_row = next((row for row in SOURCE_SEED if row[0] == name), None)
+    if seed_row is None:
+        raise ValueError(f"SOURCE_SEED에 없는 소스명입니다: {name!r} — 먼저 app/seed_constants.py에 추가하세요.")
+
+    with engine.begin() as conn:
+        existing = conn.execute(select(source.c.id).where(source.c.name == name)).first()
+        if existing:
+            raise ValueError(f"이미 존재하는 소스입니다(id={existing[0]}): {name!r}")
+        source_id, _config_id = _seed_one_source(conn, seed_row)
+    return source_id
 
 
 def _seed_source_runs(conn, source_ids: list[int]) -> None:
