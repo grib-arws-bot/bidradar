@@ -51,5 +51,7 @@ services:
     volumes:
       - ./tls-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./tls-proxy/certs:/etc/nginx/certs:ro
+      # 내부용 임시 리포트(2026-09-14) — git에 안 올리는 폴더(.gitignore), 서버에 scp로만 채움.
+      - ./tls-proxy/internal-reports:/usr/share/nginx/internal-reports:ro
     depends_on:
       - frontend

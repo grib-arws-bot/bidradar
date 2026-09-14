@@ -71,3 +71,8 @@ desktop.ini
 # GitHub Actions self-hosted 러너(D:\actions-runner-bidradar) 실행 중 리포지토리 루트에
 # 남기는 부산물(2026-09-12 러너 설치 후 발견) — 워킹트리 clean 검사에 걸려 배포가 막힌다.
 update.finished
+
+# 내부용 임시 리포트(2026-09-14, tls-proxy /internal-reports/ 서빙 대상) — infra/.env와 같은
+# 이유로 git에 안 넣는다: 서버에는 scp로만 올리고, 파일명은 추측 불가능한 토큰으로 짓는다
+# (인증 없이 서빙되므로 URL 자체가 비밀 — 위 "진단·감사 리포트 HTML 차단" 사고와 같은 리스크).
+infra/tls-proxy/internal-reports/
