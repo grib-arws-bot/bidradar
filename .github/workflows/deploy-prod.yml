@@ -26,7 +26,11 @@ jobs:
   deploy-production:
     name: 프로덕션 배포
     runs-on: [self-hosted, bidradar]
-    timeout-minutes: 20
+    # 2026-09-14 — 20분 상한이 두 번 연속 실제로 걸렸다(pytest가 500건대로 늘면서 그것만 9분
+    # 안팎, 이미지 저장+서버 전송까지 합치면 여유가 거의 없었음). 테스트가 계속 늘어날 걸
+    # 감안해 30분으로 올림 — 정상 배포는 여전히 15~20분 안에 끝나므로 실패를 더 오래 기다리게
+    # 만들지는 않는다.
+    timeout-minutes: 30
     steps:
       - name: main 브랜치인지 확인
         if: github.ref != 'refs/heads/main'

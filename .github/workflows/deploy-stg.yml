@@ -24,7 +24,9 @@ jobs:
   build-and-stage:
     name: 로컬 빌드 + 스테이징 배포
     runs-on: [self-hosted, bidradar]
-    timeout-minutes: 20
+    # 2026-09-14 — deploy-prod.yml과 같은 이유로 30분으로 상향(pytest가 500건대로 늘어나며
+    # 20분 상한에 실제로 걸림).
+    timeout-minutes: 30
     steps:
       - name: main 브랜치인지 확인
         if: github.ref != 'refs/heads/main'
