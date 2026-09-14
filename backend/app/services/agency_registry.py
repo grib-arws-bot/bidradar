@@ -56,6 +56,7 @@ def list_agencies(
             org.c.name,
             org.c.abbr,
             org.c.category,
+            org.c.notice_url,
             source.c.name.label("source_name"),
             source.c.channel_name,
             source.c.homepage_url.label("source_homepage_url"),
@@ -99,11 +100,12 @@ def list_agencies(
                 "name": row["name"],
                 "abbr": row["abbr"],
                 "category": row["category"],
-                # 채널(공고기관) 링크 — 2026-09-03(사용자 지시): "공고 URL" 열을 없애고 공고기관명
-                # 자체에 링크를 건다. org.notice_url(발주기관별 개별 링크)은 더 안 쓴다 — 우리가
-                # 실제로 아는 건 "이 채널이 어디서 공고를 내는가"뿐이라 채널 단위(source.homepage_url)
-                # 링크 하나로 통일하는 게 맞다. data.go.kr 문서 페이지는 절대 여기 안 옴 —
-                # 근거 확인용 URL은 legal_verified_at 옆 배지가 아니라 license_evidence_url에만 남음.
+                # 발주기관 자신의 홈페이지 — 2026-09-03엔 "우리가 실제로 아는 건 이 채널이 어디서
+                # 공고를 내는가뿐"이라며 org.notice_url을 껐었는데(그때까진 진짜 값이 없어 켜봐야
+                # 빈 칸이었음), 2026-09-14 사용자 지시로 발주기관별 실제 영문약자·홈페이지를
+                # 조사해 채워넣기 시작하면서 다시 켠다(scripts/backfill_org_info.py 등으로 채움).
+                "org_homepage_url": row["notice_url"],
+                # 채널(공고기관) 링크 — 위 org_homepage_url이 없는 발주기관은 이걸로 대체 표시.
                 "channel_url": row["source_homepage_url"],
                 # 2026-09-05 — org_name(운영기관, 나라장터는 전부 "조달청")이 아니라 channel_name
                 # ("나라장터")을 쓴다. 공고 탐색 화면의 "데이터 소스" 채널명과 통일하기 위함.

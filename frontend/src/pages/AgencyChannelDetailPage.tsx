@@ -165,7 +165,21 @@ export function AgencyChannelDetailPage() {
                 const meta = STATUS_LABEL[row.status] ?? STATUS_LABEL.no_source;
                 return (
                   <TableRow key={row.id}>
-                    <TableCell>{row.name}</TableCell>
+                    <TableCell>
+                      {row.org_homepage_url ? (
+                        <Link
+                          href={row.org_homepage_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+                        >
+                          {row.name}
+                          <LaunchIcon sx={{ fontSize: 13 }} />
+                        </Link>
+                      ) : (
+                        row.name
+                      )}
+                    </TableCell>
                     <TableCell>{row.abbr ?? "—"}</TableCell>
                     <TableCell>{row.category ?? "—"}</TableCell>
                     <TableCell>

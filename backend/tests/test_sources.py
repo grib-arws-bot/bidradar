@@ -139,6 +139,25 @@ def test_agencies_filter_by_status_no_source(client: TestClient):
             conn.execute(org.delete().where(org.c.id == temp_id))
 
 
+def test_agencies_exposes_org_homepage_url(client: TestClient):
+    # 2026-09-14 — 발주기관 자신의 홈페이지(org.notice_url)를 다시 노출(예전엔 실값이 없어
+    # 꺼뒀던 필드, 이번에 실제 조사값을 채우기 시작하면서 다시 켬).
+    with engine.begin() as conn:
+        temp_id = conn.execute(
+            org.insert().values(
+                name="_테스트전용홈페이지기관", code="ORGTEST_HOMEPAGE", abbr="ZZTESTHOME",
+                notice_url="https://example.com/zztesthome", source_id=None,
+            )
+        ).inserted_primary_key[0]
+    try:
+        rows = client.get("/api/admin/sources/agencies", params={"q": "ZZTESTHOME"}).json()["items"]
+        assert len(rows) == 1
+        assert rows[0]["org_homepage_url"] == "https://example.com/zztesthome"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(org.delete().where(org.c.id == temp_id))
+
+
 def test_agencies_pagination_second_page_is_disjoint(client: TestClient):
     first = client.get("/api/admin/sources/agencies", params={"size": 20, "page": 1}).json()
     second = client.get("/api/admin/sources/agencies", params={"size": 20, "page": 2}).json()

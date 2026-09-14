@@ -89,7 +89,9 @@ export function AgencyStatusPage() {
                     </TableCell>
                     <TableCell>{row.adapter_label ?? "—"}</TableCell>
                     <TableCell align="right" className="tnum">
-                      {row.org_count}
+                      <Link component="span" underline="hover">
+                        {row.org_count}
+                      </Link>
                     </TableCell>
                     <TableCell>
                       <Chip label={meta.label} size="small" color={meta.color} />

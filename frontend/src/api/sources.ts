@@ -81,6 +81,8 @@ export interface AgencyRow {
   name: string;
   abbr: string | null;
   category: string | null;
+  // 발주기관 자신의 홈페이지(2026-09-14 조사 시작 — 처음엔 소수 기관만 채워져 있음).
+  org_homepage_url: string | null;
   channel_url: string | null;
   channel: string | null;
   adapter_label: string | null;
