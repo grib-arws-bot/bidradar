@@ -7,10 +7,10 @@
 #
 # 최초 1회, 인증서가 없으면 먼저 생성: sh infra/tls-proxy/gen-cert.sh
 #
-# BidRadar는 ARWS와 달리 새 서비스라 재사용할 기존 NAT 규칙이 없다 — 신규 외부 포트를 관리자에게
-# 요청해야 한다(내부 3300으로 고정, advisory/server/ 배포가이드 참고). frontend가 이미 /api를
-# backend로 리버스 프록시하므로 노출할 포트는 이거 하나뿐 — ARWS처럼 두 개(admin/서비스)를 열
-# 필요가 없다.
+# BidRadar는 ARWS와 달리 새 서비스라 재사용할 기존 NAT 규칙이 없었다 — 컨테이너는 항상 내부
+# 3300을 그대로 쓰고, 외부 공식 접근은 2026-09-14부터 라우터 포트포워딩(9997→3300)으로 확정
+# (PUBLIC_BASE_URL도 이 포트로 맞춤 — infra/.env 참고). frontend가 이미 /api를 backend로
+# 리버스 프록시하므로 노출할 포트는 이거 하나뿐 — ARWS처럼 두 개(admin/서비스)를 열 필요가 없다.
 
 services:
   db:
@@ -25,7 +25,9 @@ services:
       # Secure 플래그 사고 재현 방지, app/api/auth.py 주석 참고) — prod에서 반드시 있어야 한다.
       - ENVIRONMENT=production
       # 보고서 이메일의 링크(/r/{token})를 실제 도메인으로 만들기 위함(기본값은 stg용 localhost).
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://thingx.grib-iot.com:3300}
+      # 외부 공식 접근 포트는 9997(라우터 포트포워딩 9997→3300, 2026-09-14 확정) — 3300은 서버
+      # 내부 리스닝 포트일 뿐 외부에서 직접 안 열림.
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://thingx.grib-iot.com:9997}
 
   # scheduler는 애초에 호스트 포트를 안 쓰므로(docker-compose.yml에 ports 자체가 없음) 여기 별도
   # 오버라이드가 불필요 — ENVIRONMENT는 스케줄러 자체 동작(수집 로직)엔 영향 없어 생략.
