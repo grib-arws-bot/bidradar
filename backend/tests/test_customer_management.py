@@ -51,6 +51,64 @@ def temp_customer(client: TestClient):
         conn.execute(customer.delete().where(customer.c.id == customer_id))
 
 
+# ---- 보고서 메일 자동발송 요일·시간(2026-09-14) -----------------------------------------
+
+
+def test_email_schedule_requires_auth():
+    response = TestClient(app).patch("/api/customers/1/email-schedule", json={"days": [1], "time": "09:00"})
+    assert response.status_code == 401
+
+
+def test_email_schedule_update_success_and_round_trips(client: TestClient, temp_customer: int):
+    response = client.patch(
+        f"/api/customers/{temp_customer}/email-schedule", json={"days": [1, 3, 5], "time": "09:00"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"id": temp_customer, "days": [1, 3, 5], "time": "09:00"}
+
+    full = client.get("/api/customers/full").json()
+    row = next(c for c in full if c["id"] == temp_customer)
+    assert row["report_auto_send_days"] == [1, 3, 5]
+    assert row["report_auto_send_time"] == "09:00"
+
+
+def test_email_schedule_can_be_cleared(client: TestClient, temp_customer: int):
+    client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [2], "time": "10:00"})
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [], "time": None})
+    assert response.status_code == 200
+    full = client.get("/api/customers/full").json()
+    row = next(c for c in full if c["id"] == temp_customer)
+    assert row["report_auto_send_days"] == []
+    assert row["report_auto_send_time"] is None
+
+
+def test_email_schedule_rejects_out_of_range_day(client: TestClient, temp_customer: int):
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [8], "time": "09:00"})
+    assert response.status_code == 422
+
+
+def test_email_schedule_rejects_duplicate_days(client: TestClient, temp_customer: int):
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [1, 1], "time": "09:00"})
+    assert response.status_code == 422
+
+
+def test_email_schedule_rejects_days_without_time(client: TestClient, temp_customer: int):
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [1], "time": None})
+    assert response.status_code == 422
+
+
+def test_email_schedule_rejects_bad_time_format(client: TestClient, temp_customer: int):
+    response = client.patch(
+        f"/api/customers/{temp_customer}/email-schedule", json={"days": [1], "time": "not-a-time"}
+    )
+    assert response.status_code == 422
+
+
+def test_email_schedule_404_for_unknown_customer(client: TestClient):
+    response = client.patch("/api/customers/999999/email-schedule", json={"days": [1], "time": "09:00"})
+    assert response.status_code == 404
+
+
 def test_customers_full_requires_auth():
     response = TestClient(app).get("/api/customers/full")
     assert response.status_code == 401

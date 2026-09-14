@@ -146,6 +146,16 @@ function LastRunCell({ status, lastRunAt }: { status: SourceRow["status"]; lastR
   );
 }
 
+// 스케줄 시간을 서로 안 겹치게 잡으려면 실제 소요시간이 눈에 보여야 한다(2026-09-14 요청).
+function formatDuration(ms: number | null): string {
+  if (ms === null) return "—";
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}초`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds === 0 ? `${minutes}분` : `${minutes}분 ${seconds}초`;
+}
+
 // "수집채널"과 "발주기관 현황"을 별개 메뉴로 분리(2026-09-05 요청) — 이전엔 SourcesPage
 // 하나에 두 표가 같이 있어서 "채널 관리"와 "발주기관 조회"라는 서로 다른 목적이 섞여 있었다.
 export function DataChannelsPage() {
@@ -252,6 +262,7 @@ export function DataChannelsPage() {
               <TableCell align="right">AI 자동분석(Haiku)</TableCell>
               <TableCell align="right">지금 수집</TableCell>
               <TableCell align="right">최종 업데이트(수동/자동)</TableCell>
+              <TableCell align="right">최근 소요시간</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -328,6 +339,11 @@ export function DataChannelsPage() {
                   </TableCell>
                   <TableCell align="right">
                     <LastRunCell status={row.status} lastRunAt={row.last_run_at} />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="body2" color="text.secondary" className="tnum">
+                      {formatDuration(row.last_duration_ms)}
+                    </Typography>
                   </TableCell>
                 </TableRow>
               ))}

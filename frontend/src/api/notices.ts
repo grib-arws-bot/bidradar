@@ -111,7 +111,7 @@ export interface FilterOptions {
   // 기반 분류, app/services/org_classification.py). 이름만으로 분야를 알 수 없는 기관은
   // 미분류로 남아 이 목록에 안 뜬다.
   org_categories: string[];
-  // "데이터 소스" 필터(2026-09-05) — 개별 source 행이 아니라 공고기관(나라장터/IRIS 등) 단위로
+  // "공고기관" 필터(2026-09-05 도입, 2026-09-14 라벨 변경) — 개별 source 행이 아니라 공고기관(나라장터/IRIS 등) 단위로
   // 묶여 있다. 채널 하나를 선택하면 그 채널에 속한 source_ids 전체가 필터에 반영된다.
   channels: { name: string; source_ids: number[] }[];
   stages: string[];

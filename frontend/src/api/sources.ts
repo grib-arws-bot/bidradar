@@ -19,9 +19,12 @@ export interface SourceRow {
   auto_analyze: boolean;
   active: boolean;
   notice_type: "공공입찰" | "정부지원";
-  // 공고 업데이트 시간(2026-09-05) — 최대 3개, "HH:MM", 일부만 설정 가능. 설정 UI만이고
-  // 실제 자동 실행 엔진은 아직 없다.
+  // 공고 업데이트 시간(2026-09-05 설정 UI, 2026-09-10 실행 엔진 — app/scheduler.py) — 최대
+  // 3개, "HH:MM", 일부만 설정 가능. 매 분 정각에 이 시각과 일치하는 소스를 자동 수집한다.
   schedule_times: string[];
+  // 최근 1회 수집(+첨부분석·AI분석 포함) 소요시간(ms). 이 기능 추가(2026-09-14) 이전 기록은
+  // null.
+  last_duration_ms: number | null;
 }
 
 export async function fetchSources(): Promise<SourceRow[]> {

@@ -15,8 +15,15 @@ from sqlalchemy import delete, insert
 
 from app.collector.runner import CollectionInProgressError
 from app.db import engine
-from app.models import source
-from app.scheduler import KST, _due_sources, run_due_sources, run_pending_backlog
+from app.models import customer, source
+from app.scheduler import (
+    KST,
+    _due_customers,
+    _due_sources,
+    run_due_customer_emails,
+    run_due_sources,
+    run_pending_backlog,
+)
 
 
 def _make_temp_source(conn, *, name: str, schedule_times: list[str], active: bool = True) -> int:
@@ -114,3 +121,112 @@ def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():
     with mock.patch("app.scheduler.run_pending_analysis", side_effect=RuntimeError("가짜 실패")):
         result = run_pending_backlog()
     assert result == {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
+
+
+# ---- 고객 보고서 메일 자동발송(2026-09-14, 요일·시간) ------------------------------------
+
+
+def _make_temp_customer(conn, *, name: str, days: list[int], time_: str | None, active: bool = True) -> int:
+    return conn.execute(
+        insert(customer)
+        .values(name=name, plan_tier="standard", active=active, report_auto_send_days=days, report_auto_send_time=time_)
+        .returning(customer.c.id)
+    ).scalar_one()
+
+
+def test_due_customers_matches_only_day_and_time():
+    # 월요일(2026-09-14는 실제 월요일) 09:00 기준 — 요일+시각이 정확히 맞는 고객만 걸려야 함.
+    now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
+    ids = []
+    try:
+        with engine.begin() as conn:
+            due_id = _make_temp_customer(conn, name="_테스트_고객_월요일9시", days=[1, 3, 5], time_="09:00")
+            other_day_id = _make_temp_customer(conn, name="_테스트_고객_화요일만", days=[2], time_="09:00")
+            other_time_id = _make_temp_customer(conn, name="_테스트_고객_다른시각", days=[1], time_="18:00")
+            no_schedule_id = _make_temp_customer(conn, name="_테스트_고객_미설정", days=[], time_=None)
+            inactive_id = _make_temp_customer(conn, name="_테스트_고객_비활성", days=[1], time_="09:00", active=False)
+            ids = [due_id, other_day_id, other_time_id, no_schedule_id, inactive_id]
+
+        due_ids = {cid for cid, _name in _due_customers(now_kst)}
+        assert due_id in due_ids
+        assert other_day_id not in due_ids
+        assert other_time_id not in due_ids
+        assert no_schedule_id not in due_ids
+        assert inactive_id not in due_ids
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(customer).where(customer.c.id.in_(ids)))
+
+
+def test_run_due_customer_emails_generates_and_sends_then_skips_zero_matches(monkeypatch):
+    now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
+    monkeypatch.setattr("app.scheduler.time.sleep", lambda _seconds: None)  # 테스트 속도
+    ids = []
+    try:
+        with engine.begin() as conn:
+            has_matches_id = _make_temp_customer(conn, name="_테스트_고객_발송대상", days=[1], time_="09:00")
+            zero_matches_id = _make_temp_customer(conn, name="_테스트_고객_0건", days=[1], time_="09:00")
+            ids = [has_matches_id, zero_matches_id]
+
+        def fake_generate(customer_id: int):
+            total = 3 if customer_id == has_matches_id else 0
+            return {"id": 555, "customer_id": customer_id, "summary": {"total": total}}
+
+        with mock.patch("app.scheduler.generate_report", side_effect=fake_generate) as mock_generate, \
+             mock.patch("app.scheduler.send_report_email") as mock_send:
+            sent = run_due_customer_emails(now_kst)
+
+        assert set(sent) == {has_matches_id}
+        assert mock_generate.call_count == 2
+        mock_send.assert_called_once()
+        assert mock_send.call_args.args[1] == has_matches_id
+        assert mock_send.call_args.args[2] == 555
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(customer).where(customer.c.id.in_(ids)))
+
+
+def test_run_due_customer_emails_skips_when_no_interest_profile(monkeypatch):
+    # generate_report()는 관심주제가 아예 설정 안 된 고객에겐 None을 돌려준다(interest_report.py).
+    now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
+    ids = []
+    try:
+        with engine.begin() as conn:
+            no_profile_id = _make_temp_customer(conn, name="_테스트_고객_관심주제없음", days=[1], time_="09:00")
+            ids = [no_profile_id]
+
+        with mock.patch("app.scheduler.generate_report", return_value=None), \
+             mock.patch("app.scheduler.send_report_email") as mock_send:
+            sent = run_due_customer_emails(now_kst)
+
+        assert no_profile_id not in sent
+        mock_send.assert_not_called()
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(customer).where(customer.c.id.in_(ids)))
+
+
+def test_run_due_customer_emails_continues_past_one_customer_failure(monkeypatch):
+    now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
+    monkeypatch.setattr("app.scheduler.time.sleep", lambda _seconds: None)
+    ids = []
+    try:
+        with engine.begin() as conn:
+            failing_id = _make_temp_customer(conn, name="_테스트_고객_예외", days=[1], time_="09:00")
+            ok_id = _make_temp_customer(conn, name="_테스트_고객_정상", days=[1], time_="09:00")
+            ids = [failing_id, ok_id]
+
+        def fake_generate(customer_id: int):
+            if customer_id == failing_id:
+                raise RuntimeError("가짜 실패")
+            return {"id": 1, "customer_id": customer_id, "summary": {"total": 1}}
+
+        with mock.patch("app.scheduler.generate_report", side_effect=fake_generate), \
+             mock.patch("app.scheduler.send_report_email") as mock_send:
+            sent = run_due_customer_emails(now_kst)
+
+        assert sent == [ok_id]  # failing_id는 예외를 삼키고 건너뛰되 ok_id는 계속 처리됨
+        mock_send.assert_called_once()
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(customer).where(customer.c.id.in_(ids)))

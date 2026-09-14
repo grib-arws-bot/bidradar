@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Connection
 
 from app.models import customer, customer_document
@@ -46,6 +46,8 @@ def _serialize(row) -> dict:
         "profile_summary_md": row["profile_summary_md"],
         "profile_summarized_at": row["profile_summarized_at"].isoformat() if row["profile_summarized_at"] else None,
         "profile_summary_cost": float(row["profile_summary_cost"]),
+        "report_auto_send_days": row["report_auto_send_days"] or [],
+        "report_auto_send_time": row["report_auto_send_time"],
     }
 
 
@@ -105,6 +107,42 @@ def delete_customer(conn: Connection, customer_id: int) -> bool:
         raise ValueError("내부(그립 자신) 고객은 삭제할 수 없습니다.")
     conn.execute(delete(customer).where(customer.c.id == customer_id))
     return True
+
+
+# ---- 보고서 메일 자동발송 요일·시간(2026-09-14) -----------------------------------------
+# app/scheduler.py의 소스 수집 스케줄(schedule_times)과 같은 패턴 — 여기서 검증만 하고,
+# 실제로 그 시각에 발송을 실행하는 건 scheduler.py의 run_due_customer_emails().
+
+
+class EmailScheduleError(ValueError):
+    pass
+
+
+def validate_email_schedule(days: list[int], time: str | None) -> None:
+    if any(d < 1 or d > 7 for d in days):
+        raise EmailScheduleError("요일은 1(월)~7(일) 사이의 값이어야 합니다.")
+    if len(set(days)) != len(days):
+        raise EmailScheduleError("같은 요일을 중복해서 지정할 수 없습니다.")
+    if time is not None:
+        try:
+            hour_str, minute_str = time.split(":")
+            hour, minute = int(hour_str), int(minute_str)
+        except (ValueError, AttributeError) as exc:
+            raise EmailScheduleError(f"시간 형식이 올바르지 않습니다(HH:MM, 00:00~23:59): {time!r}") from exc
+        if not (0 <= hour <= 23) or not (0 <= minute <= 59):
+            raise EmailScheduleError(f"시간은 00:00~23:59 범위여야 합니다: {time!r}")
+    if days and time is None:
+        raise EmailScheduleError("요일을 지정하려면 발송 시각도 함께 설정해야 합니다.")
+
+
+def set_email_schedule(conn: Connection, customer_id: int, days: list[int], time: str | None) -> bool:
+    validate_email_schedule(days, time)
+    result = conn.execute(
+        update(customer)
+        .where(customer.c.id == customer_id)
+        .values(report_auto_send_days=sorted(days), report_auto_send_time=time)
+    )
+    return result.rowcount > 0
 
 
 # ---- 소개서 파일(다중 업로드, DB 바이너리 저장) -----------------------------------------

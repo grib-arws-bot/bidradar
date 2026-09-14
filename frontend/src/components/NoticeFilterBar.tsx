@@ -50,7 +50,7 @@ interface Props {
   onChange: (values: NoticeFilterValues) => void;
 }
 
-// "데이터 소스" 필터는 채널(공고기관) 단위로 선택하지만 실제 값은 개별 source_id 배열로
+// "공고기관" 필터는 채널(공고기관) 단위로 선택하지만 실제 값은 개별 source_id 배열로
 // 보관한다(백엔드가 이미 그 형태를 받음) — 그 채널의 source_ids가 전부 선택돼 있으면 그
 // 채널이 "선택됨"으로 보인다.
 function selectedChannels(
@@ -108,7 +108,7 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
           value={selectedChannels(options?.channels ?? [], values.source)}
           onChange={(_, selected) => set("source", selected.flatMap((c) => c.source_ids))}
           isOptionEqualToValue={(a, b) => a.name === b.name}
-          renderInput={(params) => <TextField {...params} label="데이터 소스" />}
+          renderInput={(params) => <TextField {...params} label="공고기관" />}
         />
         <Autocomplete
           multiple
@@ -237,7 +237,7 @@ function AppliedChips({ options, values, onChange }: Props) {
   selectedChannels(options?.channels ?? [], values.source).forEach((c) => {
     chips.push({
       key: `channel-${c.name}`,
-      label: `데이터 소스: ${c.name}`,
+      label: `공고기관: ${c.name}`,
       onDelete: () => onChange({ ...values, source: values.source.filter((id) => !c.source_ids.includes(id)) }),
     });
   });

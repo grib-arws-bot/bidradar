@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -31,8 +32,16 @@ from sqlalchemy import select
 from app.collector.runner import CollectionInProgressError, run_source_and_process_pending
 from app.db import engine
 from app.logging_config import configure_logging
-from app.models import source
+from app.models import customer, source
+from app.services.interest_report import generate_report, send_report_email
+from app.services.mailer import SmtpNotConfiguredError
 from app.services.pending_analysis import run_pending_analysis
+
+# 고객 보고서 메일을 같은 분에 한꺼번에 여러 명에게 쏘지 않고 이만큼 띄운다(2026-09-14) —
+# 하이웍스 이용약관 제29조2항이 "자동화 스크립트를 통한 메일 대량발송"을 금지한다고 명시돼
+# 있어(의사결정_로그 9번), 자동발송을 도입하며 그때 정한 완화 조치("발송 간격 두기")를
+# 실제로 반영한다. 고객 수가 많지 않아(내부 도구) 초 단위로도 충분하다.
+EMAIL_SEND_SPACING_SECONDS = 5
 
 # 2026-09-14 — 콘솔뿐 아니라 영속 파일(/app/logs/bidradar.log)에도 남긴다(app/logging_config.py) —
 # 컨테이너가 재생성되면(다른 컨테이너 문제로 인한 연쇄 recreate 등) 표준출력 로그가 사라져
@@ -72,6 +81,56 @@ def run_due_sources(now: datetime | None = None) -> list[int]:
     return attempted
 
 
+def _due_customers(now_kst: datetime) -> list[tuple[int, str]]:
+    """이 시각(now_kst)의 요일(ISO, 1=월~7=일)과 "HH:MM"이 report_auto_send_days/
+    report_auto_send_time에 맞는 활성 고객의 (id, name) 목록. 둘 다 설정돼 있어야 대상이다
+    (report_auto_send_days가 비어 있으면 시각이 같아도 대상이 아님)."""
+    hhmm = now_kst.strftime("%H:%M")
+    weekday = now_kst.isoweekday()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(customer.c.id, customer.c.name, customer.c.report_auto_send_days, customer.c.report_auto_send_time)
+            .where(customer.c.active.is_(True))
+        ).all()
+    return [
+        (row.id, row.name)
+        for row in rows
+        if row.report_auto_send_time == hhmm and weekday in (row.report_auto_send_days or [])
+    ]
+
+
+def run_due_customer_emails(now: datetime | None = None) -> list[int]:
+    """이번 분에 예정된 고객에게 보고서를 생성해 자동으로 메일을 보낸다(2026-09-14 사용자
+    지시). 관리자가 고객 상세 화면에서 명시적으로 요일·시간을 설정해야만 대상이 되므로
+    CLAUDE.md 원칙 3("자동 실행 금지")과 충돌하지 않는다 — run_due_sources의 auto_extract/
+    auto_analyze와 같은 논리. 신규 관심 공고가 0건이면(보낼 내용이 없으면) 발송을 건너뛴다.
+
+    발송 간격을 둔다(EMAIL_SEND_SPACING_SECONDS) — 의사결정_로그 9번의 완화 조치 반영."""
+    now_kst = (now or datetime.now(KST)).astimezone(KST)
+    due = _due_customers(now_kst)
+    sent: list[int] = []
+    for i, (customer_id, name) in enumerate(due):
+        if i > 0:
+            time.sleep(EMAIL_SEND_SPACING_SECONDS)
+        try:
+            report = generate_report(customer_id)
+            if report is None:
+                logger.info("[%s] %s 예약 발송 건너뜀: 관심주제 미설정", customer_id, name)
+                continue
+            if report["summary"].get("total", 0) == 0:
+                logger.info("[%s] %s 예약 발송 건너뜀: 신규 관심 공고 0건", customer_id, name)
+                continue
+            with engine.begin() as conn:
+                send_report_email(conn, customer_id, report["id"])
+            sent.append(customer_id)
+            logger.info("[%s] %s 예약 발송 완료: %s건", customer_id, name, report["summary"].get("total"))
+        except SmtpNotConfiguredError:
+            logger.warning("[%s] %s 예약 발송 실패: SMTP 미설정", customer_id, name)
+        except Exception:  # noqa: BLE001 — 한 고객 실패가 다른 고객 발송을 막으면 안 됨
+            logger.exception("[%s] %s 예약 발송 실패", customer_id, name)
+    return sent
+
+
 def run_pending_backlog() -> dict:
     """`process_new_notices`(방금 수집한 공고 전용)가 못 잡는 잔고를 주기적으로 쓸어담는다
     (2026-09-13, 의사결정_로그 126번). 웹 페이지의 "재분석" 버튼은 첨부 재추출(A1) 뒤 AI분석
@@ -100,7 +159,12 @@ def main() -> None:
     # 10분마다 — 분 단위로 도는 run_due_sources보다 훨씬 드물게(잔고 처리는 급하지 않음, 분석
     # 워커 동시실행 상한 2인 prod 사양 고려, CLAUDE.md S8).
     scheduler.add_job(run_pending_backlog, CronTrigger(minute="*/10"), id="run_pending_backlog", max_instances=1)
-    logger.info("BidRadar 수집 스케줄러 시작(Asia/Seoul 기준, 매 분 정각 확인 + 10분마다 잔고 처리)")
+    # 2026-09-14 — 고객 보고서 메일 자동발송(요일·시간, 고객 상세 화면 설정). run_due_sources와
+    # 같은 매 분 정각 체크지만 별도 job으로 둔다 — 이 job이 오래 걸려도(발송 간격 때문에)
+    # run_due_sources 다음 실행을 막지 않도록(BlockingScheduler 기본 스레드풀 executor라 서로
+    # 다른 job은 별도 스레드에서 돈다).
+    scheduler.add_job(run_due_customer_emails, CronTrigger(second=0), id="run_due_customer_emails", max_instances=1)
+    logger.info("BidRadar 수집 스케줄러 시작(Asia/Seoul 기준, 매 분 정각 확인 + 10분마다 잔고 처리 + 고객 메일 자동발송)")
     scheduler.start()
 
 

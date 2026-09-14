@@ -17,6 +17,10 @@ export interface CustomerFull {
   profile_summary_md: string | null;
   profile_summarized_at: string | null;
   profile_summary_cost: number;
+  // 보고서 메일 자동발송 요일·시간(2026-09-14). days는 ISO 요일 번호(1=월~7=일). 둘 다
+  // 설정돼 있어야 실제로 발송된다(app/scheduler.py run_due_customer_emails).
+  report_auto_send_days: number[];
+  report_auto_send_time: string | null;
 }
 
 export interface CustomerDraft {
@@ -47,6 +51,15 @@ export async function updateCustomer(id: number, draft: CustomerDraft): Promise<
 
 export async function deleteCustomer(id: number): Promise<void> {
   await apiClient.delete(`/customers/${id}`);
+}
+
+// 보고서 메일 자동발송 요일·시간 — 고객 정보 일괄저장(CustomerDraft)과 별개 엔드포인트
+// (source.schedule_times와 같은 이유: 자동저장되는 별도 설정이라 "저장" 버튼과 묶지 않음).
+export async function updateCustomerEmailSchedule(
+  id: number,
+  schedule: { days: number[]; time: string | null },
+): Promise<void> {
+  await apiClient.patch(`/customers/${id}/email-schedule`, schedule);
 }
 
 export interface CustomerDocument {

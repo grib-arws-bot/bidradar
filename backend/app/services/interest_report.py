@@ -247,7 +247,10 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
         f'<p style="margin-top:24px;"><a href="{report_url}">웹에서 전체 리포트 보기</a></p>'
         "</div>"
     )
-    send_email(to=recipients, subject=subject, html_body=html_body, text_body=text_body)
+    send_email(
+        to=recipients, subject=subject, html_body=html_body, text_body=text_body,
+        list_unsubscribe=f"<mailto:{settings.smtp_from}?subject=수신거부>",
+    )
     conn.execute(
         insert(report_send_log).values(report_id=report_id, customer_id=customer_id, recipients=recipients)
     )

@@ -57,6 +57,7 @@ def list_sources(conn: Connection) -> list[dict]:
             source.c.schedule_times,
             source_run.c.status,
             source_run.c.run_at,
+            source_run.c.duration_ms,
         )
         .select_from(source)
         .join(latest_run_sq, latest_run_sq.c.source_id == source.c.id, isouter=True)
@@ -98,6 +99,11 @@ def list_sources(conn: Connection) -> list[dict]:
                 "active": row["active"],
                 "notice_type": notice_type_of(row["channel_name"]),
                 "schedule_times": row["schedule_times"] or [],
+                # 최근 1회 수집(+첨부분석·AI분석까지 포함한 전체) 소요시간(ms) — "공고 업데이트
+                # 시간"을 서로 안 겹치게 잡으려면 실제로 얼마나 걸리는지 알아야 한다(2026-09-14
+                # 사용자 요청으로 신설, app/collector/runner.py run_source_and_process_pending에서
+                # 측정). 과거 실행분은 값이 없을 수 있다(이 기능 추가 이전 기록).
+                "last_duration_ms": row["duration_ms"],
             }
         )
     return result

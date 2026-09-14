@@ -18,6 +18,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchCustomersFull, updateCustomer, type CustomerDraft, type CustomerFull } from "@/api/customers";
 import { CustomerDocumentsSection } from "@/components/customer-detail/CustomerDocumentsSection";
+import { CustomerEmailScheduleSection } from "@/components/customer-detail/CustomerEmailScheduleSection";
 import { CustomerInterestSection } from "@/components/customer-detail/CustomerInterestSection";
 import { LoadingButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
@@ -29,6 +30,8 @@ function toDraft(c: CustomerFull): CustomerDraft {
     profile_summary_md: _md,
     profile_summarized_at: _at,
     profile_summary_cost: _cost,
+    report_auto_send_days: _days,
+    report_auto_send_time: _time,
     ...draft
   } = c;
   return draft;
@@ -224,6 +227,7 @@ export function CustomerDetailPage() {
       </Card>
 
       <CustomerDocumentsSection customer={customer} />
+      <CustomerEmailScheduleSection customer={customer} />
       <CustomerInterestSection customerId={customer.id} />
     </Stack>
   );

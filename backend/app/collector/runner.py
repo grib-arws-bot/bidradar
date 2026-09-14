@@ -105,14 +105,16 @@ def _start_run(source_id: int) -> int:
         ).scalar_one()
 
 
-def _finish_run(run_id: int, *, status: str, items_fetched: int, error_message: str | None = None) -> None:
+def _finish_run(
+    run_id: int, *, status: str, items_fetched: int, error_message: str | None = None, duration_ms: int | None = None
+) -> None:
     from app.db import engine as _engine
 
     with _engine.begin() as log_conn:
         log_conn.execute(
             update(source_run)
             .where(source_run.c.id == run_id)
-            .values(status=status, items_fetched=items_fetched, error_message=error_message)
+            .values(status=status, items_fetched=items_fetched, error_message=error_message, duration_ms=duration_ms)
         )
 
 
@@ -384,6 +386,12 @@ def run_source_and_process_pending(
     거부한다(S8 원칙 3과 같은 취지)."""
     _reject_if_already_running(source_id)
     run_id = _start_run(source_id)
+    # 스케줄 간격을 정할 때(관리자 페이지 "공고데이터 수집") 실제로 얼마나 걸리는지 알아야
+    # 하는데, source_run.duration_ms가 지금까지 데모 시드 데이터에만 채워지고 실제 수집
+    # 경로에서는 한 번도 기록된 적이 없었다(2026-09-14 발견) — 수집(run_source)뿐 아니라
+    # 이어지는 첨부분석(A1)·AI분석(A2)까지 포함한 전체 소요시간을 재야 스케줄이 실제로 안
+    # 겹치는지 판단할 수 있어 이 바깥 함수(스케줄러가 직접 호출하는 지점) 기준으로 측정한다.
+    start = datetime.now(timezone.utc)
     try:
         with engine.begin() as conn:
             collect_result = run_source(conn, source_id, max_lookback_days=max_lookback_days, run_id=run_id)
@@ -391,7 +399,9 @@ def run_source_and_process_pending(
         raw_items_by_notice_id = collect_result.pop("inserted_raw_items")
         pending_result = process_new_notices(source_id, new_notice_ids, raw_items_by_notice_id=raw_items_by_notice_id)
     except Exception as exc:  # noqa: BLE001 — 실패도 반드시 마감해야 "진행 중"에 영원히 안 갇힘
-        _finish_run(run_id, status="fail", items_fetched=0, error_message=str(exc))
+        duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        _finish_run(run_id, status="fail", items_fetched=0, error_message=str(exc), duration_ms=duration_ms)
         raise
-    _finish_run(run_id, status="ok", items_fetched=collect_result["fetched"])
+    duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+    _finish_run(run_id, status="ok", items_fetched=collect_result["fetched"], duration_ms=duration_ms)
     return {**collect_result, **pending_result}
