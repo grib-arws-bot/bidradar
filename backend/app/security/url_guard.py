@@ -18,7 +18,11 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 ALLOWED_SCHEMES = {"http", "https"}
-ALLOWED_PORTS = {80, 443, 8080, 8443}
+# 9443 — 한국가스공사 전자조달시스템(bid.kogas.or.kr)이 이 비표준 포트를 필수로 쓴다(2026-09-14
+# 실측 확인, robots.txt 개방·이용약관에 크롤링 금지 조항 없음). 임의 포트를 여는 게 아니라
+# "이미 검증한 실제 정부기관 사이트가 쓰는 포트"만 화이트리스트에 추가하는 것 — SSRF 방어
+# 원칙(허용목록 방식)과 배치되지 않는다.
+ALLOWED_PORTS = {80, 443, 8080, 8443, 9443}
 DEFAULT_PORT_BY_SCHEME = {"http": 80, "https": 443}
 
 MAX_REDIRECTS = 3
@@ -99,7 +103,7 @@ def validate_url(url: str) -> ValidatedTarget:
     """URL을 검증하고, 연결에 고정해서 쓸 IP를 포함한 대상을 반환한다.
 
     1. 스킴이 http/https인지 (file/gopher/ftp/data 등 거부)
-    2. 포트가 80/443/8080/8443 중 하나인지
+    2. 포트가 80/443/8080/8443/9443 중 하나인지
     3. 호스트를 리졸브한 모든 IP가 차단 대역 밖인지 (하나라도 걸리면 전체 거부)
     """
     parsed = urlparse(url)
@@ -113,7 +117,7 @@ def validate_url(url: str) -> ValidatedTarget:
 
     port = parsed.port or DEFAULT_PORT_BY_SCHEME[parsed.scheme]
     if port not in ALLOWED_PORTS:
-        raise SSRFBlockedError(url, f"허용되지 않은 포트({port}) — 80/443/8080/8443만 허용")
+        raise SSRFBlockedError(url, f"허용되지 않은 포트({port}) — 80/443/8080/8443/9443만 허용")
 
     # 리터럴 IP(예: http://169.254.169.254/)도 getaddrinfo로 통일 처리된다.
     try:

@@ -120,3 +120,49 @@ def test_fetch_html_items_ignores_header_row_with_mismatched_cell_count(monkeypa
     now = datetime(2026, 9, 13, tzinfo=timezone.utc)
     items = fetch_html_items(_CONFIG, begin=now, end=now)
     assert len(items) == 1
+
+
+# ---- detail_js_function 커스텀 함수명(2026-09-14, 한국가스공사 viewBid(...) 대응) -----------
+
+_KOGAS_CONFIG = {
+    "endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
+    "params": {},
+    "pagination": {"page_param": "page", "max_pages": 10},
+    "table_class": "tl",
+    "columns": ["notice_no", "title", "biz_type_raw", "work_type", "contract_method", "close_dt", "open_dt", "cancelled"],
+    "detail_link_column_index": 0,
+    "detail_endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_detail_view_notice.jsp",
+    "detail_js_function": "viewBid",
+    "detail_param_names": ["notice_code", "bid_code", "round"],
+}
+
+_KOGAS_ROW = """
+<tr>
+    <td><a href="javascript:viewBid('2026091412','001','01','B')" title="2026091412001">2026091412001</a></td>
+    <td><a href="javascript:viewBid('2026091412','001','01','B')">유해사이트 차단시스템 교체</a></td>
+    <td>전자입찰</td>
+    <td>물품</td>
+    <td>제한경쟁</td>
+    <td>2026.09.28 15:00</td>
+    <td>&nbsp;</td>
+    <td>&nbsp;</td>
+</tr>
+"""
+
+
+def test_fetch_html_items_supports_custom_detail_js_function(monkeypatch):
+    # 한국가스공사는 국가철도공단과 함수명이 다르고(viewBid vs detail), onclick 인자가 4개인데
+    # URL에는 앞 3개(notice_code/bid_code/round)만 필요하다 — 나머지 type 인자는 무시돼야 한다.
+    page_html = f'<table class="tl"><tbody>{_KOGAS_ROW}</tbody></table>'
+    mock_fetch = mock.Mock(side_effect=[mock.Mock(text=page_html), mock.Mock(text='<table class="tl"><tbody></tbody></table>')])
+    monkeypatch.setattr("app.collector.adapters.html.fetch", mock_fetch)
+
+    now = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    items = fetch_html_items(_KOGAS_CONFIG, begin=now, end=now)
+
+    assert len(items) == 1
+    assert items[0]["title"] == "유해사이트 차단시스템 교체"
+    assert items[0]["url"] == (
+        "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_detail_view_notice.jsp?"
+        "notice_code=2026091412&bid_code=001&round=01"
+    )

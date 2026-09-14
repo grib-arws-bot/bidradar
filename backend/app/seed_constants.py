@@ -161,6 +161,7 @@ ORG_SEED = [
     ("한국토지주택공사", "LH", "공기업(자체조달)", None, "https://ebid.lh.or.kr/"),
     ("한국철도공사", "KORAIL", "공기업(자체조달)", None, "https://ebid.korail.com/"),
     ("국가철도공단", "KR", "공기업(자체조달)", None, "https://ebid.kr.or.kr/"),
+    ("한국가스공사", "KOGAS", "공기업(자체조달)", None, "https://bid.kogas.or.kr:9443/"),
     ("서울특별시교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
     ("부산광역시교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
     ("강원도교육청", None, "교육청", "나라장터 입찰공고정보서비스(용역)", None),
@@ -313,6 +314,20 @@ SOURCE_SEED = [
      "https://ebid.kr.or.kr/", "입찰공고", "html", False, False, 60,
      "B", "robots.txt 전면허용, 이용약관에 크롤링·재배포 금지 조항 없음(전자입찰 참가자 대상 조항뿐, 2026-09-13 확인)",
      "https://ebid.kr.or.kr/robots.txt"),
+    # 2026-09-14 — 자체조달 갭분석(2026-09-01) 후속으로 추가. 실측(Playwright로 실제 렌더링
+    # 확인, WebFetch만으로는 정적 HTML이 비어 보여 "로그인 기반 SPA"로 오판할 뻔함) 결과 목록
+    # 페이지(/supplier/contents/bid/bid_list_notice_frm.jsp)는 로그인 없이 GET으로 그대로
+    # 열리는 전통적 JSP 게시판 — 국가철도공단과 같은 구조. robots.txt는 QnA 게시판 한 경로만
+    # 차단(그 외 전면 허용), 이 서브도메인·회사 개인정보처리방침 어디에도 크롤링·재배포를 금지
+    # 하는 이용약관 문구를 찾지 못함(2026-09-14 직접 확인) — 국가철도공단과 동일 근거로 법적
+    # 등급 B. 비표준 포트 9443 필수(url_guard.ALLOWED_PORTS에 추가). 날짜범위 필터 파라미터
+    # (e_startday 등)의 실제 동작을 검증 못해 사용하지 않고, 대신 max_pages를 작게 잡아(5페이지,
+    # 최근 순 정렬 확인됨) 매 회차 최근 공고만 훑는다 — 전체 597건(40페이지)을 매번 다시
+    # 긁는 낭비를 피함(29번 항목 OpenAPI 쿼터 사고에서 배운 "불필요한 반복 호출 최소화" 원칙).
+    ("한국가스공사 입찰공고", "한국가스공사", "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
+     "https://bid.kogas.or.kr:9443/", "입찰공고", "html", False, False, 60,
+     "B", "robots.txt 전면허용(QnA 게시판 1곳만 예외), 이용약관 문구 자체를 찾지 못함 — 명시적 금지 없음(2026-09-14 확인)",
+     "https://bid.kogas.or.kr:9443/robots.txt"),
 ]
 # "관리자 등록 예시 소스"(테스트용 자리표시자) 2026-09-05 삭제(사용자 지시) — 실 소스만 남긴다.
 
@@ -336,6 +351,7 @@ ATTRIBUTION_TEXT = {
     "IRIS 공모예고": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": "출처: 과학기술정보통신부 사업공고(공공데이터포털)",
     "국가철도공단 입찰공고": "출처: 국가철도공단 KR전자조달시스템 — 원문은 공고 링크에서 확인하세요",
+    "한국가스공사 입찰공고": "출처: 한국가스공사 전자조달시스템 — 원문은 공고 링크에서 확인하세요",
 }
 
 # U11 collector가 실제로 소비하는 정확한 config/필드매핑. 나머지 소스는 U13(등록마법사) 전까지
@@ -839,6 +855,43 @@ REAL_OPENAPI_CONFIG = {
             ("close_dt", "$.close_dt", "%Y-%m-%d"),
             ("extra:biz_type_raw", "$.biz_type_raw", None),
             ("extra:status", "$.status", None),
+        ],
+    },
+    # 2026-09-14 — 목록 표(class="tl") 한 행 8개 셀을 실측 확인(입찰번호/입찰명(+상세 파라미터가
+    # 담긴 javascript:viewBid(notice_code,bid_code,round,type) 링크)/입찰구분/업무구분/
+    # 계약방법/입찰마감일시/개찰일시/취소여부). 상세 페이지는 GET 쿼리스트링으로도 그대로 열림을
+    # 확인(POST 폼 제출 없이도 동작, curl로 직접 검증) — viewBid의 4번째 인자(type)는 게시판이
+    # bidsale/수소공고 등 드문 유형일 때 다른 JSP로 보내는 용도라 URL 조립엔 앞 3개만 쓴다
+    # (app/collector/adapters/html.py의 detail_param_names가 args보다 적어도 허용하도록 수정).
+    # est_price(예정가격)는 이 목록 표에 없음 — 상세 페이지에만 있어 이번 범위에서는 비워둔다
+    # (est_price 자체가 REQUIRED_FIELDS가 아니므로 문제 없음). 인코딩은 EUC-KR이나 서버가
+    # Content-Type 헤더에 명시해 requests가 자동으로 올바르게 디코딩함(2026-09-14 실측 확인).
+    "한국가스공사 입찰공고": {
+        "config": {
+            "endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
+            "params": {"worktype": "", "title": "", "e_startday": "", "e_endday": "", "o_startday": "", "o_endday": "", "orderplace": "", "reqbidno": ""},
+            "pagination": {"page_param": "page", "max_pages": 5},
+            "table_class": "tl",
+            "columns": [
+                "notice_no", "title", "extra_bid_type", "biz_type_raw",
+                "extra_contract_method", "close_dt", "extra_openg_dt", "extra_cancelled",
+            ],
+            "detail_link_column_index": 1,
+            "detail_endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_detail_view_notice.jsp",
+            "detail_js_function": "viewBid",
+            "detail_param_names": ["notice_code", "bid_code", "round"],
+        },
+        "field_maps": [
+            ("title", "$.title", None),
+            ("org_name", "const:한국가스공사", None),
+            ("url", "$.url", None),
+            ("notice_no", "$.notice_no", None),
+            ("close_dt", "$.close_dt", "%Y.%m.%d %H:%M"),
+            ("extra:biz_type_raw", "$.biz_type_raw", None),
+            ("extra:bid_type", "$.extra_bid_type", None),
+            ("extra:contract_method", "$.extra_contract_method", None),
+            ("extra:opengDt", "$.extra_openg_dt", None),
+            ("extra:cancelled", "$.extra_cancelled", None),
         ],
     },
 }

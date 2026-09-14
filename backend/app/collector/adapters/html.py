@@ -24,10 +24,11 @@ from urllib.parse import urlencode
 
 from app.security.url_guard import fetch
 
-# javascript:detail('a','b',...) 형태에서 인자 목록을 뽑는다. 인자 안 홑따옴표는 \' 로
-# 이스케이프된다고 가정(다른 국가기관 전자조달 사이트 관례) — 지금까지 실측 데이터에는 없었지만
-# 안전하게 처리.
-_DETAIL_CALL_RE = re.compile(r"detail\((.*)\)")
+# javascript:<함수명>('a','b',...) 형태에서 인자 목록을 뽑는다. 함수명은 사이트마다 다르다
+# (국가철도공단은 detail(...), 한국가스공사는 viewBid(...), 2026-09-14 실측) — config의
+# "detail_js_function"으로 지정, 기본값은 기존 국가철도공단 설정과의 호환을 위해 "detail".
+# 인자 안 홑따옴표는 \' 로 이스케이프된다고 가정(다른 국가기관 전자조달 사이트 관례) —
+# 지금까지 실측 데이터에는 없었지만 안전하게 처리.
 _ARG_RE = re.compile(r"'((?:[^'\\]|\\.)*)'")
 
 
@@ -76,10 +77,10 @@ class _NoticeTableParser(HTMLParser):
             self._cell_text.append(data)
 
 
-def _parse_detail_args(href: str | None) -> list[str] | None:
+def _parse_detail_args(href: str | None, *, js_function: str) -> list[str] | None:
     if not href:
         return None
-    match = _DETAIL_CALL_RE.search(href)
+    match = re.search(re.escape(js_function) + r"\((.*)\)", href)
     if not match:
         return None
     return [a.replace("\\'", "'") for a in _ARG_RE.findall(match.group(1))]
@@ -95,8 +96,9 @@ def _row_to_item(cells: list[dict[str, Any]], config: dict[str, Any]) -> dict | 
     detail_endpoint = config.get("detail_endpoint")
     detail_param_names = config.get("detail_param_names")
     if title_col_index is not None and detail_endpoint and detail_param_names:
-        args = _parse_detail_args(cells[title_col_index]["href"])
-        if args and len(args) == len(detail_param_names):
+        js_function = config.get("detail_js_function", "detail")
+        args = _parse_detail_args(cells[title_col_index]["href"], js_function=js_function)
+        if args and len(args) >= len(detail_param_names):
             item["url"] = f"{detail_endpoint}?{urlencode(dict(zip(detail_param_names, args)))}"
     return item
 

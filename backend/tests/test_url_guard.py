@@ -79,6 +79,21 @@ def test_allows_data_go_kr(monkeypatch):
     assert target.hostname == "apis.data.go.kr"
 
 
+def test_allows_kogas_nonstandard_port_9443(monkeypatch):
+    # 한국가스공사 전자조달시스템이 실제로 쓰는 비표준 포트(2026-09-14 소스 추가) — 임의 포트가
+    # 아니라 이미 검증한 실제 정부기관 사이트라 화이트리스트에 추가됨.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"bid.kogas.or.kr": "1.2.3.4"}))
+
+    target = validate_url("https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp")
+
+    assert target.port == 9443
+
+
+def test_blocks_arbitrary_nonstandard_port():
+    with pytest.raises(SSRFBlockedError):
+        validate_url("https://example.com:9999/")
+
+
 def test_dns_transient_failure_recovers_on_retry(monkeypatch):
     # 2026-09-09 실측 — 입찰공고 첨부 재처리 배치(363건)에서 859건이 "DNS 조회 실패"였는데,
     # 실패 직후 같은 호스트를 단발 조회하면 바로 성공했다(리졸버 순간 실패, 대상이 진짜 없는
