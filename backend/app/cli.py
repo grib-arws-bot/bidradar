@@ -9,12 +9,14 @@ import sys
 from pathlib import Path
 
 from app.db import engine
+from app.logging_config import configure_logging
 from app.security.passwords import hash_password
 
 # app/scheduler.py·app/main.py와 같은 이유(2026-09-13) — 루트 로거 기본 레벨(WARNING)로는
 # app/collector/adapters/openapi.py의 "OpenAPI 호출" INFO 로그가 CLI 실행(collect·
-# process-pending 등) 중엔 하나도 안 보였다.
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [cli] %(levelname)s %(message)s")
+# process-pending 등) 중엔 하나도 안 보였다. 2026-09-14부터 콘솔뿐 아니라 영속 파일에도 남긴다
+# (app/logging_config.py — 컨테이너 재생성으로 로그가 사라지는 문제 대응).
+configure_logging("cli")
 
 # backend/app/cli.py 기준 ../../infra/.env — 호스트에서 실행할 때만 존재(컨테이너 안에서
 # 실행하면 infra/는 마운트돼 있지 않으므로 자동 반영을 건너뛰고 값만 출력한다).

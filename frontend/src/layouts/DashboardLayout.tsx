@@ -61,7 +61,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "관리",
     items: [
       { label: "공고데이터 수집", to: "/admin/channels", icon: <SourceIcon fontSize="small" /> },
-      { label: "발주기관 현황", to: "/admin/agencies", icon: <AccountTreeIcon fontSize="small" /> },
+      { label: "공고기관 현황", to: "/admin/agencies", icon: <AccountTreeIcon fontSize="small" /> },
       { label: "관심주제 분류", to: "/admin/topics", icon: <CategoryIcon fontSize="small" /> },
     ],
   },

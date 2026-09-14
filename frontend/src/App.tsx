@@ -5,6 +5,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 
 import { ToastProvider } from "@/components/ToastProvider";
 import { DashboardLayout } from "@/layouts/DashboardLayout";
+import { AgencyChannelDetailPage } from "@/pages/AgencyChannelDetailPage";
 import { AgencyStatusPage } from "@/pages/AgencyStatusPage";
 import { CustomerDetailPage } from "@/pages/CustomerDetailPage";
 import { CustomersPage } from "@/pages/CustomersPage";
@@ -67,6 +68,7 @@ function AppRoutes() {
         <Route path="/customers/:id" element={<CustomerDetailPage />} />
         <Route path="/admin/channels" element={<DataChannelsPage />} />
         <Route path="/admin/agencies" element={<AgencyStatusPage />} />
+        <Route path="/admin/agencies/:sourceId" element={<AgencyChannelDetailPage />} />
         <Route path="/admin/topics" element={<TopicsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -369,14 +369,18 @@ REAL_OPENAPI_CONFIG = {
             "biz_type": "용역",
             # 2026-09-04 실측 — inqryBgnDt~inqryEndDt 구간이 60일이면 "입력범위값 초과 에러"
             # (resultCode 07), 30일은 정상. 페이지당 100건 고정이라 pagination 없이는 1페이지만
-            # 가져와 나머지를 놓친다(용역 30일치가 100건을 훌쩍 넘음, 실측으로 확인) — total_path
-            # 없이 빈 페이지에서 멈추는 방식(어댑터 기본 동작)으로 안전하게 전량 수집.
+            # 가져와 나머지를 놓친다(용역 30일치가 100건을 훌쩍 넘음, 실측으로 확인).
             # 2026-09-05 — 30일치가 실제로 12,292건(직접 API 호출로 실측)이라 첫 백필이 아주
             # 오래 걸림(50페이지 상한까지 순회) — 7일로 낮춤(사용자 지시). 정기 수집은 어차피
             # 직전 성공 시각 기준으로 자동 좁혀지므로(_collection_window) 이 값은 "이력이 없거나
             # 공백이 클 때"만 적용되는 상한이다.
+            # 2026-09-14 — total_path 추가(직접 호출로 response.body.totalCount 존재 확인,
+            # numOfRows/pageNo와 형제 필드). 지금까지는 "빈 페이지에서 멈추는 방식"에 기대,
+            # 매 회차 마지막에 빈 결과를 확인하는 호출을 한 번 더 썼다 — 이 서비스가 이 API
+            # 제품군 안에서 일일 요청한도 초과(LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR)를
+            # 반복해서 맞은 사고(2026-09-13) 조사 중 발견 — 불필요한 호출을 조금이라도 줄인다.
             "max_lookback_days": 7,
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("notice_no", "$.bidNtceNo", None),
@@ -403,7 +407,9 @@ REAL_OPENAPI_CONFIG = {
             "items_path": "$.response.body.items[*]",
             "biz_type": "물품",
             "max_lookback_days": 30,
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("notice_no", "$.bidNtceNo", None),
@@ -427,7 +433,9 @@ REAL_OPENAPI_CONFIG = {
             "items_path": "$.response.body.items[*]",
             "biz_type": "공사",
             "max_lookback_days": 30,
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("notice_no", "$.bidNtceNo", None),
@@ -468,7 +476,9 @@ REAL_OPENAPI_CONFIG = {
             # 2026-09-05 — 나라장터 전체를 7일로 통일(사용자 지시, 입찰공고정보서비스 12,292건
             # 실측 계기).
             "max_lookback_days": 7,
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("title", "$.bizNm", None),
@@ -487,7 +497,9 @@ REAL_OPENAPI_CONFIG = {
             "date_range_params": {"begin": "inqryBgnDate", "end": "inqryEndDate", "format": "%Y%m%d"},
             "items_path": "$.response.body.items[*]",
             "biz_type": "물품",
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("title", "$.bizNm", None),
@@ -506,7 +518,9 @@ REAL_OPENAPI_CONFIG = {
             "date_range_params": {"begin": "inqryBgnDate", "end": "inqryEndDate", "format": "%Y%m%d"},
             "items_path": "$.response.body.items[*]",
             "biz_type": "공사",
-            "pagination": {"page_param": "pageNo", "max_pages": 50},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 50},
         },
         "field_maps": [
             ("title", "$.bizNm", None),
@@ -544,7 +558,9 @@ REAL_OPENAPI_CONFIG = {
             "biz_type": "용역",
             # 2026-09-05 — 나라장터 전체를 7일로 통일(사용자 지시).
             "max_lookback_days": 7,
-            "pagination": {"page_param": "pageNo", "max_pages": 60},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 60},
         },
         "field_maps": [
             ("notice_no", "$.bfSpecRgstNo", None),
@@ -564,7 +580,9 @@ REAL_OPENAPI_CONFIG = {
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",
             "biz_type": "물품",
-            "pagination": {"page_param": "pageNo", "max_pages": 60},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 60},
         },
         "field_maps": [
             ("notice_no", "$.bfSpecRgstNo", None),
@@ -584,7 +602,9 @@ REAL_OPENAPI_CONFIG = {
             "date_range_params": {"begin": "inqryBgnDt", "end": "inqryEndDt", "format": "%Y%m%d%H%M"},
             "items_path": "$.response.body.items[*]",
             "biz_type": "공사",
-            "pagination": {"page_param": "pageNo", "max_pages": 60},
+            # 2026-09-14 — total_path 추가(response.body.totalCount 실측 확인) — 불필요한
+            # 트레일링 호출을 줄여 일일 요청한도 소모를 낮춘다(2026-09-13 초과 사고 조사 결과).
+            "pagination": {"page_param": "pageNo", "total_path": "$.response.body.totalCount", "max_pages": 60},
         },
         "field_maps": [
             ("notice_no", "$.bfSpecRgstNo", None),

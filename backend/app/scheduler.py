@@ -30,10 +30,14 @@ from sqlalchemy import select
 
 from app.collector.runner import CollectionInProgressError, run_source_and_process_pending
 from app.db import engine
+from app.logging_config import configure_logging
 from app.models import source
 from app.services.pending_analysis import run_pending_analysis
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(levelname)s %(message)s")
+# 2026-09-14 — 콘솔뿐 아니라 영속 파일(/app/logs/bidradar.log)에도 남긴다(app/logging_config.py) —
+# 컨테이너가 재생성되면(다른 컨테이너 문제로 인한 연쇄 recreate 등) 표준출력 로그가 사라져
+# 이 스케줄러의 OpenAPI 호출 이력을 못 찾은 사고(2026-09-13 쿼터 초과 조사) 재발 방지.
+configure_logging("scheduler")
 logger = logging.getLogger("bidradar.scheduler")
 
 KST = ZoneInfo("Asia/Seoul")

@@ -7,7 +7,12 @@ from app.collector.runner import CollectionInProgressError, run_source_and_proce
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
-from app.services.agency_registry import DEFAULT_PAGE_SIZE, list_agencies, list_agency_categories
+from app.services.agency_registry import (
+    DEFAULT_PAGE_SIZE,
+    list_agencies,
+    list_agency_categories,
+    list_agency_channels,
+)
 from app.services.source_registry import (
     ScheduleTimesError,
     list_sources,
@@ -139,12 +144,15 @@ def get_agencies_route(
     q: str | None = None,
     status: str | None = None,
     category: str | None = None,
+    source_id: int | None = None,
     page: int = 1,
     size: int = DEFAULT_PAGE_SIZE,
     _email: str = Depends(require_auth),
 ) -> dict:
     with engine.connect() as conn:
-        items, total = list_agencies(conn, q=q, status=status, category=category, page=page, size=size)
+        items, total = list_agencies(
+            conn, q=q, status=status, category=category, source_id=source_id, page=page, size=size
+        )
     return {"items": items, "total": total, "page": page, "size": size}
 
 
@@ -152,3 +160,11 @@ def get_agencies_route(
 def get_agency_categories_route(_email: str = Depends(require_auth)) -> list[str]:
     with engine.connect() as conn:
         return list_agency_categories(conn)
+
+
+@router.get("/agencies/channels")
+def get_agency_channels_route(_email: str = Depends(require_auth)) -> list[dict]:
+    """공고기관(채널) 목록 — 2026-09-14, "발주기관 현황"을 공고기관 중심으로 재편하며 신설.
+    채널당 소속 발주기관 수(org_count)를 붙인다. 상세(발주기관 목록)는 GET /agencies?source_id=."""
+    with engine.connect() as conn:
+        return list_agency_channels(conn)

@@ -38,10 +38,13 @@ def list_agencies(
     q: str | None = None,
     status: str | None = None,
     category: str | None = None,
+    source_id: int | None = None,
     page: int = 1,
     size: int = DEFAULT_PAGE_SIZE,
 ) -> tuple[list[dict], int]:
-    """q: 기관명·약자 부분일치 검색. status/category: 정확히 일치하는 것만. (행 목록, 전체 건수)."""
+    """q: 기관명·약자 부분일치 검색. status/category: 정확히 일치하는 것만. source_id: 특정
+    공고기관(채널) 하나에 속한 발주기관만(2026-09-14, "공고기관 중심" 화면의 상세 페이지용).
+    (행 목록, 전체 건수)."""
     latest_run_sq = (
         select(source_run.c.source_id, func.max(source_run.c.id).label("latest_id"))
         .group_by(source_run.c.source_id)
@@ -74,6 +77,8 @@ def list_agencies(
         base = base.where(org.c.category == category)
     if status:
         base = base.where(_STATUS_EXPR == status)
+    if source_id is not None:
+        base = base.where(source.c.id == source_id)
 
     total = conn.execute(select(func.count()).select_from(base.subquery())).scalar_one()
 
@@ -113,6 +118,67 @@ def list_agencies(
             }
         )
     return result, total
+
+
+def list_agency_channels(conn: Connection) -> list[dict]:
+    """공고기관(채널) 목록 — 소스(channel) 하나당 그 안에 등록된 발주기관 수를 붙여 보여준다
+    (2026-09-14, "발주기관 현황을 공고기관 중심으로" 요청 — 09-01 결정의 반대 방향 재편.
+    이 화면에서 채널 하나를 누르면 list_agencies(source_id=...)로 그 안의 발주기관 목록을 본다)."""
+    latest_run_sq = (
+        select(source_run.c.source_id, func.max(source_run.c.id).label("latest_id"))
+        .group_by(source_run.c.source_id)
+        .subquery()
+    )
+    org_count_sq = (
+        select(org.c.source_id, func.count().label("org_count")).group_by(org.c.source_id).subquery()
+    )
+    stmt = (
+        select(
+            source.c.id,
+            source.c.name,
+            source.c.channel_name,
+            source.c.homepage_url,
+            source.c.adapter_type,
+            source.c.legal_tier,
+            source.c.legal_verified_at,
+            source.c.active,
+            source_run.c.status,
+            source_run.c.run_at,
+            func.coalesce(org_count_sq.c.org_count, 0).label("org_count"),
+        )
+        .select_from(source)
+        .join(latest_run_sq, latest_run_sq.c.source_id == source.c.id, isouter=True)
+        .join(source_run, source_run.c.id == latest_run_sq.c.latest_id, isouter=True)
+        .join(org_count_sq, org_count_sq.c.source_id == source.c.id, isouter=True)
+        .order_by(source.c.channel_name, source.c.name)
+    )
+    rows = conn.execute(stmt).mappings().all()
+
+    now = datetime.now(timezone.utc)
+    result = []
+    for row in rows:
+        row_status = row["status"] if row["active"] else "inactive"
+        if row_status is None:
+            row_status = "no_run_yet"
+        verified_at = row["legal_verified_at"]
+        compliance_overdue = verified_at is None or (now - verified_at) > timedelta(days=COMPLIANCE_WARNING_DAYS)
+        result.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "channel_name": row["channel_name"] or row["name"],
+                "homepage_url": row["homepage_url"],
+                "adapter_type": row["adapter_type"],
+                "adapter_label": ADAPTER_LABELS.get(row["adapter_type"], row["adapter_type"]),
+                "status": row_status,
+                "last_run_at": row["run_at"].isoformat() if row["run_at"] else None,
+                "legal_tier": row["legal_tier"],
+                "legal_verified_at": verified_at.isoformat() if verified_at else None,
+                "compliance_overdue": compliance_overdue,
+                "org_count": row["org_count"],
+            }
+        )
+    return result
 
 
 def list_agency_categories(conn: Connection) -> list[str]:

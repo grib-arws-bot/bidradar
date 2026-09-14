@@ -155,6 +155,51 @@ def test_agency_categories_route(client: TestClient):
     assert categories == sorted(categories)
 
 
+def test_agencies_filter_by_source_id(client: TestClient):
+    # 2026-09-14 — "발주기관 현황"을 공고기관(채널) 중심으로 재편: 채널 상세 페이지가 이
+    # 파라미터로 그 채널 소속 발주기관만 걸러 본다.
+    with engine.connect() as conn:
+        source_id = conn.execute(
+            select(source.c.id).where(source.c.name == "나라장터 입찰공고정보서비스(용역)")
+        ).scalar_one()
+    rows = client.get("/api/admin/sources/agencies", params={"source_id": source_id, "size": 200}).json()["items"]
+    assert len(rows) > 0
+    assert all(r["channel"] == "나라장터" for r in rows)
+
+
+# ---- 공고기관(채널) 중심 목록 — 2026-09-14 요청(09-01 결정의 반대 방향 재편) ------------
+
+
+def test_agency_channels_requires_auth():
+    response = TestClient(app).get("/api/admin/sources/agencies/channels")
+    assert response.status_code == 401
+
+
+def test_agency_channels_list_shape(client: TestClient):
+    rows = client.get("/api/admin/sources/agencies/channels").json()
+    assert len(rows) > 0
+    row = rows[0]
+    assert {
+        "id", "name", "channel_name", "homepage_url", "adapter_type", "adapter_label", "status", "last_run_at",
+        "legal_tier", "legal_verified_at", "compliance_overdue", "org_count",
+    } <= row.keys()
+    assert row["legal_tier"] in {"A", "B", "C"}
+    assert isinstance(row["org_count"], int)
+
+    # IRIS는 발주기관 목록엔 안 나오지만(위 테스트) 공고기관(채널) 목록엔 당연히 나와야 한다.
+    names = [r["name"] for r in rows]
+    assert any("IRIS" in n for n in names)
+
+
+def test_agency_channels_org_count_matches_agencies_filtered_total(client: TestClient):
+    channels = client.get("/api/admin/sources/agencies/channels").json()
+    target = next(r for r in channels if r["name"] == "나라장터 입찰공고정보서비스(용역)")
+    detail_total = client.get(
+        "/api/admin/sources/agencies", params={"source_id": target["id"], "size": 1}
+    ).json()["total"]
+    assert target["org_count"] == detail_total
+
+
 # ---- 첨부문서 자동 분석 토글(2026-09-04, S8 A1 auto_extract) -----------------------
 
 

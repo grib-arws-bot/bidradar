@@ -93,6 +93,8 @@ export interface AgencyFilters {
   q?: string;
   status?: AgencyStatus;
   category?: string;
+  // 특정 공고기관(채널) 하나에 속한 발주기관만(2026-09-14, 채널 상세 페이지용).
+  source_id?: number;
   page?: number;
   size?: number;
 }
@@ -111,5 +113,27 @@ export async function fetchAgencies(filters: AgencyFilters = {}): Promise<Agency
 
 export async function fetchAgencyCategories(): Promise<string[]> {
   const { data } = await apiClient.get<string[]>("/admin/sources/agencies/categories");
+  return data;
+}
+
+// 공고기관(채널) 중심 목록(2026-09-14, "발주기관 현황을 공고기관 중심으로" 요청) — 채널 하나를
+// 누르면 위 fetchAgencies({source_id})로 그 채널 소속 발주기관 목록을 본다.
+export interface AgencyChannelRow {
+  id: number;
+  name: string;
+  channel_name: string;
+  homepage_url: string | null;
+  adapter_type: string;
+  adapter_label: string | null;
+  status: AgencyStatus;
+  last_run_at: string | null;
+  legal_tier: "A" | "B" | "C";
+  legal_verified_at: string | null;
+  compliance_overdue: boolean;
+  org_count: number;
+}
+
+export async function fetchAgencyChannels(): Promise<AgencyChannelRow[]> {
+  const { data } = await apiClient.get<AgencyChannelRow[]>("/admin/sources/agencies/channels");
   return data;
 }

@@ -4,23 +4,17 @@ import {
   Card,
   Chip,
   Link,
-  MenuItem,
-  Pagination,
-  Stack,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
-  TextField,
   Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-import { fetchAgencies, fetchAgencyCategories, type AgencyStatus } from "@/api/sources";
-
-const AGENCY_PAGE_SIZE = 50;
+import { fetchAgencyChannels, type AgencyStatus } from "@/api/sources";
 
 const STATUS_LABEL: Record<AgencyStatus, { label: string; color: "success" | "warning" | "error" | "info" | "default" }> = {
   ok: { label: "정상", color: "success" },
@@ -32,102 +26,35 @@ const STATUS_LABEL: Record<AgencyStatus, { label: string; color: "success" | "wa
   running: { label: "수집 중", color: "info" },
 };
 
-// "관리자 페이지 소스 관리를 발주기관 중심으로"(2026-09-01 요청) — 조달청·IRIS는 발주기관이
-// 아니라 공고기관(수집 채널)이라는 지적에 따라, 여기는 실제 발주기관(org)을 기준으로 목록을
-// 구성하고 그 기관이 어느 채널로 수집되는지만 붙여 보여준다. 채널 자체의 on/off·자동분석
-// 설정은 별도 메뉴(공고데이터 수집, 2026-09-05 분리)로 옮겼다.
+// "발주기관 현황을 공고기관 중심으로"(2026-09-14 요청) — 2026-09-01 결정(발주기관 중심)의
+// 반대 방향 재편. 여기는 실제로 수집을 실행하는 공고기관(채널: 나라장터·IRIS 등)을 기준으로
+// 목록을 구성한다. 채널 하나를 누르면 그 채널에 딸린 발주기관 목록(상세 페이지)으로 이동한다.
+// 채널 자체의 on/off·자동분석·스케줄 설정은 여전히 별도 메뉴("공고데이터 수집")의 몫이다.
 export function AgencyStatusPage() {
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<AgencyStatus | "">("");
-  const [category, setCategory] = useState("");
-  const [page, setPage] = useState(1);
+  const navigate = useNavigate();
 
-  const updateFilters = (next: { q?: string; status?: AgencyStatus | ""; category?: string }) => {
-    if ("q" in next) setQ(next.q ?? "");
-    if ("status" in next) setStatus(next.status ?? "");
-    if ("category" in next) setCategory(next.category ?? "");
-    setPage(1);
-  };
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["admin-agencies", q, status, category, page],
-    queryFn: () =>
-      fetchAgencies({
-        q: q || undefined,
-        status: (status as AgencyStatus) || undefined,
-        category: category || undefined,
-        page,
-        size: AGENCY_PAGE_SIZE,
-      }),
+  const { data: channels, isLoading } = useQuery({
+    queryKey: ["admin-agency-channels"],
+    queryFn: fetchAgencyChannels,
   });
-
-  const { data: categories } = useQuery({
-    queryKey: ["admin-agency-categories"],
-    queryFn: fetchAgencyCategories,
-  });
-
-  const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / AGENCY_PAGE_SIZE));
 
   return (
     <Box>
       <Typography variant="h2" sx={{ mb: 0.5 }}>
-        발주기관 현황
+        공고기관 현황
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        실제로 데이터가 수집되고 있는 발주기관 목록입니다(2026-09-03, 가짜/미연결 항목 정리).
-        조달청·IRIS 같은 이름은 발주기관이 아니라 공고기관(수집 채널)이라 "공고기관" 열에만
-        나타납니다.
+        실제로 공고를 수집해오는 공고기관(채널) 목록입니다. 한 채널을 누르면 그 채널로부터
+        수집되는 발주기관(실제 발주 주체) 목록을 볼 수 있습니다.
       </Typography>
-
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mb: 2 }}>
-        <TextField
-          size="small"
-          label="기관명·약자 검색"
-          value={q}
-          onChange={(e) => updateFilters({ q: e.target.value })}
-          sx={{ minWidth: 220 }}
-        />
-        <TextField
-          size="small"
-          select
-          label="수집 상태"
-          value={status}
-          onChange={(e) => updateFilters({ status: e.target.value as AgencyStatus | "" })}
-          sx={{ minWidth: 160 }}
-        >
-          <MenuItem value="">전체</MenuItem>
-          {Object.entries(STATUS_LABEL).map(([value, meta]) => (
-            <MenuItem key={value} value={value}>
-              {meta.label}
-            </MenuItem>
-          ))}
-        </TextField>
-        <TextField
-          size="small"
-          select
-          label="분류"
-          value={category}
-          onChange={(e) => updateFilters({ category: e.target.value })}
-          sx={{ minWidth: 180 }}
-        >
-          <MenuItem value="">전체</MenuItem>
-          {categories?.map((c) => (
-            <MenuItem key={c} value={c}>
-              {c}
-            </MenuItem>
-          ))}
-        </TextField>
-      </Stack>
 
       <Card sx={{ overflowX: "auto" }}>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>발주기관</TableCell>
-              <TableCell>기관약자</TableCell>
-              <TableCell>분류</TableCell>
               <TableCell>공고기관</TableCell>
               <TableCell>수집 방식</TableCell>
+              <TableCell align="right">발주기관 수</TableCell>
               <TableCell>수집 상태</TableCell>
               <TableCell>최종 수집일</TableCell>
               <TableCell>준법 확인일</TableCell>
@@ -135,73 +62,64 @@ export function AgencyStatusPage() {
           </TableHead>
           <TableBody>
             {!isLoading &&
-              data?.items.map((row) => {
-                const meta = STATUS_LABEL[row.status] ?? STATUS_LABEL.no_source;
+              channels?.map((row) => {
+                const meta = STATUS_LABEL[row.status] ?? STATUS_LABEL.no_run_yet;
                 return (
-                  <TableRow key={row.id}>
-                    <TableCell>{row.name}</TableCell>
-                    <TableCell>{row.abbr ?? "—"}</TableCell>
-                    <TableCell>{row.category ?? "—"}</TableCell>
+                  <TableRow
+                    key={row.id}
+                    hover
+                    sx={{ cursor: "pointer" }}
+                    onClick={() => navigate(`/admin/agencies/${row.id}`)}
+                  >
                     <TableCell>
-                      {row.channel ? (
-                        row.channel_url ? (
-                          <Link
-                            href={row.channel_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
-                          >
-                            {row.channel}
-                            <LaunchIcon sx={{ fontSize: 14 }} />
-                          </Link>
-                        ) : (
-                          row.channel
-                        )
+                      {row.homepage_url ? (
+                        <Link
+                          href={row.homepage_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+                        >
+                          {row.name}
+                          <LaunchIcon sx={{ fontSize: 14 }} />
+                        </Link>
                       ) : (
-                        "—"
+                        row.name
                       )}
                     </TableCell>
                     <TableCell>{row.adapter_label ?? "—"}</TableCell>
+                    <TableCell align="right" className="tnum">
+                      {row.org_count}
+                    </TableCell>
                     <TableCell>
                       <Chip label={meta.label} size="small" color={meta.color} />
                     </TableCell>
                     <TableCell className="tnum">
                       {row.last_run_at ? new Date(row.last_run_at).toLocaleString("ko-KR") : "수집 이력 없음"}
                     </TableCell>
-                    {/* 준법 확인일(advisory INBOX #6) — 채널이 없는 행(no_source)은 확인 대상이
-                        아니므로 배지 없이 "—"만 보여준다. 90일 지나면 경고색으로 눈에 띄게. */}
                     <TableCell className="tnum">
-                      {row.channel === null ? (
-                        "—"
-                      ) : (
-                        <Chip
-                          label={
-                            row.legal_verified_at
-                              ? new Date(row.legal_verified_at).toLocaleDateString("ko-KR")
-                              : "확인 이력 없음"
-                          }
-                          size="small"
-                          color={row.compliance_overdue ? "warning" : "default"}
-                          variant={row.compliance_overdue ? "filled" : "outlined"}
-                        />
-                      )}
+                      <Chip
+                        label={
+                          row.legal_verified_at
+                            ? new Date(row.legal_verified_at).toLocaleDateString("ko-KR")
+                            : "확인 이력 없음"
+                        }
+                        size="small"
+                        color={row.compliance_overdue ? "warning" : "default"}
+                        variant={row.compliance_overdue ? "filled" : "outlined"}
+                      />
                     </TableCell>
                   </TableRow>
                 );
               })}
           </TableBody>
         </Table>
-        {!isLoading && data?.items.length === 0 && (
+        {!isLoading && channels?.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ p: 3, textAlign: "center" }}>
-            조건에 맞는 발주기관이 없습니다.
+            등록된 공고기관이 없습니다.
           </Typography>
         )}
       </Card>
-      {!isLoading && data && data.total > AGENCY_PAGE_SIZE && (
-        <Stack alignItems="center" sx={{ mt: 2 }}>
-          <Pagination count={pageCount} page={page} onChange={(_, value) => setPage(value)} />
-        </Stack>
-      )}
     </Box>
   );
 }
