@@ -19,6 +19,7 @@ from app.services.analysis.structure import (
     run_structuring_for_notice,
 )
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
+from app.services.analysis_worker import submit as submit_background
 from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
 from app.services.report_commentary import ReportNotFoundError
@@ -59,20 +60,32 @@ def _attributions_for(conn: Connection, notices: list[dict]) -> list[str]:
     return list(rows)
 
 
+def _extract_one_for_report(notice_id: int) -> None:
+    try:
+        with engine.begin() as conn:
+            run_extraction_pilot(conn, notice_id)
+    except (AnalysisInProgressError, UnsupportedSourceError):
+        pass
+    except Exception:  # noqa: BLE001 — 공고 하나의 추출 실패가 다른 공고 처리를 막으면 안 됨
+        pass
+
+
 def _ensure_notices_extracted(notice_ids: list[int]) -> None:
     """리포트에 실릴 공고들의 첨부문서 자동분석(A1)을 미리 끝내둔다(2026-09-05 사용자 지시)
-    — 고객이 "사업 추진 전략"을 눌렀을 때 A1부터 새로 기다리지 않도록. 공고 하나마다 별도의
-    짧은 트랜잭션으로 처리한다(app/services/pending_analysis.py와 같은 이유 — 리포트
-    생성 하나의 트랜잭션 안에서 여러 건의 첨부파일 다운로드를 전부 묶으면 오래 열려있는
-    트랜잭션이 다른 작업을 막을 수 있다, 2026-09-05 실제 사고). 실패해도(추출 불가 사이트,
-    이미 진행 중 등) 리포트 생성 자체는 계속 진행 — 결과는 그대로 analysis 테이블에 남아
-    공고 탐색(내부 관리자 화면)에도 그대로 반영된다(같은 테이블을 쓰므로 별도 반영 로직 불필요).
+    — 고객이 "사업 추진 전략"을 눌렀을 때 A1부터 새로 기다리지 않도록. 결과는 그대로 analysis
+    테이블에 남아 공고 탐색(내부 관리자 화면)에도 그대로 반영된다(같은 테이블을 쓰므로 별도
+    반영 로직 불필요).
 
     이미 A1을 한 번이라도 시도한 공고(성공이든 실패든 0건이든)는 건너뛴다(2026-09-07 발견 —
-    pending_analysis.py의 자동 패스와 같은 규칙). 전에는 매번 리포트를 생성할 때마다 상위
-    20건 전부를 무조건 다시 추출 시도해서, 실측상 20건 중 16건이 나라장터(용역) 소스라
-    apis.data.go.kr이 느려지거나 타임아웃 나는 날엔 "지금 생성"이 몇 분씩 걸리다 nginx
-    프록시 타임아웃(300초)에 걸려 실패한 것처럼 보이는 원인이었다."""
+    pending_analysis.py의 자동 패스와 같은 규칙, 무한 재시도 방지).
+
+    2026-09-15 — analysis_worker(동시 2개 제한 스레드풀, app/services/analysis_worker.py)에
+    제출만 하고 기다리지 않는다. 예전엔 여기서 공고 하나마다 동기로 완료를 기다렸는데, 매칭
+    상위 50건 중 처음 보는 공고가 여럿이면(특히 나라장터) generate_report() 전체가 몇 분씩
+    걸려 "지금 발송"·예약 자동발송이 타임아웃으로 실패한 것처럼 보이는 사고로 실제 이어졌다
+    (2026-09-07에도 A1만으로 같은 클래스의 사고가 있었는데, 어제 A2를 추가하면서 재발).
+    A1/A2 완료 시점과 무관하게 report의 공고 목록·요약은 이미 top_matches()가 반환한 값(notice
+    테이블 기준, A1/A2 결과에 의존하지 않음)으로 즉시 저장되므로 기다릴 필요가 애초에 없었다."""
     if not notice_ids:
         return
     with engine.connect() as conn:
@@ -86,24 +99,31 @@ def _ensure_notices_extracted(notice_ids: list[int]) -> None:
     for notice_id in notice_ids:
         if notice_id in already_attempted:
             continue
-        try:
-            with engine.begin() as conn:
-                run_extraction_pilot(conn, notice_id)
-        except (AnalysisInProgressError, UnsupportedSourceError):
-            pass
-        except Exception:  # noqa: BLE001 — 공고 하나의 추출 실패가 리포트 생성 전체를 막으면 안 됨
-            pass
+        submit_background(_extract_one_for_report, notice_id)
+
+
+def _structure_one_for_report(notice_id: int) -> None:
+    try:
+        with engine.begin() as conn:
+            run_structuring_for_notice(conn, notice_id, model="claude-haiku-4-5-20251001")
+    except (LLMNotConfiguredError, StructuringInProgressError, ValueError):
+        pass
+    except Exception:  # noqa: BLE001 — 공고 하나의 구조화 실패가 다른 공고 처리를 막으면 안 됨
+        pass
 
 
 def _ensure_notices_structured(notice_ids: list[int]) -> None:
     """리포트에 실릴 공고들의 AI 구조화(A2)를 미리 끝내둔다(2026-09-15 사용자 지시 — "메일
-    발송 시점이 되면 ... 필요시 A1/A2 분석까지 처리"). _ensure_notices_extracted와 같은 이유로
-    공고 하나마다 별도의 짧은 트랜잭션으로 처리하고, 실패해도 리포트 생성 자체는 계속 진행한다.
+    발송 시점이 되면 ... 필요시 A1/A2 분석까지 처리").
 
     A1이 성공(status="done")한 공고 중 아직 A2를 한 번도 안 한 것만 대상으로 한다 — A1이
     실패했거나 아직 안 끝난 공고, 이미 A2까지 끝난 공고는 자동으로 건너뛴다(전자는 시도해도
     "추출된 문서 텍스트 없음"으로 실패할 게 뻔하고, 후자는 재시도가 아니라 새 비용 발생이라
-    pending_analysis.py의 자동 패스와 같은 원칙 — 항상 Haiku 고정, 모델 선택은 자동화 안 함)."""
+    pending_analysis.py의 자동 패스와 같은 원칙 — 항상 Haiku 고정, 모델 선택은 자동화 안 함).
+    이 조회는 이 함수를 부르는 시점(=`_ensure_notices_extracted`가 막 제출한 A1이 아직
+    끝나기 전) 기준이라 방금 새로 뽑은 공고의 A2는 대부분 여기서 못 잡는다 — 그건
+    run_pending_backlog(10분마다, app/scheduler.py)가 이어받는다. 아래 background 제출도
+    같은 이유(analysis_worker.py) — 동기로 기다리면 A1과 똑같이 타임아웃 사고가 난다."""
     if not notice_ids:
         return
     with engine.connect() as conn:
@@ -124,13 +144,7 @@ def _ensure_notices_structured(notice_ids: list[int]) -> None:
             )
         ).scalars().all()
     for notice_id in candidates:
-        try:
-            with engine.begin() as conn:
-                run_structuring_for_notice(conn, notice_id, model="claude-haiku-4-5-20251001")
-        except (LLMNotConfiguredError, StructuringInProgressError, ValueError):
-            pass
-        except Exception:  # noqa: BLE001 — 공고 하나의 구조화 실패가 리포트 생성 전체를 막으면 안 됨
-            pass
+        submit_background(_structure_one_for_report, notice_id)
 
 
 def delete_expired_reports(conn: Connection) -> int:
@@ -303,6 +317,10 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
 
 
 def list_reports(conn: Connection, customer_id: int) -> list[dict]:
+    """보고서 목록(2026-09-15부터 발송 이력 포함 — 사용자 지시: "각 보고서에는 메일 발송
+    이력이 표시되어야 한다"). report_send_log는 send_report_email()이 실제 발송에 성공할
+    때마다 한 행씩 남기므로(수신자 목록·발송 시각), 보고서당 여러 번 발송됐을 수 있어
+    리스트로 붙인다 — 최신 발송이 먼저 오도록 정렬."""
     rows = conn.execute(
         select(
             newsletter_report.c.id,
@@ -315,7 +333,24 @@ def list_reports(conn: Connection, customer_id: int) -> list[dict]:
         .where(newsletter_report.c.customer_id == customer_id)
         .order_by(desc(newsletter_report.c.generated_at))
     ).mappings().all()
-    return [dict(r) for r in rows]
+    reports = [dict(r) for r in rows]
+    if not reports:
+        return reports
+
+    report_ids = [r["id"] for r in reports]
+    send_rows = conn.execute(
+        select(report_send_log.c.report_id, report_send_log.c.recipients, report_send_log.c.sent_at)
+        .where(report_send_log.c.report_id.in_(report_ids))
+        .order_by(desc(report_send_log.c.sent_at))
+    ).all()
+    sends_by_report: dict[int, list[dict]] = {}
+    for send_row in send_rows:
+        sends_by_report.setdefault(send_row.report_id, []).append(
+            {"recipients": send_row.recipients, "sent_at": send_row.sent_at.isoformat()}
+        )
+    for report in reports:
+        report["sends"] = sends_by_report.get(report["id"], [])
+    return reports
 
 
 def get_report_by_token(conn: Connection, token: str, *, record_view: bool = True) -> dict | None:

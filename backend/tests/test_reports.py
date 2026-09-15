@@ -25,12 +25,24 @@ EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
 
 
+def _run_immediately(fn, *args, **kwargs):
+    """analysis_worker.submit()을 흉내내되 진짜 스레드를 쓰지 않는다(2026-09-15) —
+    _ensure_notices_extracted/_ensure_notices_structured가 이제 백그라운드 스레드풀에
+    제출만 하고 기다리지 않도록 바뀌면서(동기 대기 방식이 "지금 발송"·예약 자동발송의
+    타임아웃 사고로 실제 이어졌음), 그 스레드가 부르는 진짜 engine.begin()이 이 테스트
+    파일의 SAVEPOINT 기반 DB 격리 픽스처와 스레드 경계를 넘어 충돌한다(다른 파일에서 이미
+    실측한 것과 같은 문제). 테스트에서는 실제 동시성을 검증할 필요가 없으므로(그건
+    test_analysis_worker.py가 전담) 호출 스레드에서 그냥 바로 실행해 이 충돌 자체를 피한다."""
+    fn(*args, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_extraction():
     """리포트 생성이 이제 매칭된 공고마다 첨부문서 자동분석(A1)을 시도한다(2026-09-05) —
     테스트에서까지 실제 나라장터/IRIS로 나가면 느리고 외부망에 의존하게 되므로 막는다.
     추출 로직 자체는 test_analysis_pilot.py가 이미 따로 검증한다."""
-    with mock.patch("app.services.interest_report.run_extraction_pilot") as m:
+    with mock.patch("app.services.interest_report.run_extraction_pilot") as m, \
+         mock.patch("app.services.interest_report.submit_background", side_effect=_run_immediately):
         yield m
 
 
@@ -335,6 +347,8 @@ def test_ensure_notices_extracted_skips_already_attempted(notice_without_analysi
 
 
 def test_ensure_notices_extracted_runs_for_never_attempted(notice_without_analysis):
+    # _no_real_extraction(모듈 autouse)이 submit_background도 즉시 실행으로 바꿔놔서
+    # (2026-09-15) 실제 스레드 없이 이 assert가 그대로 통과한다.
     from app.services.interest_report import _ensure_notices_extracted
 
     with mock.patch("app.services.interest_report.run_extraction_pilot") as mock_run:
@@ -393,6 +407,32 @@ def test_send_report_calls_mailer_with_recipients_and_link(client: TestClient, g
         ).first()
     assert log_row is not None
     assert log_row.recipients == ["a@example.com"]
+
+
+def test_list_reports_includes_send_history(client: TestClient, grib_customer_id: int):
+    # 2026-09-15 사용자 지시 — "각 보고서에는 메일 발송 이력이 표시되어야 한다."
+    from app.models import customer
+
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=["a@example.com"])
+        )
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+
+    listed_before = client.get(f"/api/customers/{grib_customer_id}/reports").json()
+    before = next(r for r in listed_before if r["id"] == created["id"])
+    assert before["sends"] == []  # 아직 발송 전이면 빈 목록
+
+    with mock.patch("app.services.mailer.smtplib.SMTP_SSL"), mock.patch(
+        "app.config.settings.smtp_host", "smtp.example.com"
+    ), mock.patch("app.config.settings.smtp_user", "u"), mock.patch("app.config.settings.smtp_password", "p"):
+        client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+
+    listed_after = client.get(f"/api/customers/{grib_customer_id}/reports").json()
+    after = next(r for r in listed_after if r["id"] == created["id"])
+    assert len(after["sends"]) == 1
+    assert after["sends"][0]["recipients"] == ["a@example.com"]
+    assert after["sends"][0]["sent_at"]
 
 
 def test_send_report_email_body_includes_notice_list(client: TestClient, grib_customer_id: int):

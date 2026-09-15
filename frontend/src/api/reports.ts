@@ -44,6 +44,11 @@ export interface GeneratedReport {
   generated_at: string;
 }
 
+export interface ReportSendLogEntry {
+  recipients: string[];
+  sent_at: string;
+}
+
 export interface ReportListItem {
   id: number;
   token: string;
@@ -51,6 +56,8 @@ export interface ReportListItem {
   summary: ReportSummary;
   view_count: number;
   ai_generated_at: string | null;
+  // 메일 발송 이력(2026-09-15) — 보고서 하나가 여러 번 발송됐을 수 있어 배열, 최신순.
+  sends: ReportSendLogEntry[];
 }
 
 export interface PublicReport {

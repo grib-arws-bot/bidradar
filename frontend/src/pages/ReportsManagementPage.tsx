@@ -250,9 +250,24 @@ export function ReportsManagementPage() {
                 <ListItemText
                   primary={`${new Date(r.generated_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })} · ${r.summary.total}건`}
                   secondary={
-                    <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
-                      /r/{r.token} (조회 {r.view_count}회)
-                    </RouterLink>
+                    <Stack spacing={0.25}>
+                      <RouterLink to={`/r/${r.token}`} target="_blank" rel="noreferrer">
+                        /r/{r.token} (조회 {r.view_count}회)
+                      </RouterLink>
+                      {/* 메일 발송 이력(2026-09-15 사용자 지시 — "각 보고서에는 메일 발송
+                          이력이 표시되어야 한다") — 최신 발송이 먼저 오도록 서버가 정렬해줌. */}
+                      {r.sends.length > 0 ? (
+                        <Typography variant="caption" color="text.secondary">
+                          발송 {r.sends.length}회 · 최근{" "}
+                          {new Date(r.sends[0].sent_at).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}{" "}
+                          ({r.sends[0].recipients.join(", ")})
+                        </Typography>
+                      ) : (
+                        <Typography variant="caption" color="text.disabled">
+                          발송 이력 없음
+                        </Typography>
+                      )}
+                    </Stack>
                   }
                 />
               </ListItem>
