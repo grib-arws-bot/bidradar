@@ -420,7 +420,7 @@ def test_run_source_and_process_pending_chains_and_merges_results(monkeypatch):
     mock_collect.assert_called_once()
     assert mock_collect.call_args.args[1] == 999
     assert mock_collect.call_args.kwargs["run_id"] == 4242
-    mock_pending.assert_called_once_with(999, [555], raw_items_by_notice_id=raw_items)
+    mock_pending.assert_called_once_with(999, [555], raw_items_by_notice_id=raw_items, background=True)
     # duration_ms(2026-09-14, 스케줄 겹침 확인용)는 실행마다 값이 달라 정확한 수치 대신
     # "0 이상의 정수로 실제로 넘어왔는지"만 확인한다.
     mock_finish.assert_called_once()

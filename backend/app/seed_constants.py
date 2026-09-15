@@ -830,10 +830,14 @@ REAL_OPENAPI_CONFIG = {
     # const:로 고정(과학기술정보통신부 사업공고와 동일 패턴, advisory INBOX #2). 첨부파일 다운로드는
     # 이번 범위 밖(A1 첨부분석은 g2b/IRIS 전용 핸들러만 있어 이 소스는 항상 "첨부 0건"으로 끝남 —
     # 필요해지면 별도 작업으로 추가).
+    # 2026-09-15 — 사용자 지시: "용역", "입찰"만 수집/분석하도록. 목록 페이지의 "공고구분"
+    # 드롭다운(ggGubunS)이 서버측 필터를 지원함을 직접 확인(값: 01=공사, 02=용역, 03=구매,
+    # 04=물품, 빈 값=전체) — ggGubunS=02로 보내면 실제로 용역만 내려옴을 라이브 호출로 검증.
+    # 이 사이트는 애초에 게시판 전체가 "입찰공고"라 "입찰" 조건은 이미 항상 충족된다.
     "국가철도공단 입찰공고": {
         "config": {
             "endpoint": "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
-            "params": {"menuNo": "14000"},
+            "params": {"menuNo": "14000", "ggGubunS": "02"},
             "date_range_params": {"begin": "fromDate", "end": "endDate", "format": "%Y-%m-%d"},
             "pagination": {"page_param": "pageIndex", "max_pages": 60},
             "table_class": "tbl01",
@@ -866,10 +870,14 @@ REAL_OPENAPI_CONFIG = {
     # est_price(예정가격)는 이 목록 표에 없음 — 상세 페이지에만 있어 이번 범위에서는 비워둔다
     # (est_price 자체가 REQUIRED_FIELDS가 아니므로 문제 없음). 인코딩은 EUC-KR이나 서버가
     # Content-Type 헤더에 명시해 requests가 자동으로 올바르게 디코딩함(2026-09-14 실측 확인).
+    # 2026-09-15 — 사용자 지시: "용역", "입찰"만 수집/분석하도록. 목록 페이지의 "업무구분"
+    # 드롭다운(worktype)이 서버측 필터를 지원함을 직접 확인(값: C=공사, S=용역, M=물품(내자),
+    # F=물품(외자), 빈 값=전체) — worktype=S로 라이브 호출해 실제로 용역만 내려옴을 검증.
+    # 이 게시판 자체가 전부 "입찰공고"라 "입찰" 조건은 이미 항상 충족된다.
     "한국가스공사 입찰공고": {
         "config": {
             "endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
-            "params": {"worktype": "", "title": "", "e_startday": "", "e_endday": "", "o_startday": "", "o_endday": "", "orderplace": "", "reqbidno": ""},
+            "params": {"worktype": "S", "title": "", "e_startday": "", "e_endday": "", "o_startday": "", "o_endday": "", "orderplace": "", "reqbidno": ""},
             "pagination": {"page_param": "page", "max_pages": 5},
             "table_class": "tl",
             "columns": [

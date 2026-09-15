@@ -209,8 +209,11 @@ export function DataChannelsPage() {
       const parts = [
         `조회 ${result.fetched}건 · 신규 ${result.inserted}건 · 마감/기간외 제외 ${result.already_closed + result.out_of_window}건`,
       ];
-      if (result.extraction_candidates > 0) parts.push(`첨부분석 ${result.auto_extracted}/${result.extraction_candidates}건`);
-      if (result.analyze_candidates > 0) parts.push(`AI분석 ${result.auto_analyzed}/${result.analyze_candidates}건`);
+      // 2026-09-15 — 첨부분석·AI분석이 백그라운드 워커로 넘어가면서(수집 잡이 안 막히도록)
+      // 이 응답 시점엔 아직 완료가 아니라 "제출"만 된 상태다 — 완료 여부는 공고 상세 화면에서
+      // 확인해야 하므로 문구를 "X/Y건 완료"가 아니라 "제출됨(진행 중)"으로 바꾼다.
+      if (result.extraction_candidates > 0) parts.push(`첨부분석 ${result.extraction_candidates}건 제출됨(백그라운드 진행 중)`);
+      if (result.analyze_candidates > 0) parts.push(`AI분석 ${result.analyze_candidates}건 대기(첨부분석 완료 후 자동 진행)`);
       notify("success", `수집 완료 — ${parts.join(" · ")}`);
     },
     onError: (error) => notify("error", apiErrorMessage(error, "수집 중 오류가 발생했습니다.")),

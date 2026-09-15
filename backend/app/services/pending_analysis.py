@@ -24,6 +24,7 @@ from app.db import engine
 from app.models import analysis, notice, source
 from app.services.analysis.structure import run_structuring_for_notice
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
+from app.services.analysis_worker import submit as submit_background
 
 # 한 번 호출에 처리할 최대 건수 — 무제한으로 돌면 이것도 오래 걸릴 수 있으므로 상한을 둔다.
 # 남은 게 있으면 여러 번 다시 호출하면 된다(각 호출은 여전히 공고 단위 짧은 트랜잭션이라 안전).
@@ -84,8 +85,34 @@ def count_pending(conn: Connection, *, limit: int = 5000) -> dict:
     }
 
 
+def _process_one_new_notice(notice_id: int, *, auto_analyze: bool, prefetched_raw_item: dict | None) -> None:
+    """신규 공고 1건의 A1(+auto_analyze가 켜져 있으면 이어서 A2)을 처리한다. 백그라운드
+    워커 스레드(app/services/analysis_worker.py)에서 실행되어 이 함수를 부른 스케줄 잡을
+    막지 않는다(2026-09-15) — 나라장터 440건이 몰려 2시간 걸린 회차가 같은 분 이후 예정된
+    다른 소스의 수집까지 전부 건너뛰게 만든 사고(run_due_sources가 max_instances=1인 단일
+    잡이라 이 소스 하나에 발이 묶이면 나머지 소스도 그 시각을 못 탐) 이후 사용자 지시로 도입."""
+    try:
+        with engine.begin() as conn:
+            run_extraction_pilot(conn, notice_id, prefetched_raw_item=prefetched_raw_item)
+    except (AnalysisInProgressError, UnsupportedSourceError):
+        return
+    except Exception:  # noqa: BLE001 — 공고 하나의 실패가 워커 스레드를 죽이면 안 됨
+        return
+    if not auto_analyze:
+        return
+    with engine.begin() as conn:
+        try:
+            run_structuring_for_notice(conn, notice_id, model="claude-haiku-4-5-20251001")
+        except Exception:  # noqa: BLE001 — 실패는 run_structuring이 이미 "failed"로 기록함
+            pass
+
+
 def process_new_notices(
-    source_id: int, notice_ids: list[int], *, raw_items_by_notice_id: dict[int, dict] | None = None
+    source_id: int,
+    notice_ids: list[int],
+    *,
+    raw_items_by_notice_id: dict[int, dict] | None = None,
+    background: bool = False,
 ) -> dict:
     """방금 수집한 공고(notice_ids)만 콕 집어 A1·A2를 실행한다(2026-09-07 사용자 지시).
 
@@ -102,6 +129,16 @@ def process_new_notices(
     조용히 실패해 "첨부 없음"으로 잘못 기록됐다. 방금 수집한 것과 같은 트랜잭션에서 이미
     받은 데이터를 재사용하면 이 재호출 자체가 없어진다.
 
+    background(2026-09-15, 기본 False) — True면 공고 하나하나를 analysis_worker(동시 2개
+    제한 스레드풀)에 제출만 하고 완료를 기다리지 않는다. run_source_and_process_pending()이
+    이 값을 True로 넘겨 실제 자동 수집 경로에서 쓴다 — 그래야 나라장터처럼 신규 건이 몰려도
+    수집을 부른 스케줄 잡이 첨부분석 시간만큼 묶이지 않는다. 이 경우 반환값의 auto_extracted는
+    "제출된 건수"일 뿐 "완료된 건수"가 아니다(실제 완료 여부는 공고 상세 화면에서 확인). A2는
+    A1이 아직 안 끝난 시점이라 여기서 후보를 셀 수 없으므로, auto_analyze가 켜진 소스라도
+    A2는 10분마다 도는 run_pending_backlog(A1이 done으로 바뀐 뒤 그 잔고 스캔에서 자연히
+    잡힘)에 맡긴다 — 지연은 최대 10분, 대신 스케줄이 절대 안 막힌다는 게 이번 개선의 핵심.
+    background=False(기본값, 테스트·CLI 등 동기 호출부)는 기존과 동일하게 완료까지 기다린다.
+
     첨부분석·AI분석 여부는 각 소스 설정(auto_extract/auto_analyze)을 그대로 따른다."""
     if not notice_ids:
         return {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
@@ -114,8 +151,24 @@ def process_new_notices(
     if src is None:
         return {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
 
-    auto_extracted = 0
     extraction_candidates = notice_ids if src["auto_extract"] else []
+
+    if background:
+        for notice_id in extraction_candidates:
+            submit_background(
+                _process_one_new_notice,
+                notice_id,
+                auto_analyze=src["auto_analyze"],
+                prefetched_raw_item=raw_items_by_notice_id.get(notice_id),
+            )
+        return {
+            "extraction_candidates": len(extraction_candidates),
+            "auto_extracted": len(extraction_candidates),  # 제출 완료 건수 — 실제 완료는 아님(백그라운드 진행 중)
+            "analyze_candidates": len(extraction_candidates) if src["auto_analyze"] else 0,
+            "auto_analyzed": 0,  # A1이 끝나야 알 수 있어 여기선 항상 0 — 실제 결과는 run_pending_backlog가 이어받음
+        }
+
+    auto_extracted = 0
     for notice_id in extraction_candidates:
         try:
             with engine.begin() as conn:

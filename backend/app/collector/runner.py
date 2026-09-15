@@ -366,8 +366,9 @@ def run_source_and_process_pending(
     *,
     max_lookback_days: int = DEFAULT_MAX_LOOKBACK_DAYS,
 ) -> dict:
-    """파이프라인 전체(수집→중복체크→첨부분석(A1)→AI분석(A2))를 한 번에 잇는다(2026-09-07
-    사용자 지시) — "자동수집"이든 "지금 수집"이든 이 함수를 거쳐야 끝까지 이어진다.
+    """수집→중복체크까지 마치고, 첨부분석(A1)·AI분석(A2)은 백그라운드 워커에 넘긴다
+    (2026-09-07 사용자 지시로 도입, 2026-09-15 사용자 지시로 A1/A2를 동기 대기에서 백그라운드
+    제출로 전환) — "자동수집"이든 "지금 수집"이든 이 함수를 거쳐야 끝까지 이어진다.
 
     run_source()의 트랜잭션이 완전히 커밋된 **뒤**에 이어서 처리한다 — A1이 공고마다 첨부파일을
     내려받는 동안 수집 트랜잭션의 락을 계속 쥐고 있으면 다른 작업(스키마 마이그레이션 등)을
@@ -379,6 +380,15 @@ def run_source_and_process_pending(
     오래된 잔고 자체를 처리하려면 여전히 관리자가 수동으로 process-pending을 돌려야 한다.
     첨부분석·AI분석은 각 소스의 auto_extract/auto_analyze 설정을 그대로 따른다(사용자 지시).
 
+    2026-09-15 — process_new_notices(..., background=True)로 바꿔 A1/A2를 여기서 기다리지
+    않는다(app/services/analysis_worker.py, 동시 2개 제한 스레드풀에 제출만 하고 반환). 전에는
+    여기서 완료까지 동기로 기다렸는데, 나라장터처럼 신규 건이 몰리면(실측 440건, 약 2시간) 이
+    함수를 부른 run_due_sources(매 분 정각, max_instances=1)가 그 시간만큼 통째로 묶여 같은
+    시각 이후 예정된 다른 소스의 수집을 전부 건너뛰는 사고로 이어졌다(사용자 지적: "나라장터가
+    왜 2시간이나 걸린거야"). 따라서 아래 duration_ms는 이제 "수집(A1/A2 제출까지)"만 잰다 —
+    실제 첨부분석·AI분석 소요시간은 더 이상 이 값에 안 잡히고, 대신 그 시간만큼 다른 소스의
+    수집을 막지도 않는다(트레이드오프를 의도적으로 선택함).
+
     2026-09-08 — 이 함수가 실행되는 동안 source_run에 'running' 행을 남겨 관리자 화면이
     "수집 중"을 실시간으로 보여줄 수 있게 한다(사용자 발견: "지금 수집" 클릭 후 다른 메뉴로
     갔다 돌아오면 이미 끝난 것처럼 보이는 문제 — 브라우저 쪽 로딩 상태만으로는 새로고침·다른
@@ -386,18 +396,20 @@ def run_source_and_process_pending(
     거부한다(S8 원칙 3과 같은 취지)."""
     _reject_if_already_running(source_id)
     run_id = _start_run(source_id)
-    # 스케줄 간격을 정할 때(관리자 페이지 "공고데이터 수집") 실제로 얼마나 걸리는지 알아야
-    # 하는데, source_run.duration_ms가 지금까지 데모 시드 데이터에만 채워지고 실제 수집
-    # 경로에서는 한 번도 기록된 적이 없었다(2026-09-14 발견) — 수집(run_source)뿐 아니라
-    # 이어지는 첨부분석(A1)·AI분석(A2)까지 포함한 전체 소요시간을 재야 스케줄이 실제로 안
-    # 겹치는지 판단할 수 있어 이 바깥 함수(스케줄러가 직접 호출하는 지점) 기준으로 측정한다.
     start = datetime.now(timezone.utc)
     try:
         with engine.begin() as conn:
             collect_result = run_source(conn, source_id, max_lookback_days=max_lookback_days, run_id=run_id)
         new_notice_ids = collect_result.pop("inserted_notice_ids")
         raw_items_by_notice_id = collect_result.pop("inserted_raw_items")
-        pending_result = process_new_notices(source_id, new_notice_ids, raw_items_by_notice_id=raw_items_by_notice_id)
+        # background=True(2026-09-15) — 첨부분석(A1)·AI분석(A2)을 여기서 기다리지 않고
+        # analysis_worker(동시 2개 제한 스레드풀)에 제출만 한다. 전에는 여기서 완료까지
+        # 동기로 기다렸는데, 나라장터처럼 신규 건이 몰리면(실측 440건, 약 2시간) 이 함수를
+        # 부른 run_due_sources(매 분 정각, max_instances=1)가 그 시간만큼 통째로 묶여 같은
+        # 시각 이후 예정된 다른 소스의 수집을 전부 건너뛰는 사고로 이어졌다(사용자 지적).
+        pending_result = process_new_notices(
+            source_id, new_notice_ids, raw_items_by_notice_id=raw_items_by_notice_id, background=True
+        )
     except Exception as exc:  # noqa: BLE001 — 실패도 반드시 마감해야 "진행 중"에 영원히 안 갇힘
         duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
         _finish_run(run_id, status="fail", items_fetched=0, error_message=str(exc), duration_ms=duration_ms)

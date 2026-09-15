@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import os
+import time
 from unittest import mock
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword@127.0.0.1:15432/bidradar")
 
+import pytest
 from sqlalchemy import delete, insert, select
 
 from app.db import engine
@@ -328,6 +330,86 @@ def test_process_new_notices_chains_structuring_when_auto_analyze_on(monkeypatch
                 select(analysis.c.step).where(analysis.c.notice_id == notice_id).order_by(analysis.c.ver.desc())
             ).scalars().first()
         assert step == "A2_structure"
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
+# ---- background=True(2026-09-15) — A1/A2를 스레드풀에 제출만 하고 기다리지 않음 ------------
+
+
+@pytest.mark.no_db_isolation
+def test_process_new_notices_background_submits_without_blocking(monkeypatch):
+    """background=True면 run_extraction_pilot을 호출부 스레드에서 직접 실행하지 않고
+    analysis_worker에 제출만 해야 한다 — 호출이 즉시 반환되고, 실제 실행은 별도 스레드에서
+    나중에 일어난다.
+
+    no_db_isolation(2026-09-15) — 백그라운드 워커가 진짜 별도 스레드에서 engine.begin()을
+    부르는데, 기본 격리 픽스처(conftest._isolate_db_per_test)는 테스트 전체를 SAVEPOINT
+    하나로 묶는 프록시라 스레드 간 동시 접근을 지원하지 않는다(실측: "savepoint does not
+    exist" 에러) — 이 테스트가 검증하려는 게 바로 그 "다른 스레드에서 실행됨" 자체이므로
+    격리를 끄고 진짜 커넥션을 쓴다. 테스트가 만든 행은 finally에서 직접 지운다."""
+    import threading
+
+    call_thread_names: list[str] = []
+    extraction_started = threading.Event()
+    extraction_finished = threading.Event()
+    release_extraction = threading.Event()
+
+    def _fake_run_extraction_pilot(conn, notice_id, *, prefetched_raw_item=None):
+        call_thread_names.append(threading.current_thread().name)
+        extraction_started.set()
+        release_extraction.wait(timeout=2)
+        extraction_finished.set()
+        return {"analysis_id": 1, "status": "done", "attachments_found": 0, "docs": []}
+
+    monkeypatch.setattr("app.services.pending_analysis.run_extraction_pilot", _fake_run_extraction_pilot)
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, auto_extract=True)
+        notice_id = _make_notice(conn, source_id, "https://www.iris.go.kr/test/TESTBACKGROUND1")
+
+    try:
+        result = process_new_notices(source_id, [notice_id], background=True)
+        # 호출 즉시 반환 — 아직 워커 스레드가 시작 안 했을 수도 있으니 짧게 대기해서 확인한다.
+        assert result == {
+            "extraction_candidates": 1, "auto_extracted": 1, "analyze_candidates": 0, "auto_analyzed": 0,
+        }
+        assert extraction_started.wait(timeout=2), "백그라운드 워커가 A1을 시작하지 않았다"
+        assert call_thread_names[0] != threading.current_thread().name
+        release_extraction.set()
+        assert extraction_finished.wait(timeout=2), "백그라운드 작업이 끝나지 않았다"
+    finally:
+        release_extraction.set()
+        extraction_finished.wait(timeout=2)
+        _cleanup(source_id, [notice_id])
+
+
+@pytest.mark.no_db_isolation
+def test_process_new_notices_background_actually_completes(monkeypatch):
+    """background=True로 제출한 A1이 실제로(비동기로) 끝까지 실행돼 DB에 반영되는지 확인한다.
+
+    no_db_isolation — 위 테스트와 같은 이유(백그라운드 스레드의 진짜 engine.begin() 호출을
+    검증해야 해서 SAVEPOINT 기반 격리 프록시와 함께 쓸 수 없음)."""
+    html_response = mock.Mock()
+    html_response.text = "<html>첨부파일 없음</html>"
+    monkeypatch.setattr("app.services.analysis_pilot.fetch", mock.Mock(return_value=html_response))
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, auto_extract=True)
+        notice_id = _make_notice(conn, source_id, "https://www.iris.go.kr/test/TESTBACKGROUND2")
+
+    try:
+        process_new_notices(source_id, [notice_id], background=True)
+
+        deadline = time.time() + 5
+        status = None
+        while time.time() < deadline:
+            with engine.connect() as conn:
+                status = conn.execute(select(analysis.c.status).where(analysis.c.notice_id == notice_id)).scalar_one_or_none()
+            if status is not None:
+                break
+            time.sleep(0.05)
+        assert status == "done"
     finally:
         _cleanup(source_id, [notice_id])
 

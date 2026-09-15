@@ -58,8 +58,11 @@ export interface CollectNowResult {
   already_closed: number;
   dedup_groups_with_duplicates: number;
   dedup_notices_updated: number;
-  // 첨부분석(A1)·AI분석(A2)까지 한 번에 이어진다(2026-09-07) — 소스의 auto_extract/
-  // auto_analyze 설정을 따르므로 꺼져 있으면 대상(candidates)이 0건일 뿐이다.
+  // 첨부분석(A1)·AI분석(A2) 대상 파악까지 한 번에 이어진다(2026-09-07) — 소스의
+  // auto_extract/auto_analyze 설정을 따르므로 꺼져 있으면 대상(candidates)이 0건일 뿐이다.
+  // 2026-09-15 — A1/A2 실행 자체는 백그라운드 워커로 넘어가 이 응답 시점엔 아직 안 끝나 있다.
+  // auto_extracted/auto_analyzed는 이제 "완료 건수"가 아니라 "제출 건수"(auto_analyzed는
+  // A1이 끝나야 알 수 있어 항상 0으로 온다) — 실제 완료 여부는 공고 상세 화면에서 확인한다.
   extraction_candidates: number;
   auto_extracted: number;
   analyze_candidates: number;
