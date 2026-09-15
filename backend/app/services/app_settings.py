@@ -10,11 +10,14 @@ from sqlalchemy.engine import Connection
 
 from app.models import app_setting
 
-# 보고서 자동 삭제 보관기간(일) — None/미설정이면 자동 삭제 안 함(2026-09-12 사용자 지시,
-# "생성 후 N일 지나면 자동 삭제"). interest_report.generate_report()가 매번 이 값을 확인해
-# 만료된 리포트를 정리한다(app/services/notice_cleanup.py의 "수집 시 자동 정리"와 같은 방식
-# — 별도 스케줄러 없이 기존 트리거에 얹는다).
+# 보고서 자동 삭제 보관기간(일) — 기본 30일(2026-09-15 사용자 지시, "이 페이지들은 생성 후
+# 1개월 후에 삭제한다" — 이메일 본문·공유 링크가 가리키는 공개 리포트 페이지). 관리자가
+# "보고서 관리" 화면에서 값을 바꾸거나 완전히 끌 수 있다(None = 자동 삭제 안 함, 2026-09-12
+# 도입). interest_report.generate_report()가 매번 이 값을 확인해 만료된 리포트를 정리한다
+# (app/services/notice_cleanup.py의 "수집 시 자동 정리"와 같은 방식 — 별도 스케줄러 없이
+# 기존 트리거에 얹는다).
 REPORT_RETENTION_DAYS_KEY = "report_retention_days"
+DEFAULT_REPORT_RETENTION_DAYS = 30
 
 
 def get_setting(conn: Connection, key: str, default=None):
@@ -29,7 +32,7 @@ def set_setting(conn: Connection, key: str, value) -> None:
 
 
 def get_report_retention_days(conn: Connection) -> int | None:
-    return get_setting(conn, REPORT_RETENTION_DAYS_KEY, default=None)
+    return get_setting(conn, REPORT_RETENTION_DAYS_KEY, default=DEFAULT_REPORT_RETENTION_DAYS)
 
 
 def set_report_retention_days(conn: Connection, days: int | None) -> None:

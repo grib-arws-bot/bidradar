@@ -47,7 +47,7 @@ def _serialize(row) -> dict:
         "profile_summarized_at": row["profile_summarized_at"].isoformat() if row["profile_summarized_at"] else None,
         "profile_summary_cost": float(row["profile_summary_cost"]),
         "report_auto_send_days": row["report_auto_send_days"] or [],
-        "report_auto_send_time": row["report_auto_send_time"],
+        "report_auto_send_times": row["report_auto_send_times"] or [],
     }
 
 
@@ -118,12 +118,17 @@ class EmailScheduleError(ValueError):
     pass
 
 
-def validate_email_schedule(days: list[int], time: str | None) -> None:
+MAX_EMAIL_SCHEDULE_TIMES = 3  # source.schedule_times와 같은 상한(app/services/source_registry.py)
+
+
+def validate_email_schedule(days: list[int], times: list[str]) -> None:
     if any(d < 1 or d > 7 for d in days):
         raise EmailScheduleError("요일은 1(월)~7(일) 사이의 값이어야 합니다.")
     if len(set(days)) != len(days):
         raise EmailScheduleError("같은 요일을 중복해서 지정할 수 없습니다.")
-    if time is not None:
+    if len(times) > MAX_EMAIL_SCHEDULE_TIMES:
+        raise EmailScheduleError(f"발송 시각은 최대 {MAX_EMAIL_SCHEDULE_TIMES}개까지 설정할 수 있습니다.")
+    for time in times:
         try:
             hour_str, minute_str = time.split(":")
             hour, minute = int(hour_str), int(minute_str)
@@ -131,16 +136,18 @@ def validate_email_schedule(days: list[int], time: str | None) -> None:
             raise EmailScheduleError(f"시간 형식이 올바르지 않습니다(HH:MM, 00:00~23:59): {time!r}") from exc
         if not (0 <= hour <= 23) or not (0 <= minute <= 59):
             raise EmailScheduleError(f"시간은 00:00~23:59 범위여야 합니다: {time!r}")
-    if days and time is None:
+    if days and not times:
         raise EmailScheduleError("요일을 지정하려면 발송 시각도 함께 설정해야 합니다.")
+    if times and not days:
+        raise EmailScheduleError("발송 시각을 지정하려면 요일도 함께 설정해야 합니다.")
 
 
-def set_email_schedule(conn: Connection, customer_id: int, days: list[int], time: str | None) -> bool:
-    validate_email_schedule(days, time)
+def set_email_schedule(conn: Connection, customer_id: int, days: list[int], times: list[str]) -> bool:
+    validate_email_schedule(days, times)
     result = conn.execute(
         update(customer)
         .where(customer.c.id == customer_id)
-        .values(report_auto_send_days=sorted(days), report_auto_send_time=time)
+        .values(report_auto_send_days=sorted(days), report_auto_send_times=times)
     )
     return result.rowcount > 0
 

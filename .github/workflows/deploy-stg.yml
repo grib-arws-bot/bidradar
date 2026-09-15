@@ -27,6 +27,18 @@ jobs:
     # 2026-09-14 — deploy-prod.yml과 같은 이유로 30분으로 상향(pytest가 500건대로 늘어나며
     # 20분 상한에 실제로 걸림).
     timeout-minutes: 30
+    # 2026-09-15 — docker-compose.yml의 `name: bidradar`가 고정돼 있어(2026-09-01 ARWS와의
+    # 충돌 방지용 고정) 개발자가 로컬 PC에서 `docker compose up -d`로 띄워둔 dev 스택과 이
+    # CI 잡이 완전히 같은 컨테이너 이름을 두고 경합했다 — 실제로 이 잡의 "스테이징(로컬) 기동"
+    # 단계가 개발자의 로컬 backend/frontend/scheduler 컨테이너를 조용히 이 잡의 체크아웃
+    # 코드로 바꿔치기하는 사고가 있었다. COMPOSE_PROJECT_NAME과 포트를 로컬 기본값과 다르게
+    # 줘서 완전히 별도의 스택으로 띄운다 — db도 별도라 마이그레이션을 이 잡 안에서 직접 돈다.
+    env:
+      COMPOSE_PROJECT_NAME: bidradar-stg
+      DB_HOST_PORT: "15433"
+      BACKEND_HOST_PORT: "13001"
+      FRONTEND_HOST_PORT: "13201"
+      DATABASE_URL: postgresql+psycopg://bidradar:devpassword@127.0.0.1:15433/bidradar
     steps:
       - name: main 브랜치인지 확인
         if: github.ref != 'refs/heads/main'
@@ -44,19 +56,26 @@ jobs:
         shell: powershell
         run: Copy-Item -Path "D:\Code-CLI\BidRadar\infra\.env" -Destination "infra\.env" -Force
 
-      # backend/tests/conftest.py는 격리된 테스트 DB가 아니라 로컬 dev DB(127.0.0.1:15432)를
-      # 그대로 쓴다 — db 컨테이너가 이미 떠 있어야 한다(멱등: 이미 떠 있으면 아무 것도 안 함).
+      # 2026-09-15 — 이 잡 전용 격리된 db(COMPOSE_PROJECT_NAME=bidradar-stg, 포트 15433)라
+      # 개발자의 로컬 dev DB(15432)와 무관하다. 매 실행마다 이미지가 같으면 기존 볼륨을 그대로
+      # 재사용하므로(잡이 끝나도 컨테이너를 안 지움) 두 번째 실행부터는 사실상 멱등하지만,
+      # 최초 실행이거나 볼륨이 지워졌으면 빈 DB이므로 바로 다음 단계에서 마이그레이션을 돈다.
       - name: DB 컨테이너 기동 확인
         shell: powershell
         working-directory: infra
         run: docker compose up -d db
 
-      - name: 백엔드 테스트 (pytest)
+      - name: DB 마이그레이션
         shell: powershell
         working-directory: backend
         run: |
           python -m pip install -e ".[dev]"
-          python -m pytest
+          python -m alembic upgrade head
+
+      - name: 백엔드 테스트 (pytest)
+        shell: powershell
+        working-directory: backend
+        run: python -m pytest
 
       - name: 프론트엔드 빌드 확인 (타입체크 포함)
         shell: powershell
@@ -79,9 +98,10 @@ jobs:
         shell: powershell
         run: |
           Start-Sleep -Seconds 5
-          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:13200/" -UseBasicParsing -TimeoutSec 10
+          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:${env:FRONTEND_HOST_PORT}/" -UseBasicParsing -TimeoutSec 10
           Write-Host "스테이징 frontend: HTTP $($resp.StatusCode)"
           Write-Host ""
+          Write-Host "==> 육안 확인은 http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ (로컬 dev의 13200과는 다른 포트 — 2026-09-15부터 완전히 별도 스택)"
           Write-Host "==> 스테이징 확인 후 문제 없으면, GitHub Actions 탭에서 'Deploy - Production'"
           Write-Host "    워크플로우를 수동으로 실행(Run workflow)해서 프로덕션에 배포하세요."
 

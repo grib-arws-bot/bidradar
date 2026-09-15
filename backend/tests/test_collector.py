@@ -9,6 +9,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword
 
 from datetime import datetime, timedelta, timezone
 from unittest import mock
+from xml.etree import ElementTree
 
 import pytest
 from sqlalchemy import delete, func, insert, select
@@ -316,6 +317,55 @@ def test_fetch_openapi_items_parses_xml_response(monkeypatch):
     assert len(items) == 1
     assert items[0]["subject"] == "2026년 사업 공고"
     assert items[0]["managerName"] == "홍길동"  # 어댑터는 원문 그대로 반환 — 마스킹은 runner의 몫
+
+
+def test_fetch_openapi_items_xml_format_surfaces_json_error_envelope(monkeypatch):
+    # 2026-09-15 실측 — 과학기술정보통신부 소스가 서비스키 미승인(SERVICE_KEY_IS_NOT_
+    # REGISTERED_ERROR)으로 실패할 때, format="xml" 설정인데도 포털 게이트 오류는 JSON
+    # 봉투로 돌아왔다. 예전엔 ElementTree가 이 JSON을 XML로 파싱하려다 "not well-formed
+    # (invalid token): line 1, column 0"라는 원인을 알 수 없는 메시지만 남기고 죽었다 —
+    # 이제는 XML 파싱 실패 시 JSON으로 재시도해 실제 오류 메시지를 뽑아내야 한다.
+    mock_response = mock.Mock()
+    mock_response.content = b'{"OpenAPI_ServiceResponse": {"cmmMsgHeader": {"errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"}}}'
+    mock_response.json.return_value = {
+        "OpenAPI_ServiceResponse": {
+            "cmmMsgHeader": {
+                "errMsg": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+                "returnAuthMsg": "등록되지 않은 서비스키",
+                "returnReasonCode": "30",
+            }
+        }
+    }
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    config = {
+        "endpoint": "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList",
+        "format": "xml",
+        "params": {"type": "json"},
+        "items_path": "$.response.body.items.item[*]",
+    }
+    now = datetime.now(timezone.utc)
+    with pytest.raises(RuntimeError, match="SERVICE_KEY_IS_NOT_REGISTERED_ERROR"):
+        fetch_openapi_items(config, "test-service-key", begin=now, end=now)
+
+
+def test_fetch_openapi_items_xml_format_reraises_original_error_when_not_json(monkeypatch):
+    # 위 테스트와 반대 경우 — 응답이 XML도 JSON도 아닌 진짜 깨진 데이터라면(예: 빈 응답,
+    # HTML 에러 페이지) 원래 XML ParseError를 그대로 올려야 한다(원인 정보를 잃으면 안 됨).
+    mock_response = mock.Mock()
+    mock_response.content = b"<html>502 Bad Gateway</html"  # 의도적으로 깨진 응답(닫는 태그 누락)
+    mock_response.json.side_effect = ValueError("not valid json")
+    monkeypatch.setattr("app.collector.adapters.openapi.fetch", mock.Mock(return_value=mock_response))
+
+    config = {
+        "endpoint": "https://apis.data.go.kr/1721000/msitannouncementinfo/businessAnnouncMentList",
+        "format": "xml",
+        "params": {"type": "json"},
+        "items_path": "$.response.body.items.item[*]",
+    }
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ElementTree.ParseError):
+        fetch_openapi_items(config, "test-service-key", begin=now, end=now)
 
 
 # ---- 수집 기간(직전 성공 이후~지금, 없으면 2개월 캡, 2026-09-01 결정) ------------------

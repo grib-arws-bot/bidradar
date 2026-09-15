@@ -14,9 +14,17 @@ os.environ.setdefault(
 import pytest
 from fastapi.testclient import TestClient
 
+from sqlalchemy import delete
+
 from app.db import engine
 from app.main import app
-from app.services.app_settings import get_report_retention_days, set_report_retention_days
+from app.models import app_setting
+from app.services.app_settings import (
+    DEFAULT_REPORT_RETENTION_DAYS,
+    REPORT_RETENTION_DAYS_KEY,
+    get_report_retention_days,
+    set_report_retention_days,
+)
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -75,3 +83,13 @@ def test_set_get_report_retention_days_round_trip():
         set_report_retention_days(conn, 45)
     with engine.connect() as conn:
         assert get_report_retention_days(conn) == 45
+
+
+def test_report_retention_days_defaults_to_30_when_never_set():
+    # 2026-09-15 사용자 지시 — "이 페이지들은 생성 후 1개월 후에 삭제한다." 관리자가 이
+    # 설정을 한 번도 안 건드린 신규 설치 상태(행 자체가 없음)에서도 30일이 기본값이어야
+    # 한다 — None(자동 삭제 없음)은 관리자가 명시적으로 꺼야만 되는 상태다.
+    with engine.begin() as conn:
+        conn.execute(delete(app_setting).where(app_setting.c.key == REPORT_RETENTION_DAYS_KEY))
+    with engine.connect() as conn:
+        assert get_report_retention_days(conn) == DEFAULT_REPORT_RETENTION_DAYS == 30

@@ -13,6 +13,11 @@ from sqlalchemy.engine import Connection
 
 from app.db import engine
 from app.models import analysis, customer, newsletter_report, report_send_log, source
+from app.services.analysis.structure import (
+    LLMNotConfiguredError,
+    StructuringInProgressError,
+    run_structuring_for_notice,
+)
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
 from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
@@ -90,6 +95,44 @@ def _ensure_notices_extracted(notice_ids: list[int]) -> None:
             pass
 
 
+def _ensure_notices_structured(notice_ids: list[int]) -> None:
+    """리포트에 실릴 공고들의 AI 구조화(A2)를 미리 끝내둔다(2026-09-15 사용자 지시 — "메일
+    발송 시점이 되면 ... 필요시 A1/A2 분석까지 처리"). _ensure_notices_extracted와 같은 이유로
+    공고 하나마다 별도의 짧은 트랜잭션으로 처리하고, 실패해도 리포트 생성 자체는 계속 진행한다.
+
+    A1이 성공(status="done")한 공고 중 아직 A2를 한 번도 안 한 것만 대상으로 한다 — A1이
+    실패했거나 아직 안 끝난 공고, 이미 A2까지 끝난 공고는 자동으로 건너뛴다(전자는 시도해도
+    "추출된 문서 텍스트 없음"으로 실패할 게 뻔하고, 후자는 재시도가 아니라 새 비용 발생이라
+    pending_analysis.py의 자동 패스와 같은 원칙 — 항상 Haiku 고정, 모델 선택은 자동화 안 함)."""
+    if not notice_ids:
+        return
+    with engine.connect() as conn:
+        latest_ver_sq = (
+            select(analysis.c.notice_id, analysis.c.id.label("analysis_id"))
+            .distinct(analysis.c.notice_id)
+            .order_by(analysis.c.notice_id, analysis.c.ver.desc())
+            .subquery()
+        )
+        candidates = conn.execute(
+            select(analysis.c.notice_id)
+            .select_from(latest_ver_sq)
+            .join(analysis, analysis.c.id == latest_ver_sq.c.analysis_id)
+            .where(
+                analysis.c.notice_id.in_(notice_ids),
+                analysis.c.step == "A1_extract",
+                analysis.c.status == "done",
+            )
+        ).scalars().all()
+    for notice_id in candidates:
+        try:
+            with engine.begin() as conn:
+                run_structuring_for_notice(conn, notice_id, model="claude-haiku-4-5-20251001")
+        except (LLMNotConfiguredError, StructuringInProgressError, ValueError):
+            pass
+        except Exception:  # noqa: BLE001 — 공고 하나의 구조화 실패가 리포트 생성 전체를 막으면 안 됨
+            pass
+
+
 def delete_expired_reports(conn: Connection) -> int:
     """보관기간(app_settings.get_report_retention_days, 설정 안 하면 자동 삭제 없음)이 지난
     리포트를 지운다(2026-09-12 사용자 지시 — "생성 후 N일 지나면 자동 삭제"). notice_cleanup.py의
@@ -127,6 +170,7 @@ def generate_report(customer_id: int) -> dict | None:
         matches = top_matches(conn, draft, limit=REPORT_LIMIT)
 
     _ensure_notices_extracted([n["id"] for n in matches])
+    _ensure_notices_structured([n["id"] for n in matches])
 
     with engine.begin() as conn:
         summary = _build_summary(matches)

@@ -514,7 +514,7 @@ def test_run_extraction_pilot_rejects_duplicate_in_progress(iris_notice):
 
 def test_run_extraction_pilot_rejects_non_iris_source():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).where(source.c.name == "K-water 입찰공고")).scalar_one()
+        source_id = conn.execute(select(source.c.id).where(source.c.name == "K-water 입찰공고(용역)")).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id,

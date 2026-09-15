@@ -82,20 +82,20 @@ def run_due_sources(now: datetime | None = None) -> list[int]:
 
 
 def _due_customers(now_kst: datetime) -> list[tuple[int, str]]:
-    """이 시각(now_kst)의 요일(ISO, 1=월~7=일)과 "HH:MM"이 report_auto_send_days/
-    report_auto_send_time에 맞는 활성 고객의 (id, name) 목록. 둘 다 설정돼 있어야 대상이다
-    (report_auto_send_days가 비어 있으면 시각이 같아도 대상이 아님)."""
+    """이 시각(now_kst)의 요일(ISO, 1=월~7=일)이 report_auto_send_days에 있고 "HH:MM"이
+    report_auto_send_times(2026-09-15부터 복수 지정 가능, source.schedule_times와 동일하게
+    최대 3개) 중 하나와 일치하는 활성 고객의 (id, name) 목록. 둘 다 설정돼 있어야 대상이다."""
     hhmm = now_kst.strftime("%H:%M")
     weekday = now_kst.isoweekday()
     with engine.connect() as conn:
         rows = conn.execute(
-            select(customer.c.id, customer.c.name, customer.c.report_auto_send_days, customer.c.report_auto_send_time)
+            select(customer.c.id, customer.c.name, customer.c.report_auto_send_days, customer.c.report_auto_send_times)
             .where(customer.c.active.is_(True))
         ).all()
     return [
         (row.id, row.name)
         for row in rows
-        if row.report_auto_send_time == hhmm and weekday in (row.report_auto_send_days or [])
+        if hhmm in (row.report_auto_send_times or []) and weekday in (row.report_auto_send_days or [])
     ]
 
 

@@ -155,7 +155,7 @@ KEYWORD_SEED = {
 # 채널 자체는 source 테이블에서 관리하고, org.source_id로 어느 채널을 통해 수집되는지만 연결한다.
 # 기관명은 가급적 한글로, 기관약자는 영어로 통일(2026-09-01 요청).
 ORG_SEED = [
-    ("한국수자원공사", None, "공기업(자체조달)", "K-water 입찰공고", "https://ebid.kwater.or.kr/"),
+    ("한국수자원공사", None, "공기업(자체조달)", "K-water 입찰공고(용역)", "https://ebid.kwater.or.kr/"),
     ("한국도로공사", None, "공기업(자체조달)", None, "https://ebid.ex.co.kr/"),
     ("방위사업청", "DAPA", "중앙행정기관(자체조달)", None, "https://www.d2b.go.kr/"),
     ("한국토지주택공사", "LH", "공기업(자체조달)", None, "https://ebid.lh.or.kr/"),
@@ -246,7 +246,7 @@ SOURCE_SEED = [
     # 호스트였다(26번 항목에서 "서비스 폐기"로 오판했던 원인) — data.go.kr 상세페이지에 숨어있는
     # Swagger 스펙(JSON)을 직접 찾아 확인한 결과 실제로는 한국수자원공사 자체 서버
     # (opendata.kwater.or.kr)에서 서비스된다.
-    ("K-water 입찰공고", "한국수자원공사", "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
+    ("K-water 입찰공고(용역)", "한국수자원공사", "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/servc/list",
      "https://ebid.kwater.or.kr/", "입찰공고", "openapi", False, False, 60,
      "A", "공공데이터포털 이용허락범위 '제한 없음'(공공데이터법 제3조④) — 원문 재가공·유료 재배포 가능",
      "https://www.data.go.kr/data/15101635/openapi.do"),
@@ -310,7 +310,7 @@ SOURCE_SEED = [
     # 없음(2026-09-13 직접 확인). 다만 공공데이터포털의 명시적 '제한없음' 라이선스 같은 적극적
     # 허가는 없는 상태라 IRIS와 동일한 근거로 법적등급 B(조건부) — 원문 전문은 안 쌓는다(목록에
     # 나오는 구조화 필드만 매핑, 첨부파일 다운로드는 이번 범위 밖).
-    ("국가철도공단 입찰공고", "국가철도공단", "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
+    ("국가철도공단 입찰공고(용역)", "국가철도공단", "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
      "https://ebid.kr.or.kr/", "입찰공고", "html", False, False, 60,
      "B", "robots.txt 전면허용, 이용약관에 크롤링·재배포 금지 조항 없음(전자입찰 참가자 대상 조항뿐, 2026-09-13 확인)",
      "https://ebid.kr.or.kr/robots.txt"),
@@ -324,7 +324,7 @@ SOURCE_SEED = [
     # (e_startday 등)의 실제 동작을 검증 못해 사용하지 않고, 대신 max_pages를 작게 잡아(5페이지,
     # 최근 순 정렬 확인됨) 매 회차 최근 공고만 훑는다 — 전체 597건(40페이지)을 매번 다시
     # 긁는 낭비를 피함(29번 항목 OpenAPI 쿼터 사고에서 배운 "불필요한 반복 호출 최소화" 원칙).
-    ("한국가스공사 입찰공고", "한국가스공사", "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
+    ("한국가스공사 입찰공고(용역)", "한국가스공사", "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
      "https://bid.kogas.or.kr:9443/", "입찰공고", "html", False, False, 60,
      "B", "robots.txt 전면허용(QnA 게시판 1곳만 예외), 이용약관 문구 자체를 찾지 못함 — 명시적 금지 없음(2026-09-14 확인)",
      "https://bid.kogas.or.kr:9443/robots.txt"),
@@ -345,13 +345,13 @@ ATTRIBUTION_TEXT = {
     "나라장터 입찰공고정보서비스(물품)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 입찰공고정보서비스(공사)": "출처: 조달청 나라장터 입찰공고정보서비스(공공데이터포털)",
     "나라장터 낙찰정보서비스": "출처: 조달청 나라장터 낙찰정보서비스(공공데이터포털)",
-    "K-water 입찰공고": "출처: 한국수자원공사 입찰공고(공공데이터포털)",
+    "K-water 입찰공고(용역)": "출처: 한국수자원공사 입찰공고(공공데이터포털)",
     "IRIS 접수예정": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "IRIS 접수중": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "IRIS 공모예고": "출처: IRIS(범부처통합연구지원시스템) — 원문은 공고 링크에서 확인하세요",
     "과학기술정보통신부 사업공고(부처 자체, 범부처 아님)": "출처: 과학기술정보통신부 사업공고(공공데이터포털)",
-    "국가철도공단 입찰공고": "출처: 국가철도공단 KR전자조달시스템 — 원문은 공고 링크에서 확인하세요",
-    "한국가스공사 입찰공고": "출처: 한국가스공사 전자조달시스템 — 원문은 공고 링크에서 확인하세요",
+    "국가철도공단 입찰공고(용역)": "출처: 국가철도공단 KR전자조달시스템 — 원문은 공고 링크에서 확인하세요",
+    "한국가스공사 입찰공고(용역)": "출처: 한국가스공사 전자조달시스템 — 원문은 공고 링크에서 확인하세요",
 }
 
 # U11 collector가 실제로 소비하는 정확한 config/필드매핑. 나머지 소스는 U13(등록마법사) 전까지
@@ -667,7 +667,7 @@ REAL_OPENAPI_CONFIG = {
     # 스키마(tndrPbanno·tndrPblancNm 등)가 동일해 field_maps는 그대로 재사용 가능.
     # 상세URL은 웹검색으로 발견한 단축 링크 패턴(`ebid.kwater.or.kr/fz?bidno=`)으로 조립 —
     # 구글에 색인된 실제 사례(제목이 "입찰공고상세 [공고번호]"로 정확히 매칭됨)로 검증함.
-    "K-water 입찰공고": {
+    "K-water 입찰공고(용역)": {
         "config": {
             "endpoint": "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/servc/list",
             "params": {"_type": "json", "numOfRows": "100", "pageNo": "1"},
@@ -839,7 +839,7 @@ REAL_OPENAPI_CONFIG = {
     # 드롭다운(ggGubunS)이 서버측 필터를 지원함을 직접 확인(값: 01=공사, 02=용역, 03=구매,
     # 04=물품, 빈 값=전체) — ggGubunS=02로 보내면 실제로 용역만 내려옴을 라이브 호출로 검증.
     # 이 사이트는 애초에 게시판 전체가 "입찰공고"라 "입찰" 조건은 이미 항상 충족된다.
-    "국가철도공단 입찰공고": {
+    "국가철도공단 입찰공고(용역)": {
         "config": {
             "endpoint": "https://ebid.kr.or.kr/bid/anc/bidAncList.do",
             "params": {"menuNo": "14000", "ggGubunS": "02"},
@@ -879,7 +879,7 @@ REAL_OPENAPI_CONFIG = {
     # 드롭다운(worktype)이 서버측 필터를 지원함을 직접 확인(값: C=공사, S=용역, M=물품(내자),
     # F=물품(외자), 빈 값=전체) — worktype=S로 라이브 호출해 실제로 용역만 내려옴을 검증.
     # 이 게시판 자체가 전부 "입찰공고"라 "입찰" 조건은 이미 항상 충족된다.
-    "한국가스공사 입찰공고": {
+    "한국가스공사 입찰공고(용역)": {
         "config": {
             "endpoint": "https://bid.kogas.or.kr:9443/supplier/contents/bid/bid_list_notice_frm.jsp",
             "params": {"worktype": "S", "title": "", "e_startday": "", "e_endday": "", "o_startday": "", "o_endday": "", "orderplace": "", "reqbidno": ""},

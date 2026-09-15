@@ -85,8 +85,23 @@ def _fetch_page(config: dict[str, Any], method: str, endpoint: str, params: dict
     else:
         response = fetch(endpoint, params=params)
     if config.get("format") == "xml":
-        root = ElementTree.fromstring(response.content)
-        payload = {root.tag: _xml_element_to_dict(root)}
+        try:
+            root = ElementTree.fromstring(response.content)
+            payload = {root.tag: _xml_element_to_dict(root)}
+        except ElementTree.ParseError as xml_exc:
+            # 2026-09-15 — 과학기술정보통신부 소스가 "not well-formed (invalid token):
+            # line 1, column 0"만 남기고 실패하는 걸 조사하다 발견: 서비스키 승인 오류
+            # (SERVICE_KEY_IS_NOT_REGISTERED_ERROR) 같은 포털 게이트 오류는 이 API가
+            # format=xml이어도 JSON 봉투로 돌아온다 — ElementTree가 그 JSON을 XML로
+            # 파싱하려다 실패해 진짜 원인이 안 보이는 의미 없는 메시지만 남았다. JSON으로
+            # 재시도해 실제 오류 메시지를 뽑아낸다 — 그래도 실패하거나(진짜 깨진 응답) 에러
+            # 봉투가 아니면 원래 XML ParseError를 그대로 올린다(원인 정보 유지).
+            try:
+                payload = response.json()
+            except ValueError:
+                raise xml_exc from None
+            _raise_if_error_envelope(payload)
+            raise xml_exc from None
     else:
         payload = response.json()
     _raise_if_error_envelope(payload)

@@ -31,7 +31,7 @@ function toDraft(c: CustomerFull): CustomerDraft {
     profile_summarized_at: _at,
     profile_summary_cost: _cost,
     report_auto_send_days: _days,
-    report_auto_send_time: _time,
+    report_auto_send_times: _times,
     ...draft
   } = c;
   return draft;
@@ -207,6 +207,10 @@ export function CustomerDetailPage() {
             ))}
           </Stack>
 
+          {/* 2026-09-15 — "메일 발송 기능을 모아줘" 요청으로 자동발송 요일·시각 설정을
+              수신자 이메일 바로 아래로 옮김(전엔 CustomerDocumentsSection 뒤 별도 카드였음). */}
+          <CustomerEmailScheduleSection customer={customer} />
+
           <FormControlLabel
             control={<Switch checked={draft.active} onChange={(e) => update({ active: e.target.checked })} />}
             label="활성"
@@ -227,7 +231,6 @@ export function CustomerDetailPage() {
       </Card>
 
       <CustomerDocumentsSection customer={customer} />
-      <CustomerEmailScheduleSection customer={customer} />
       <CustomerInterestSection customerId={customer.id} />
     </Stack>
   );

@@ -23,7 +23,11 @@ services:
       start_period: 10s
     ports:
       # 로컬 개발 편의용(psql 직접 접속). prod는 이 포트를 열지 않음(docker-compose.prod.yml, U16).
-      - "127.0.0.1:15432:5432"
+      # 2026-09-15 — 환경변수로 뺌(기본값은 그대로 15432, 로컬 개발엔 영향 없음). stg 배포
+      # 워크플로우가 COMPOSE_PROJECT_NAME과 함께 이 값을 다른 포트로 지정해, 개발자가 로컬에서
+      # 계속 띄워둔 dev 스택과 겹치지 않는 완전히 별도의 컨테이너로 stg를 띄운다(의사결정_로그
+      # 참고 — 이전엔 stg CI가 dev 컨테이너를 조용히 가로채 자기 코드로 바꿔치기하는 사고가 있었음).
+      - "127.0.0.1:${DB_HOST_PORT:-15432}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
 
@@ -56,8 +60,9 @@ services:
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:13200}
     ports:
       # 브라우저는 이 포트를 직접 호출하지 않음(nginx가 /api를 리버스 프록시, U3에서 추가) —
-      # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출.
-      - "127.0.0.1:13000:3000"
+      # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출. 2026-09-15 — DB_HOST_PORT와
+      # 같은 이유로 환경변수화.
+      - "127.0.0.1:${BACKEND_HOST_PORT:-13000}:3000"
     volumes:
       # 컨테이너 재생성에도 남는 영속 로그(app/logging_config.py, 2026-09-14) — .gitignore의
       # "logs/"에 걸려 커밋 안 됨.
@@ -93,8 +98,9 @@ services:
       retries: 3
       start_period: 10s
     ports:
-      # 브라우저가 실제로 보는 유일한 포트. /api는 nginx.conf가 backend로 프록시.
-      - "127.0.0.1:13200:80"
+      # 브라우저가 실제로 보는 유일한 포트. /api는 nginx.conf가 backend로 프록시. 2026-09-15 —
+      # DB_HOST_PORT와 같은 이유로 환경변수화.
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-13200}:80"
     depends_on:
       - backend
 

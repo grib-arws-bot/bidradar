@@ -98,28 +98,28 @@ def patch_customer(customer_id: int, payload: CustomerPayload, _email: str = Dep
 
 class EmailSchedulePayload(BaseModel):
     days: list[int] = []
-    time: str | None = None
+    times: list[str] = []
 
 
 @router.patch("/{customer_id}/email-schedule")
 def patch_email_schedule(
     customer_id: int, payload: EmailSchedulePayload, email: str = Depends(require_auth)
 ) -> dict:
-    """보고서 메일 자동발송 요일·시간(2026-09-14) — app/scheduler.py의 run_due_customer_emails가
-    이 값을 그대로 읽어 실제 발송을 실행한다(app/services/customer_management.py의
-    set_email_schedule/validate_email_schedule 설명 참고)."""
+    """보고서 메일 자동발송 요일·시각(들)(2026-09-14 도입, 2026-09-15 시각 복수 지정으로 확장)
+    — app/scheduler.py의 run_due_customer_emails가 이 값을 그대로 읽어 실제 발송을 실행한다
+    (app/services/customer_management.py의 set_email_schedule/validate_email_schedule 참고)."""
     with engine.begin() as conn:
         try:
-            found = set_email_schedule(conn, customer_id, payload.days, payload.time)
+            found = set_email_schedule(conn, customer_id, payload.days, payload.times)
         except EmailScheduleError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         if not found:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
         audit.record(
             conn, actor=email, action="customer.email_schedule", target_type="customer", target_id=customer_id,
-            detail={"days": payload.days, "time": payload.time},
+            detail={"days": payload.days, "times": payload.times},
         )
-    return {"id": customer_id, "days": payload.days, "time": payload.time}
+    return {"id": customer_id, "days": payload.days, "times": payload.times}
 
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
