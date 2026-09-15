@@ -364,7 +364,7 @@ def test_sort_notice_date_desc_is_descending_with_nulls_last():
     # 다른 필드, 2026-09-07 발견) — 둘 다 없는 공고(사전규격 등)는 정렬 맨 뒤로 가야 한다.
     with engine.connect() as conn:
         items, _ = list_notices(conn, NoticeFilters(tab="all", sort="notice_date_desc", size=200))
-    notice_dates = [item.get("extra", {}).get("ancmDe") or item.get("extra", {}).get("nticeDt") for item in items]
+    notice_dates = [(item.get("extra") or {}).get("ancmDe") or (item.get("extra") or {}).get("nticeDt") for item in items]
     non_null = [d for d in notice_dates if d]
     assert non_null == sorted(non_null, reverse=True)
     if None in notice_dates and non_null:

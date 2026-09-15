@@ -101,8 +101,14 @@ def test_run_due_sources_triggers_only_due_sources_and_continues_past_failures()
         with mock.patch("app.scheduler.run_source_and_process_pending", side_effect=fake_run) as mock_run:
             attempted = run_due_sources(now_kst)
 
-        assert set(attempted) == {ok_id, already_running_id, failing_id}
-        assert mock_run.call_count == 3
+        # 2026-09-15 — 데모 시드가 실제 운영 소스 5개에도 schedule_times=["09:00"]을 채우면서
+        # (app/seed_data.py _seed_schedule_times) 같은 09:00에 이 테스트가 만든 소스 말고도
+        # 다른 소스가 "이번 분에 예정됨"으로 같이 걸릴 수 있게 됐다 — 이 테스트의 관심사는
+        # "이 3개는 반드시 시도됐고 13:00짜리는 절대 안 걸렸다"이지 "이 3개만 유일하게 걸렸다"가
+        # 아니므로 부분집합 검사로 바꾼다(다른 소스 유무에 흔들리지 않게).
+        assert {ok_id, already_running_id, failing_id} <= set(attempted)
+        assert not_due_id not in set(attempted)
+        assert mock_run.call_count >= 3
     finally:
         with engine.begin() as conn:
             conn.execute(delete(source).where(source.c.id.in_(ids)))

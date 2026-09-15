@@ -79,6 +79,28 @@ def seed() -> None:
     print("시드 완료.")
 
 
+def seed_if_empty() -> None:
+    """customer 테이블이 비어 있을 때만 run_seed()를 돈다(2026-09-15, stg 배포 CI 전용).
+
+    run_seed()는 멱등하지 않다(무조건 INSERT) — 매 CI 실행마다 그대로 부르면 데모 데이터가
+    계속 쌓인다. stg CI가 로컬 dev와 완전히 격리된 자기 전용 DB를 쓰게 되면서(의사결정_로그
+    144번) 이 DB는 첫 실행에만 스키마뿐인 빈 상태이고, 이후 실행은 이전에 쌓인 데이터를 그대로
+    재사용한다 — 그래서 "비어 있을 때만" 시드해야 한다. pytest의 일부 테스트(예:
+    test_reports.py의 grib_customer_id)가 "그립 자신"(plan_tier=internal) 고객이 이미
+    있다고 가정하는데, 계속 같은 로컬 dev DB로 돌 땐 항상 있었지만 새로 격리된 빈 DB에는
+    없어서 실제로 실패한 걸 보고 추가함."""
+    from sqlalchemy import func, select
+
+    from app.models import customer
+
+    with engine.connect() as conn:
+        count = conn.execute(select(func.count()).select_from(customer)).scalar_one()
+    if count > 0:
+        print(f"이미 고객 {count}명 존재 — 시드 건너뜀.")
+        return
+    seed()
+
+
 def seed_prod() -> None:
     """prod 전용 최소 시드(2026-09-10) — 관심주제·키워드·소스·발주기관만 채우고 고객(customer)은
     비워둔다. 관리자가 직접 실제 고객(그립 AI/IoT/Robot, Safety/Factory, AX/Service 3개 기관)을
@@ -236,6 +258,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("create-admin")
     subparsers.add_parser("seed")
+    subparsers.add_parser("seed-if-empty")
     subparsers.add_parser("seed-prod")
     subparsers.add_parser("backfill-org-categories")
 
@@ -277,6 +300,8 @@ def main() -> None:
         create_admin()
     elif args.command == "seed":
         seed()
+    elif args.command == "seed-if-empty":
+        seed_if_empty()
     elif args.command == "seed-prod":
         seed_prod()
     elif args.command == "backfill-org-categories":

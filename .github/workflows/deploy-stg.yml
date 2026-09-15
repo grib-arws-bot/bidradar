@@ -72,6 +72,17 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m alembic upgrade head
 
+      # 2026-09-15 — 격리 도입 첫 실행에서 실패로 발견: pytest 중 여러 테스트(test_reports.py의
+      # grib_customer_id 등)가 "그립 자신"(plan_tier=internal) 고객이 이미 있다고 가정한다 —
+      # 계속 같은 로컬 dev DB를 썼을 땐 늘 있었지만, 이제 이 db는 매번 스키마만 있는 새
+      # 프로젝트라 아무도 시드한 적이 없다. seed-if-empty(app/cli.py)는 고객이 하나도 없을
+      # 때만(최초 1회) run_seed()를 돈다 — run_seed() 자체는 멱등하지 않아(무조건 INSERT)
+      # 매번 그대로 부르면 데모 데이터가 계속 쌓이기 때문.
+      - name: 시드 데이터 확인(최초 1회만)
+        shell: powershell
+        working-directory: backend
+        run: python -m app.cli seed-if-empty
+
       - name: 백엔드 테스트 (pytest)
         shell: powershell
         working-directory: backend

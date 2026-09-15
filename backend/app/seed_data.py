@@ -69,6 +69,7 @@ def run_seed(engine: Engine) -> None:
         # 가리키므로(관리자 페이지 "소스 관리" 발주기관 목록용), 참조 대상이 먼저 있어야 함.
         source_ids, source_config_ids = _seed_sources(conn)
         source_id_by_name = dict(zip((s[0] for s in SOURCE_SEED), source_ids))
+        _seed_schedule_times(conn, source_id_by_name)
         org_ids = _seed_orgs(conn, source_id_by_name)
         _seed_source_runs(conn, source_ids)
         _seed_raw_payloads(conn, source_ids)
@@ -213,6 +214,29 @@ def _seed_sources(conn) -> tuple[list[int], list[int]]:
         source_ids.append(source_id)
         config_ids.append(config_id)
     return source_ids, config_ids
+
+
+# 2026-09-15 발견 — CI가 로컬 dev와 격리된 자기 전용 db를 쓰게 되면서(의사결정_로그 144번)
+# test_overview.py의 "실제 운영 중인 소스만(schedule_times가 있는 것) 나와야 한다"는 검증이
+# 방금 시드한 DB엔 하나도 안 걸려 실패했다 — 이전엔 항상 같은 로컬 dev DB를 써서 관리자가
+# 실제로 설정해둔 5개 소스(나라장터 3종+IRIS 2종)가 늘 있었을 뿐, run_seed() 자체는 한 번도
+# schedule_times를 채운 적이 없었다. 데모 데이터도 이 5개를 그대로 반영해 실제 운영 상태를
+# 재현한다.
+_SCHEDULED_SOURCE_NAMES = [
+    "나라장터 발주계획현황서비스(용역)",
+    "나라장터 사전규격정보서비스(용역)",
+    "나라장터 입찰공고정보서비스(용역)",
+    "IRIS 접수중",
+    "IRIS 접수예정",
+]
+
+
+def _seed_schedule_times(conn, source_id_by_name: dict[str, int]) -> None:
+    for name in _SCHEDULED_SOURCE_NAMES:
+        source_id = source_id_by_name.get(name)
+        if source_id is None:
+            continue
+        conn.execute(source.update().where(source.c.id == source_id).values(schedule_times=["09:00"]))
 
 
 def add_source(engine: Engine, name: str) -> int:
