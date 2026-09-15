@@ -182,7 +182,12 @@ export function PublicReportPage() {
                 onChange={(_, next: Section) => setActiveSection(next)}
                 sx={{ mb: 2, minHeight: 0, borderBottom: 1, borderColor: "divider" }}
               >
-                {SECTION_ORDER.map((s) => (
+                {/* 2026-09-15 — 발주계획은 매칭 대상에서 아예 제외돼(백엔드 customer_interest.py
+                    _candidate_notices) 새 리포트엔 항상 0건이라, 그 탭을 계속 보여주면 "왜
+                    맨날 0건이지" 하는 오해를 살 수 있다. 0건인 섹션은 탭 자체를 숨긴다 — 예전에
+                    생성된 리포트에 아직 발주계획 항목이 남아있으면(스냅샷이라 재계산 안 됨)
+                    그 경우엔 그대로 보인다. */}
+                {SECTION_ORDER.filter((s) => grouped[s].length > 0).map((s) => (
                   <Tab key={s} value={s} label={`${SECTION_LABELS[s]} (${grouped[s].length})`} sx={{ minHeight: 0 }} />
                 ))}
               </Tabs>

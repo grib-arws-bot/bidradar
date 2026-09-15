@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import smtplib
 import ssl
+from email.headerregistry import Address
 from email.message import EmailMessage
 
 from app.config import settings
@@ -36,7 +37,11 @@ def send_email(
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_from
+    # 발신자 표시 이름을 "BidRadar"로 고정(2026-09-15 사용자 지시 — 메일함에 이메일 주소만
+    # 뜨는 대신 서비스 이름이 보이게). smtp_from의 로컬파트·도메인을 그대로 Address로
+    # 감싸 헤더 인코딩을 email 표준 라이브러리에 맡긴다.
+    local_part, _, domain = settings.smtp_from.partition("@")
+    msg["From"] = Address(display_name="BidRadar", username=local_part, domain=domain)
     msg["To"] = ", ".join(to)
     if list_unsubscribe:
         msg["List-Unsubscribe"] = list_unsubscribe

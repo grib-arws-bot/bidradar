@@ -405,8 +405,10 @@ def test_price_min_none_includes_everything(priced_notices):
 @pytest.fixture
 def deadline_notices():
     """마감일이 다른 공고 세 건 — 이미 지난 마감일은 추천에서 빠져야 한다. 마감일이 없는
-    공고(발주계획·사전규격 등 실제로도 close_dt가 없는 stage)는 판단 근거가 없어 그대로
-    포함돼야 한다."""
+    공고(사전규격 등 실제로도 close_dt가 없는 stage)는 판단 근거가 없어 그대로 포함돼야
+    한다. 2026-09-15 — 원래 이 세 번째 예시가 발주계획이었으나, 발주계획 자체가 매칭
+    대상에서 제외되면서(_candidate_notices) "마감일 없어도 포함"이라는 이 테스트의 취지와
+    맞지 않게 돼 사전규격으로 교체."""
     with engine.connect() as conn:
         from app.models import interest_topic
         source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
@@ -428,7 +430,7 @@ def deadline_notices():
         ).scalar_one()
         notice_no_deadline = conn.execute(
             insert(notice).values(
-                source_id=source_id, source_ver=1, stage="발주계획", title="[테스트] 마감일 없는 공고",
+                source_id=source_id, source_ver=1, stage="사전규격", title="[테스트] 마감일 없는 공고",
                 url="https://example.grib-test.kr/notice/deadline-none", close_dt=None,
             ).returning(notice.c.id)
         ).scalar_one()
@@ -453,11 +455,11 @@ def test_already_closed_notice_excluded_from_recommendations(deadline_notices):
     assert deadline_notices["notice_no_deadline"] in matched_ids
 
 
-# ---- 리포트 3단계 섹션(발주계획/사전규격·접수예정/입찰접수·접수중, 2026-09-07) ------------
-
-
-def test_section_of_plan_stage():
-    assert _section_of({"stage": "발주계획", "channel_name": "나라장터", "open_dt": None, "close_dt": None}) == "plan"
+# ---- 리포트 2단계 섹션(사전규격·접수예정/입찰접수·접수중, 2026-09-07) ----------------------
+# 2026-09-15 — 원래 발주계획까지 3단계였으나, 발주계획은 매칭 신호(l2_score)가 구조적으로
+# 약해 사실상 채워지지 않던 자리라 사용자 지시로 리포트 매칭 대상 자체에서 제외했다
+# (_candidate_notices 참고). 그래서 _section_of가 "발주계획"을 볼 일이 이제 없다 — 관련
+# 단위 테스트는 아래 test_plan_stage_excluded_from_matching으로 대체.
 
 
 def test_section_of_prenotice_stage():
@@ -487,22 +489,23 @@ def test_section_of_gov_support_closed_is_active_not_prenotice():
 
 
 @pytest.fixture
-def oversubscribed_plan_notices():
-    """SECTION_LIMITS["plan"]보다 많은 발주계획 공고를 같은 관심주제에 매칭시켜, top_matches가
-    섹션 상한을 실제로 지키는지 확인한다."""
+def oversubscribed_prenotice_notices():
+    """SECTION_LIMITS["prenotice"]보다 많은 사전규격 공고를 같은 관심주제에 매칭시켜,
+    top_matches가 섹션 상한을 실제로 지키는지 확인한다(2026-09-15 — 이 검증에 원래 쓰던
+    발주계획 단계가 매칭 대상에서 아예 빠지면서 사전규격으로 교체)."""
     with engine.connect() as conn:
         from app.models import interest_topic
         source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
 
-    count = SECTION_LIMITS["plan"] + 3
+    count = SECTION_LIMITS["prenotice"] + 3
     ids = []
     with engine.begin() as conn:
         for i in range(count):
             nid = conn.execute(
                 insert(notice).values(
-                    source_id=source_id, source_ver=1, stage="발주계획", title=f"[테스트] 발주계획 초과 테스트 {i}",
-                    url=f"https://example.grib-test.kr/notice/plan-overflow-{i}",
+                    source_id=source_id, source_ver=1, stage="사전규격", title=f"[테스트] 사전규격 초과 테스트 {i}",
+                    url=f"https://example.grib-test.kr/notice/prenotice-overflow-{i}",
                 ).returning(notice.c.id)
             ).scalar_one()
             conn.execute(insert(notice_score).values(notice_id=nid, interest_topic_id=topic_id, l2_score=4, reason="테스트", rule_ver=1))
@@ -515,15 +518,44 @@ def oversubscribed_plan_notices():
         conn.execute(delete(notice).where(notice.c.id.in_(ids)))
 
 
-def test_top_matches_respects_section_limit(oversubscribed_plan_notices):
-    # 공유 개발 DB라 같은 관심주제에 이미 매칭된 실제 발주계획 공고가 섞여 들어올 수 있어
+def test_top_matches_respects_section_limit(oversubscribed_prenotice_notices):
+    # 공유 개발 DB라 같은 관심주제에 이미 매칭된 실제 사전규격 공고가 섞여 들어올 수 있어
     # (2026-09-05 등 세션 내내 반복된 이슈) 정확히 상한 개수를 맞히는 대신 "상한을 절대
-    # 넘지 않는다"만 확실히 검증한다 — 핵심은 상한(SECTION_LIMITS["plan"])보다 많이
+    # 넘지 않는다"만 확실히 검증한다 — 핵심은 상한(SECTION_LIMITS["prenotice"])보다 많이
     # 넣었는데 그 상한을 넘기지 않는 것.
-    draft = InterestDraft(topic_ids=[oversubscribed_plan_notices["topic_id"]])
+    draft = InterestDraft(topic_ids=[oversubscribed_prenotice_notices["topic_id"]])
     with engine.connect() as conn:
         matches = top_matches(conn, draft, limit=20, min_score=0)
-    plan_section_total = [m for m in matches if m["stage"] == "발주계획"]
-    assert len(plan_section_total) <= SECTION_LIMITS["plan"]
-    plan_matches = [m for m in matches if m["id"] in oversubscribed_plan_notices["ids"]]
-    assert len(plan_matches) > 0  # 최소한 일부는 실제로 뽑혀야 함(전부 밀려나면 안 됨)
+    prenotice_section_total = [m for m in matches if m["stage"] == "사전규격"]
+    assert len(prenotice_section_total) <= SECTION_LIMITS["prenotice"]
+    prenotice_matches = [m for m in matches if m["id"] in oversubscribed_prenotice_notices["ids"]]
+    assert len(prenotice_matches) > 0  # 최소한 일부는 실제로 뽑혀야 함(전부 밀려나면 안 됨)
+
+
+def test_plan_stage_excluded_from_matching():
+    """발주계획은 관심 매칭·리포트 대상에서 아예 제외한다(2026-09-15 사용자 지시 — "발주계획은
+    보고서 자체에서 제외를 하자"). l2_score를 포화시켜 강하게 매칭시켜도 결과에 안 나와야
+    "낮은 점수라 우연히 안 뽑힌 것"이 아니라 하드 제외임을 확인할 수 있다."""
+    with engine.connect() as conn:
+        from app.models import interest_topic
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
+
+    with engine.begin() as conn:
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="발주계획", title="[테스트] 발주계획 제외 검증용",
+                url="https://example.grib-test.kr/notice/plan-excluded",
+            ).returning(notice.c.id)
+        ).scalar_one()
+        conn.execute(insert(notice_score).values(notice_id=notice_id, interest_topic_id=topic_id, l2_score=12, reason="테스트", rule_ver=1))
+
+    try:
+        draft = InterestDraft(topic_ids=[topic_id])
+        with engine.connect() as conn:
+            scored = _score_all(conn, draft, min_score=0)
+        assert notice_id not in {n["id"] for n, _s, _m in scored}
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice_score).where(notice_score.c.notice_id == notice_id))
+            conn.execute(delete(notice).where(notice.c.id == notice_id))

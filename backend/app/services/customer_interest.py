@@ -177,6 +177,12 @@ def _candidate_notices(conn: Connection) -> list[dict]:
         # 단계별 중복 공고 중 최신 건이 아닌 것은 매칭·리포트 대상에서 제외한다
         # (2026-09-06, notice_dedup.find_and_mark_superseded).
         .where(notice.c.superseded_by_notice_id.is_(None))
+        # 발주계획은 매칭·리포트 대상에서 아예 제외한다(2026-09-15 사용자 지시) — 규격서·
+        # 첨부문서 없이 사업명 한 줄만 있어 관심주제 매칭 신호(l2_score)가 구조적으로 약해,
+        # SECTION_LIMITS가 10자리를 예약해도 채울 후보가 거의 없었다(실측: 그립 매칭
+        # 820건 중 발주계획 0건). 공고 탐색(공고 목록 화면)에서는 그대로 보인다 — 여기서
+        # 빼는 건 "관심 리포트" 매칭 대상에서만이다.
+        .where(notice.c.stage != "발주계획")
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -277,20 +283,22 @@ def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> lis
     return scored
 
 
-# 리포트 3단계 섹션(2026-09-07 사용자 지시) — "발주계획·사전규격 단계에서 관심 공고를
+# 리포트 2단계 섹션(2026-09-07 사용자 지시) — "발주계획·사전규격 단계에서 관심 공고를
 # 찾아내는 것도 중요하다"는 지적. 예전엔 점수 하나로 전체를 줄세워 상위 20건만 뽑다 보니,
-# 이미 마감 임박한 "입찰접수" 건들이 점수·마감임박 정렬 특성상 상위를 차지해 "발주계획"·
-# "사전규격" 단계 공고가 상위 20건에 아예 안 들 수 있었다. 섹션별로 자리를 미리 배정해서
-# 이른 단계 공고도 항상 일정 수는 노출되게 한다. 프런트가 이 값(stage/notice_type/
-# bid_status)으로 같은 3분류를 다시 계산해 탭으로 나눠 보여준다.
+# 이미 마감 임박한 "입찰접수" 건들이 점수·마감임박 정렬 특성상 상위를 차지해 "사전규격"
+# 단계 공고가 상위 20건에 아예 안 들 수 있었다. 섹션별로 자리를 미리 배정해서 이른 단계
+# 공고도 항상 일정 수는 노출되게 한다. 프런트가 이 값(stage/notice_type/bid_status)으로
+# 같은 분류를 다시 계산해 탭으로 나눠 보여준다.
 # 2026-09-12 — 전체 상한을 20→50으로 올리며(사용자 지시) 기존 5:5:10(1:1:2) 비율을 그대로
 # 유지해 10:10:30으로 스케일업.
-SECTION_LIMITS = {"plan": 10, "prenotice": 10, "active": 30}
+# 2026-09-15 — 발주계획을 _candidate_notices()에서 아예 제외하면서(매칭 신호가 구조적으로
+# 약해 이 자리를 채울 후보가 실질적으로 없었음) "plan" 섹션·자리를 제거했다. prenotice·
+# active 상한은 그대로 둬(다시 배분해달라는 요청은 없었음) 실질 상한이 50→40이 됐다 —
+# 필요하면 후속으로 조정.
+SECTION_LIMITS = {"prenotice": 10, "active": 30}
 
 
 def _section_of(n: dict) -> str:
-    if n["stage"] == "발주계획":
-        return "plan"
     if n["stage"] == "사전규격":
         return "prenotice"
     if notice_type_of(n.get("channel_name")) == "정부지원":
