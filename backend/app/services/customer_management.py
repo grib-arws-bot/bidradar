@@ -46,8 +46,7 @@ def _serialize(row) -> dict:
         "profile_summary_md": row["profile_summary_md"],
         "profile_summarized_at": row["profile_summarized_at"].isoformat() if row["profile_summarized_at"] else None,
         "profile_summary_cost": float(row["profile_summary_cost"]),
-        "report_auto_send_days": row["report_auto_send_days"] or [],
-        "report_auto_send_times": row["report_auto_send_times"] or [],
+        "report_auto_send_schedule": row["report_auto_send_schedule"] or [],
     }
 
 
@@ -118,17 +117,24 @@ class EmailScheduleError(ValueError):
     pass
 
 
-MAX_EMAIL_SCHEDULE_TIMES = 3  # source.schedule_times와 같은 상한(app/services/source_registry.py)
+MAX_EMAIL_SCHEDULE_ENTRIES = 3  # source.schedule_times와 같은 상한(app/services/source_registry.py)
 
 
-def validate_email_schedule(days: list[int], times: list[str]) -> None:
-    if any(d < 1 or d > 7 for d in days):
-        raise EmailScheduleError("요일은 1(월)~7(일) 사이의 값이어야 합니다.")
-    if len(set(days)) != len(days):
-        raise EmailScheduleError("같은 요일을 중복해서 지정할 수 없습니다.")
-    if len(times) > MAX_EMAIL_SCHEDULE_TIMES:
-        raise EmailScheduleError(f"발송 시각은 최대 {MAX_EMAIL_SCHEDULE_TIMES}개까지 설정할 수 있습니다.")
-    for time in times:
+def validate_email_schedule(schedule: list[dict]) -> None:
+    """schedule은 [{"day": ISO요일(1=월~7=일), "time": "HH:MM"}, ...] — 2026-09-15 재설계.
+    이전엔 요일 목록·시각 목록을 따로 받아 카르테시안 곱으로 실행됐는데("월,목" + "13:00,14:00"을
+    주면 4가지 조합 전부 발송), 사용자가 원한 건 "월 13시, 목 14시"처럼 요일마다 다른 시각을
+    지정하는 것이었다 — 그래서 (요일,시각) 쌍 하나하나를 원소로 받는다."""
+    if len(schedule) > MAX_EMAIL_SCHEDULE_ENTRIES:
+        raise EmailScheduleError(f"발송 일정은 최대 {MAX_EMAIL_SCHEDULE_ENTRIES}개까지 설정할 수 있습니다.")
+    seen: set[tuple[int, str]] = set()
+    for entry in schedule:
+        day = entry.get("day")
+        time = entry.get("time")
+        if not isinstance(day, int) or day < 1 or day > 7:
+            raise EmailScheduleError(f"요일은 1(월)~7(일) 사이의 값이어야 합니다: {day!r}")
+        if not isinstance(time, str):
+            raise EmailScheduleError(f"시각이 지정되지 않았습니다: {entry!r}")
         try:
             hour_str, minute_str = time.split(":")
             hour, minute = int(hour_str), int(minute_str)
@@ -136,18 +142,18 @@ def validate_email_schedule(days: list[int], times: list[str]) -> None:
             raise EmailScheduleError(f"시간 형식이 올바르지 않습니다(HH:MM, 00:00~23:59): {time!r}") from exc
         if not (0 <= hour <= 23) or not (0 <= minute <= 59):
             raise EmailScheduleError(f"시간은 00:00~23:59 범위여야 합니다: {time!r}")
-    if days and not times:
-        raise EmailScheduleError("요일을 지정하려면 발송 시각도 함께 설정해야 합니다.")
-    if times and not days:
-        raise EmailScheduleError("발송 시각을 지정하려면 요일도 함께 설정해야 합니다.")
+        key = (day, time)
+        if key in seen:
+            raise EmailScheduleError(f"같은 요일·시각을 중복해서 지정할 수 없습니다: {day}요일 {time}")
+        seen.add(key)
 
 
-def set_email_schedule(conn: Connection, customer_id: int, days: list[int], times: list[str]) -> bool:
-    validate_email_schedule(days, times)
+def set_email_schedule(conn: Connection, customer_id: int, schedule: list[dict]) -> bool:
+    validate_email_schedule(schedule)
     result = conn.execute(
         update(customer)
         .where(customer.c.id == customer_id)
-        .values(report_auto_send_days=sorted(days), report_auto_send_times=times)
+        .values(report_auto_send_schedule=schedule)
     )
     return result.rowcount > 0
 

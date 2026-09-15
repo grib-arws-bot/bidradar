@@ -129,18 +129,13 @@ def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():
     assert result == {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
 
 
-# ---- 고객 보고서 메일 자동발송(2026-09-14, 요일·시간) ------------------------------------
+# ---- 고객 보고서 메일 자동발송(2026-09-14 도입, 2026-09-15 (요일,시각) 쌍으로 재설계) -----
 
 
-def _make_temp_customer(
-    conn, *, name: str, days: list[int], times: list[str] | None = None, active: bool = True
-) -> int:
+def _make_temp_customer(conn, *, name: str, schedule: list[dict] | None = None, active: bool = True) -> int:
     return conn.execute(
         insert(customer)
-        .values(
-            name=name, plan_tier="standard", active=active,
-            report_auto_send_days=days, report_auto_send_times=times or [],
-        )
+        .values(name=name, plan_tier="standard", active=active, report_auto_send_schedule=schedule or [])
         .returning(customer.c.id)
     ).scalar_one()
 
@@ -151,25 +146,35 @@ def test_due_customers_matches_only_day_and_time():
     ids = []
     try:
         with engine.begin() as conn:
-            due_id = _make_temp_customer(conn, name="_테스트_고객_월요일9시", days=[1, 3, 5], times=["09:00"])
-            other_day_id = _make_temp_customer(conn, name="_테스트_고객_화요일만", days=[2], times=["09:00"])
-            other_time_id = _make_temp_customer(conn, name="_테스트_고객_다른시각", days=[1], times=["18:00"])
-            no_schedule_id = _make_temp_customer(conn, name="_테스트_고객_미설정", days=[], times=[])
+            due_id = _make_temp_customer(
+                conn, name="_테스트_고객_월요일9시",
+                schedule=[{"day": 1, "time": "09:00"}, {"day": 3, "time": "09:00"}, {"day": 5, "time": "09:00"}],
+            )
+            other_day_id = _make_temp_customer(
+                conn, name="_테스트_고객_화요일만", schedule=[{"day": 2, "time": "09:00"}]
+            )
+            other_time_id = _make_temp_customer(
+                conn, name="_테스트_고객_다른시각", schedule=[{"day": 1, "time": "18:00"}]
+            )
+            no_schedule_id = _make_temp_customer(conn, name="_테스트_고객_미설정", schedule=[])
             inactive_id = _make_temp_customer(
-                conn, name="_테스트_고객_비활성", days=[1], times=["09:00"], active=False
+                conn, name="_테스트_고객_비활성", schedule=[{"day": 1, "time": "09:00"}], active=False
             )
-            multi_time_id = _make_temp_customer(
-                conn, name="_테스트_고객_여러시각", days=[1], times=["07:00", "09:00", "20:00"]
+            # 2026-09-15 — 이 쌍 재설계의 핵심 케이스: "월 07시·목 20시"처럼 요일마다 다른
+            # 시각을 지정해도 월 09시엔 안 걸려야 한다(예전 카르테시안 곱 방식이었다면 걸렸음).
+            mismatched_pair_id = _make_temp_customer(
+                conn, name="_테스트_고객_요일시각_안맞음",
+                schedule=[{"day": 1, "time": "07:00"}, {"day": 4, "time": "09:00"}],
             )
-            ids = [due_id, other_day_id, other_time_id, no_schedule_id, inactive_id, multi_time_id]
+            ids = [due_id, other_day_id, other_time_id, no_schedule_id, inactive_id, mismatched_pair_id]
 
         due_ids = {cid for cid, _name in _due_customers(now_kst)}
         assert due_id in due_ids
         assert other_day_id not in due_ids
         assert other_time_id not in due_ids
+        assert mismatched_pair_id not in due_ids
         assert no_schedule_id not in due_ids
         assert inactive_id not in due_ids
-        assert multi_time_id in due_ids  # 09:00이 여러 시각 중 하나라도 포함되면 대상(2026-09-15)
     finally:
         with engine.begin() as conn:
             conn.execute(delete(customer).where(customer.c.id.in_(ids)))
@@ -181,8 +186,8 @@ def test_run_due_customer_emails_generates_and_sends_then_skips_zero_matches(mon
     ids = []
     try:
         with engine.begin() as conn:
-            has_matches_id = _make_temp_customer(conn, name="_테스트_고객_발송대상", days=[1], times=["09:00"])
-            zero_matches_id = _make_temp_customer(conn, name="_테스트_고객_0건", days=[1], times=["09:00"])
+            has_matches_id = _make_temp_customer(conn, name="_테스트_고객_발송대상", schedule=[{"day": 1, "time": "09:00"}])
+            zero_matches_id = _make_temp_customer(conn, name="_테스트_고객_0건", schedule=[{"day": 1, "time": "09:00"}])
             ids = [has_matches_id, zero_matches_id]
 
         def fake_generate(customer_id: int):
@@ -209,7 +214,7 @@ def test_run_due_customer_emails_skips_when_no_interest_profile(monkeypatch):
     ids = []
     try:
         with engine.begin() as conn:
-            no_profile_id = _make_temp_customer(conn, name="_테스트_고객_관심주제없음", days=[1], times=["09:00"])
+            no_profile_id = _make_temp_customer(conn, name="_테스트_고객_관심주제없음", schedule=[{"day": 1, "time": "09:00"}])
             ids = [no_profile_id]
 
         with mock.patch("app.scheduler.generate_report", return_value=None), \
@@ -229,8 +234,8 @@ def test_run_due_customer_emails_continues_past_one_customer_failure(monkeypatch
     ids = []
     try:
         with engine.begin() as conn:
-            failing_id = _make_temp_customer(conn, name="_테스트_고객_예외", days=[1], times=["09:00"])
-            ok_id = _make_temp_customer(conn, name="_테스트_고객_정상", days=[1], times=["09:00"])
+            failing_id = _make_temp_customer(conn, name="_테스트_고객_예외", schedule=[{"day": 1, "time": "09:00"}])
+            ok_id = _make_temp_customer(conn, name="_테스트_고객_정상", schedule=[{"day": 1, "time": "09:00"}])
             ids = [failing_id, ok_id]
 
         def fake_generate(customer_id: int):

@@ -51,88 +51,100 @@ def temp_customer(client: TestClient):
         conn.execute(customer.delete().where(customer.c.id == customer_id))
 
 
-# ---- 보고서 메일 자동발송 요일·시간(2026-09-14) -----------------------------------------
+# ---- 보고서 메일 자동발송 (요일,시각) 쌍(2026-09-14 도입, 2026-09-15 쌍으로 재설계) --------
+# "월 13시, 목 14시"처럼 요일마다 다른 시각을 지정해야 하는데, days×times(카르테시안 곱)로는
+# 표현할 수 없어 {"day":.., "time":..} 쌍의 배열로 바꿨다(app/models/customers.py 참고).
 
 
 def test_email_schedule_requires_auth():
-    response = TestClient(app).patch("/api/customers/1/email-schedule", json={"days": [1], "times": ["09:00"]})
+    response = TestClient(app).patch(
+        "/api/customers/1/email-schedule", json={"schedule": [{"day": 1, "time": "09:00"}]}
+    )
     assert response.status_code == 401
 
 
 def test_email_schedule_update_success_and_round_trips(client: TestClient, temp_customer: int):
-    response = client.patch(
-        f"/api/customers/{temp_customer}/email-schedule", json={"days": [1, 3, 5], "times": ["09:00"]}
-    )
+    schedule = [{"day": 1, "time": "13:00"}, {"day": 4, "time": "14:00"}]
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"schedule": schedule})
     assert response.status_code == 200
-    assert response.json() == {"id": temp_customer, "days": [1, 3, 5], "times": ["09:00"]}
+    assert response.json() == {"id": temp_customer, "schedule": schedule}
 
     full = client.get("/api/customers/full").json()
     row = next(c for c in full if c["id"] == temp_customer)
-    assert row["report_auto_send_days"] == [1, 3, 5]
-    assert row["report_auto_send_times"] == ["09:00"]
+    assert row["report_auto_send_schedule"] == schedule
 
 
-def test_email_schedule_accepts_multiple_times(client: TestClient, temp_customer: int):
-    # 2026-09-15 사용자 지시 — "메일 발송 시점은 다수개를 지정할 수 있어야 한다."
+def test_email_schedule_allows_different_time_per_day(client: TestClient, temp_customer: int):
+    # 2026-09-15 사용자 지시 — "월 13시, 목 14시처럼 여러 개를 지정하는건데, 지금 UI에서는
+    # 안 되는 것 같다." days×times 조합이 아니라 이 정확한 쌍만 대상이 되는지 확인.
+    from app.scheduler import _due_customers
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    schedule = [{"day": 1, "time": "13:00"}, {"day": 4, "time": "14:00"}]
+    client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"schedule": schedule})
+
+    kst = ZoneInfo("Asia/Seoul")
+    due_mon_13 = {cid for cid, _ in _due_customers(datetime(2026, 9, 14, 13, 0, tzinfo=kst))}  # 월요일
+    due_mon_14 = {cid for cid, _ in _due_customers(datetime(2026, 9, 14, 14, 0, tzinfo=kst))}  # 월요일
+    due_thu_14 = {cid for cid, _ in _due_customers(datetime(2026, 9, 17, 14, 0, tzinfo=kst))}  # 목요일
+    assert temp_customer in due_mon_13
+    assert temp_customer not in due_mon_14  # 월요일엔 13시만 — 카르테시안 곱이면 여기도 걸림
+    assert temp_customer in due_thu_14
+
+
+def test_email_schedule_rejects_more_than_three_entries(client: TestClient, temp_customer: int):
     response = client.patch(
         f"/api/customers/{temp_customer}/email-schedule",
-        json={"days": [1], "times": ["09:00", "13:00", "18:00"]},
-    )
-    assert response.status_code == 200
-    full = client.get("/api/customers/full").json()
-    row = next(c for c in full if c["id"] == temp_customer)
-    assert row["report_auto_send_times"] == ["09:00", "13:00", "18:00"]
-
-
-def test_email_schedule_rejects_more_than_three_times(client: TestClient, temp_customer: int):
-    response = client.patch(
-        f"/api/customers/{temp_customer}/email-schedule",
-        json={"days": [1], "times": ["09:00", "10:00", "11:00", "12:00"]},
+        json={"schedule": [{"day": d, "time": "09:00"} for d in (1, 2, 3, 4)]},
     )
     assert response.status_code == 422
 
 
 def test_email_schedule_can_be_cleared(client: TestClient, temp_customer: int):
-    client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [2], "times": ["10:00"]})
-    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [], "times": []})
+    client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"schedule": [{"day": 2, "time": "10:00"}]})
+    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"schedule": []})
     assert response.status_code == 200
     full = client.get("/api/customers/full").json()
     row = next(c for c in full if c["id"] == temp_customer)
-    assert row["report_auto_send_days"] == []
-    assert row["report_auto_send_times"] == []
+    assert row["report_auto_send_schedule"] == []
 
 
 def test_email_schedule_rejects_out_of_range_day(client: TestClient, temp_customer: int):
-    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [8], "times": ["09:00"]})
-    assert response.status_code == 422
-
-
-def test_email_schedule_rejects_duplicate_days(client: TestClient, temp_customer: int):
     response = client.patch(
-        f"/api/customers/{temp_customer}/email-schedule", json={"days": [1, 1], "times": ["09:00"]}
+        f"/api/customers/{temp_customer}/email-schedule", json={"schedule": [{"day": 8, "time": "09:00"}]}
     )
     assert response.status_code == 422
 
 
-def test_email_schedule_rejects_days_without_times(client: TestClient, temp_customer: int):
-    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [1], "times": []})
+def test_email_schedule_rejects_duplicate_day_time_pair(client: TestClient, temp_customer: int):
+    response = client.patch(
+        f"/api/customers/{temp_customer}/email-schedule",
+        json={"schedule": [{"day": 1, "time": "09:00"}, {"day": 1, "time": "09:00"}]},
+    )
     assert response.status_code == 422
 
 
-def test_email_schedule_rejects_times_without_days(client: TestClient, temp_customer: int):
-    response = client.patch(f"/api/customers/{temp_customer}/email-schedule", json={"days": [], "times": ["09:00"]})
-    assert response.status_code == 422
+def test_email_schedule_allows_same_day_different_times(client: TestClient, temp_customer: int):
+    # 중복 거부는 "완전히 같은 (요일,시각) 쌍"만 막는다 — 같은 요일에 다른 시각 두 개는 허용.
+    response = client.patch(
+        f"/api/customers/{temp_customer}/email-schedule",
+        json={"schedule": [{"day": 1, "time": "09:00"}, {"day": 1, "time": "18:00"}]},
+    )
+    assert response.status_code == 200
 
 
 def test_email_schedule_rejects_bad_time_format(client: TestClient, temp_customer: int):
     response = client.patch(
-        f"/api/customers/{temp_customer}/email-schedule", json={"days": [1], "times": ["not-a-time"]}
+        f"/api/customers/{temp_customer}/email-schedule", json={"schedule": [{"day": 1, "time": "not-a-time"}]}
     )
     assert response.status_code == 422
 
 
 def test_email_schedule_404_for_unknown_customer(client: TestClient):
-    response = client.patch("/api/customers/999999/email-schedule", json={"days": [1], "times": ["09:00"]})
+    response = client.patch(
+        "/api/customers/999999/email-schedule", json={"schedule": [{"day": 1, "time": "09:00"}]}
+    )
     assert response.status_code == 404
 
 

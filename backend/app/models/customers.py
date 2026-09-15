@@ -55,17 +55,16 @@ customer = Table(
     # 의사결정_로그 참고), est_price가 아예 없는(미공개) 공고는 하한을 만족하는지 확인할 수
     # 없어 필터가 걸려 있을 때는 함께 제외된다.
     Column("interest_price_min", Numeric(16, 0)),
-    # 보고서 메일 자동발송 요일·시간(2026-09-14 사용자 지시, 2026-09-15에 시각을 복수 지정
-    # 가능하도록 확장). source.schedule_times와 완전히 같은 패턴(관리자가 설정 → app/
-    # scheduler.py가 그 시각에 자동 실행, 최대 3개, "HH:MM" 문자열 배열)이지만, 고객 보고서는
-    # 요일까지 지정해야 해서 필드를 둘로 나눴다. days는 ISO 요일 번호(1=월 ~ 7=일) 배열 —
-    # 요일명 문자열 대신 숫자를 쓴 이유는 로케일에 기대지 않기 위함(source.schedule_times의
-    # "HH:MM" 문자열 비교와 같은 이유로 여기도 datetime.isoweekday()와 직접 비교한다).
-    # 자동발송은 days가 1개 이상이고 times도 1개 이상이어야 실제로 동작한다(app/scheduler.py
+    # 보고서 메일 자동발송 (요일,시각) 쌍의 배열(2026-09-14 도입, 2026-09-15 두 차례 수정).
+    # 처음엔 days(요일 여러 개)·times(시각 여러 개)를 따로 둬서 "요일 아무거나 × 시각
+    # 아무거나"(카르테시안 곱)로 실행됐는데, 사용자가 실제로 원한 건 "월 13시, 목 14시"처럼
+    # 요일마다 다른 시각을 지정하는 것이었다 — 그 둘은 다른 데이터 모델이라 뒤늦게 재설계.
+    # 각 원소는 {"day": ISO 요일번호(1=월~7=일), "time": "HH:MM"} — source.schedule_times와
+    # 같은 이유(로케일 비의존)로 요일도 숫자로 저장. 최대 3쌍(source.schedule_times와 동일
+    # 상한). 자동발송은 이 배열이 비어있지 않아야 실제로 동작한다(app/scheduler.py
     # run_due_customer_emails) — 관리자가 명시적으로 켜는 설정이라 CLAUDE.md 원칙 3
     # "자동 실행 금지"와 충돌하지 않는다(source의 auto_extract/auto_analyze와 같은 논리).
-    Column("report_auto_send_days", JSONB, nullable=False, server_default="[]"),
-    Column("report_auto_send_times", JSONB, nullable=False, server_default="[]"),
+    Column("report_auto_send_schedule", JSONB, nullable=False, server_default="[]"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

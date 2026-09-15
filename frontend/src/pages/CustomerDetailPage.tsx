@@ -16,26 +16,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { fetchCustomersFull, updateCustomer, type CustomerDraft, type CustomerFull } from "@/api/customers";
+import { fetchCustomersFull, toCustomerDraft, updateCustomer, type CustomerDraft } from "@/api/customers";
 import { CustomerDocumentsSection } from "@/components/customer-detail/CustomerDocumentsSection";
-import { CustomerEmailScheduleSection } from "@/components/customer-detail/CustomerEmailScheduleSection";
+import { CustomerEmailCard } from "@/components/customer-detail/CustomerEmailCard";
 import { CustomerInterestSection } from "@/components/customer-detail/CustomerInterestSection";
 import { LoadingButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
 import { apiErrorMessage } from "@/utils/errors";
-
-function toDraft(c: CustomerFull): CustomerDraft {
-  const {
-    id: _id,
-    profile_summary_md: _md,
-    profile_summarized_at: _at,
-    profile_summary_cost: _cost,
-    report_auto_send_days: _days,
-    report_auto_send_times: _times,
-    ...draft
-  } = c;
-  return draft;
-}
 
 // 고객 상세(2026-09-05 메뉴 재정리) — 담당자·소개서 파일·프로필 요약·관심주제를 한 화면에
 // 모았다("고객 관리" 목록에서 행을 클릭하면 여기로 온다). 리포트 생성·발송은 별도
@@ -51,7 +38,6 @@ export function CustomerDetailPage() {
   const customer = (customersQuery.data ?? []).find((c) => c.id === customerId);
 
   const [draft, setDraft] = useState<CustomerDraft | null>(null);
-  const [recipientInput, setRecipientInput] = useState("");
 
   // 2026-09-12 수정 — customer는 ["customers-full"]이 무효화될 때마다(파일 업로드·참고 URL
   // 추가·프로필 요약 등 이 페이지 안의 다른 어떤 동작이든) 새 참조로 바뀌는데, 이 effect가
@@ -61,7 +47,7 @@ export function CustomerDetailPage() {
   const lastSyncedRef = useRef<{ customerId: number; draft: CustomerDraft } | null>(null);
   useEffect(() => {
     if (!customer) return;
-    const serverDraft = toDraft(customer);
+    const serverDraft = toCustomerDraft(customer);
     const last = lastSyncedRef.current;
     const isCustomerSwitch = last?.customerId !== customerId;
     const isUntouchedSinceLastSync = last?.customerId === customerId && JSON.stringify(draft) === JSON.stringify(last.draft);
@@ -86,14 +72,6 @@ export function CustomerDetailPage() {
 
   function update(patch: Partial<CustomerDraft>) {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
-  }
-
-  function addRecipient() {
-    if (!draft) return;
-    const email = recipientInput.trim();
-    if (!email || draft.report_recipient_emails.includes(email)) return;
-    update({ report_recipient_emails: [...draft.report_recipient_emails, email] });
-    setRecipientInput("");
   }
 
   if (customersQuery.isLoading || !draft) {
@@ -180,37 +158,6 @@ export function CustomerDetailPage() {
             />
           </Stack>
 
-          <Typography variant="subtitle2">보고서 수신자 이메일</Typography>
-          <Stack direction="row" spacing={1}>
-            <TextField
-              size="small"
-              placeholder="이메일 입력 후 Enter"
-              value={recipientInput}
-              onChange={(e) => setRecipientInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addRecipient())}
-              fullWidth
-            />
-            <Button variant="outlined" onClick={addRecipient}>
-              추가
-            </Button>
-          </Stack>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {draft.report_recipient_emails.map((email) => (
-              <Chip
-                key={email}
-                label={email}
-                size="small"
-                onDelete={() =>
-                  update({ report_recipient_emails: draft.report_recipient_emails.filter((e) => e !== email) })
-                }
-              />
-            ))}
-          </Stack>
-
-          {/* 2026-09-15 — "메일 발송 기능을 모아줘" 요청으로 자동발송 요일·시각 설정을
-              수신자 이메일 바로 아래로 옮김(전엔 CustomerDocumentsSection 뒤 별도 카드였음). */}
-          <CustomerEmailScheduleSection customer={customer} />
-
           <FormControlLabel
             control={<Switch checked={draft.active} onChange={(e) => update({ active: e.target.checked })} />}
             label="활성"
@@ -230,6 +177,7 @@ export function CustomerDetailPage() {
         </Stack>
       </Card>
 
+      <CustomerEmailCard customer={customer} />
       <CustomerDocumentsSection customer={customer} />
       <CustomerInterestSection customerId={customer.id} />
     </Stack>

@@ -17,11 +17,15 @@ export interface CustomerFull {
   profile_summary_md: string | null;
   profile_summarized_at: string | null;
   profile_summary_cost: number;
-  // 보고서 메일 자동발송 요일·시각(2026-09-14 도입, 2026-09-15 시각 복수 지정으로 확장 —
-  // source.schedule_times와 동일하게 최대 3개). days는 ISO 요일 번호(1=월~7=일). 둘 다
-  // 1개 이상 설정돼 있어야 실제로 발송된다(app/scheduler.py run_due_customer_emails).
-  report_auto_send_days: number[];
-  report_auto_send_times: string[];
+  // 보고서 메일 자동발송 (요일,시각) 쌍(2026-09-14 도입, 2026-09-15 쌍으로 재설계 — "월
+  // 13시, 목 14시"처럼 요일마다 다른 시각을 지정할 수 있어야 해서 days×times 조합에서
+  // 바꿈). day는 ISO 요일 번호(1=월~7=일). 최대 3쌍(app/scheduler.py run_due_customer_emails).
+  report_auto_send_schedule: EmailScheduleEntry[];
+}
+
+export interface EmailScheduleEntry {
+  day: number;
+  time: string;
 }
 
 export interface CustomerDraft {
@@ -34,6 +38,22 @@ export interface CustomerDraft {
   report_recipient_emails: string[];
   reference_urls: string[];
   active: boolean;
+}
+
+// CustomerFull(서버 응답, 읽기 전용 필드 포함) -> CustomerDraft(PATCH 본문) 변환. 여러 화면이
+// "지금 서버에 있는 값 그대로 + 필드 하나만 바꿔서" 저장해야 할 때 공용으로 쓴다(2026-09-15,
+// CustomerEmailCard의 수신자 이메일 즉시저장 — CustomerDetailPage.tsx의 폼 draft와는 별개로
+// 저장되므로, 그 draft를 거치지 않고 서버값 기준으로 직접 patch한다).
+export function toCustomerDraft(c: CustomerFull): CustomerDraft {
+  const {
+    id: _id,
+    profile_summary_md: _md,
+    profile_summarized_at: _at,
+    profile_summary_cost: _cost,
+    report_auto_send_schedule: _schedule,
+    ...draft
+  } = c;
+  return draft;
 }
 
 export async function fetchCustomersFull(): Promise<CustomerFull[]> {
@@ -54,13 +74,13 @@ export async function deleteCustomer(id: number): Promise<void> {
   await apiClient.delete(`/customers/${id}`);
 }
 
-// 보고서 메일 자동발송 요일·시간 — 고객 정보 일괄저장(CustomerDraft)과 별개 엔드포인트
+// 보고서 메일 자동발송 (요일,시각) 쌍 — 고객 정보 일괄저장(CustomerDraft)과 별개 엔드포인트
 // (source.schedule_times와 같은 이유: 자동저장되는 별도 설정이라 "저장" 버튼과 묶지 않음).
 export async function updateCustomerEmailSchedule(
   id: number,
-  schedule: { days: number[]; times: string[] },
+  schedule: EmailScheduleEntry[],
 ): Promise<void> {
-  await apiClient.patch(`/customers/${id}/email-schedule`, schedule);
+  await apiClient.patch(`/customers/${id}/email-schedule`, { schedule });
 }
 
 export interface CustomerDocument {
