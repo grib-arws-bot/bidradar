@@ -656,15 +656,20 @@ REAL_OPENAPI_CONFIG = {
             ("extra:deptName", "$.deptName", None),  # 소관부서명(조직 단위) — 개인정보 아님
         ],
     },
-    # 2026-09-03 실측(위 K-water base_url 주석 참고). 3개 오퍼레이션(입찰공고/사전규격공개/
-    # 발주계획) 중 상세페이지 URL을 확인한 건 "내자 입찰공고 정보 조회"(dmscptList) 하나뿐이라
-    # 이것만 등록한다 — 나머지 둘(사전규격공개·발주계획)은 응답에 URL 필드가 없어 상세URL 패턴을
-    # 못 찾으면 notice.url(NOT NULL)을 못 채운다, 조사 후 별도 소스로 추가 예정.
+    # 2026-09-03 실측(위 K-water base_url 주석 참고). 애초엔 3개 오퍼레이션(입찰공고/
+    # 사전규격공개/발주계획) 중 상세페이지 URL을 확인한 "내자 입찰공고 정보 조회"(dmscptList,
+    # 물품/제조구매 전용)만 등록했었다. 2026-09-15 — 사용자 지시("용역·입찰만 수집")로 재조사한
+    # 결과, dmscpt는 애초에 물품 전용이라 용역이 단 한 건도 없었음을 실측으로 확인(최근 45건
+    # 전수가 "○○ 제조구매(설치)"). data.go.kr 데이터셋(15101635) 스웨거 스펙에서 형제
+    # 오퍼레이션 5개(cntrwk=공사, dmscpt=내자/물품, gds=물품/구매, rst=결과, servc=용역, 전부
+    # "/openapi-data/service/pubd/ebid/tndr/<op>/list" 같은 패턴)를 발견 — servc를 라이브
+    # 호출해 실제로 cntrctDivNm="용역"만 나오는 것을 확인, dmscpt→servc로 교체한다. 응답
+    # 스키마(tndrPbanno·tndrPblancNm 등)가 동일해 field_maps는 그대로 재사용 가능.
     # 상세URL은 웹검색으로 발견한 단축 링크 패턴(`ebid.kwater.or.kr/fz?bidno=`)으로 조립 —
     # 구글에 색인된 실제 사례(제목이 "입찰공고상세 [공고번호]"로 정확히 매칭됨)로 검증함.
     "K-water 입찰공고": {
         "config": {
-            "endpoint": "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/dmscpt/list",
+            "endpoint": "http://opendata.kwater.or.kr/openapi-data/service/pubd/ebid/tndr/servc/list",
             "params": {"_type": "json", "numOfRows": "100", "pageNo": "1"},
             "month_param": "searchDt",  # begin/end 쌍이 아니라 검색년월(YYYYMM) 하나만 받음
             "items_path": "$.response.body.items.item[*]",
