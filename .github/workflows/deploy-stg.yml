@@ -112,9 +112,9 @@ jobs:
           $resp = Invoke-WebRequest -Uri "http://127.0.0.1:${env:FRONTEND_HOST_PORT}/" -UseBasicParsing -TimeoutSec 10
           Write-Host "스테이징 frontend: HTTP $($resp.StatusCode)"
           Write-Host ""
-          Write-Host "==> 육안 확인은 http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ (로컬 dev의 13200과는 다른 포트 — 2026-09-15부터 완전히 별도 스택)"
-          Write-Host "==> 스테이징 확인 후 문제 없으면, GitHub Actions 탭에서 'Deploy - Production'"
-          Write-Host "    워크플로우를 수동으로 실행(Run workflow)해서 프로덕션에 배포하세요."
+          Write-Host "==> 여기까지 전부 통과하면(테스트·빌드·로컬 기동·응답 확인), GitHub Actions 탭에서"
+          Write-Host "    'Deploy - Production' 워크플로우를 수동으로 실행(Run workflow)해서 프로덕션에 배포하세요."
+          Write-Host "    (필요하면 http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ 로 직접 열어볼 수도 있습니다 — 로컬 dev의 13200과는 다른 포트)"
 
       - name: .env 파일 정리(시크릿 잔존 방지)
         if: always()
