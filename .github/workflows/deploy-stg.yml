@@ -110,11 +110,18 @@ jobs:
         run: |
           Start-Sleep -Seconds 5
           $resp = Invoke-WebRequest -Uri "http://127.0.0.1:${env:FRONTEND_HOST_PORT}/" -UseBasicParsing -TimeoutSec 10
-          Write-Host "스테이징 frontend: HTTP $($resp.StatusCode)"
+          Write-Host "staging frontend: HTTP $($resp.StatusCode)"
           Write-Host ""
-          Write-Host "==> 여기까지 전부 통과하면(테스트/빌드/로컬 기동/응답 확인), GitHub Actions 탭에서"
-          Write-Host "    'Deploy - Production' 워크플로우를 수동으로 실행(Run workflow)해서 프로덕션에 배포하세요."
-          Write-Host "    (필요하면 http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ 로 직접 열어볼 수도 있습니다 — 로컬 dev의 13200과는 다른 포트)"
+          # 2026-09-15 -- this step's Write-Host text is kept plain ASCII on purpose. Korean
+          # text here has twice broken PowerShell parsing on this self-hosted runner (Windows
+          # PowerShell 5.1 misreads the non-BOM UTF-8 workflow file under its ANSI codepage,
+          # and some byte sequences of Korean/punctuation text collide into what looks like an
+          # unterminated string). This is CI console output for the operator, not user-facing
+          # product text or a commit message, so CLAUDE.md's Korean-text rule does not apply
+          # here -- keep it ASCII-only rather than re-guessing which character is unsafe.
+          Write-Host "==> All checks passed (tests / build / local boot / response check)."
+          Write-Host "    If this looks good, run 'Deploy - Production' from the GitHub Actions tab."
+          Write-Host "    (Optional manual look: http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ )"
 
       - name: .env 파일 정리(시크릿 잔존 방지)
         if: always()
