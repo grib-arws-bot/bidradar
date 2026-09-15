@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import html
 import secrets
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, desc, insert, select, update
 from sqlalchemy.engine import Connection
@@ -25,6 +27,8 @@ from app.services.customer_interest import draft_from_profile, get_interest_prof
 from app.services.report_commentary import ReportNotFoundError
 
 REPORT_LIMIT = 50  # 2026-09-12 사용자 지시로 20→50 (customer_interest.py의 SECTION_LIMITS도 같이 조정)
+
+_KST = ZoneInfo("Asia/Seoul")  # D-day·기준일 표시는 사용자가 보는 시각(한국 표준시) 기준
 
 
 def _build_summary(notices: list[dict]) -> dict:
@@ -231,11 +235,110 @@ def _email_format_price(value: int | None) -> str:
     return f"{eok:.1f}억원" if eok >= 1 else f"{value / 10_000:.0f}만원"
 
 
+def _email_format_date(value: str | None) -> str:
+    """PublicReportPage.tsx의 toLocaleDateString('ko-KR') 표기("2026. 9. 15.")와 맞춘다."""
+    if not value:
+        return "미상"
+    d = datetime.fromisoformat(value)
+    return f"{d.year}. {d.month}. {d.day}."
+
+
+_BID_STATUS_LABELS = {  # frontend/src/api/notices.ts의 BID_STATUS_LABELS와 동일
+    "unscheduled": "입찰미정",
+    "upcoming": "입찰예정",
+    "in_progress": "입찰접수",
+    "closed": "입찰마감",
+}
+
+
+def _email_dday_info(close_dt: str | None) -> dict | None:
+    """PublicReportPage.tsx의 ddayInfo()와 같은 계산(자정 기준 날짜 차이) — 이메일도 사용자가
+    보는 한국 시각(KST) 자정 기준이어야 "오늘 마감"이 D-0으로 정확히 맞는다."""
+    if not close_dt:
+        return None
+    close_date = datetime.fromisoformat(close_dt).astimezone(_KST).date()
+    today = datetime.now(_KST).date()
+    days = (close_date - today).days
+    if days < 0:
+        return None
+    return {"label": "D-Day" if days == 0 else f"D-{days}", "urgent": days <= 3}
+
+
+def _email_badge(text: str, *, bg: str, color: str, border: str = "transparent") -> str:
+    return (
+        '<span style="display:inline-block;padding:2px 8px;margin:0 4px 4px 0;border-radius:12px;'
+        f'font-size:11px;font-weight:600;white-space:nowrap;background:{bg};color:{color};'
+        f'border:1px solid {border};">{html.escape(text)}</span>'
+    )
+
+
+def _build_notice_card_html(n: dict, token: str, base_url: str) -> str:
+    """NoticeCard.tsx·PublicReportPage.tsx의 카드 형태(배지 한 줄 + 제목/발주기관/마감일 +
+    사업비·D-day)를 이메일 본문에 그대로 재현한다(2026-09-15 사용자 지시 — "메일 본문을
+    첨부된 이미지 양식을 그대로 사용해줘"). 이메일 클라이언트는 CSS grid/flex를 대부분
+    지원 안 해 표(table)+인라인 style로만 구성한다."""
+    notice_url = f"{base_url}/r/{token}/notices/{n['id']}"
+    bid_status = n.get("bid_status")
+    bid_status_label = _BID_STATUS_LABELS.get(bid_status, bid_status or "")
+    bid_badge = (
+        _email_badge(bid_status_label, bg="#d32f2f", color="#fff")
+        if bid_status == "in_progress"
+        else _email_badge(bid_status_label, bg="#fff", color="#333", border="#bbb")
+    )
+    left_badges = "".join(
+        _email_badge(label, bg="#fff", color="#555", border="#ccc")
+        for label in (n.get("notice_type"), n.get("notice_status_label"), n.get("work_type_label"))
+        if label
+    )
+
+    org = html.escape(n.get("org_name") or "발주기관 미상")
+    region = f" · {html.escape(n['region'])}" if n.get("region") else ""
+    notice_no = f" · {html.escape(n['notice_no'])}" if n.get("notice_no") else ""
+    dates = f"게시 {_email_format_date(n.get('open_dt'))} · 마감 {_email_format_date(n.get('close_dt'))}"
+
+    topics = n.get("topics") or []
+    topics_html = (
+        f'<div style="margin-top:6px;">{"".join(_email_badge(t, bg="#e8f0fe", color="#1565c0", border="#90caf9") for t in topics)}</div>'
+        if topics
+        else ""
+    )
+
+    dday = _email_dday_info(n.get("close_dt"))
+    dday_html = (
+        _email_badge(dday["label"], bg="#d32f2f" if dday["urgent"] else "#ed6c02", color="#fff")
+        if dday
+        else ""
+    )
+
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="margin:0 0 12px;border:1px solid #e5e5e5;border-radius:8px;">'
+        '<tr><td style="padding:14px 16px 0;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        f'<td style="text-align:left;">{left_badges}</td>'
+        f'<td style="text-align:right;white-space:nowrap;">{bid_badge}</td>'
+        "</tr></table>"
+        "</td></tr>"
+        '<tr><td style="padding:8px 16px 14px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        '<td style="vertical-align:top;">'
+        f'<a href="{notice_url}" style="font-size:15px;font-weight:700;color:#1a1a1a;text-decoration:none;">'
+        f"{html.escape(n['title'])}</a>"
+        f'<div style="font-size:13px;color:#666;margin-top:4px;">{org}{region}{notice_no}</div>'
+        f'<div style="font-size:12px;color:#888;margin-top:2px;">{dates}</div>'
+        f"{topics_html}"
+        "</td>"
+        f'<td style="vertical-align:top;text-align:right;padding-left:12px;white-space:nowrap;">'
+        f'<div style="font-size:16px;font-weight:700;color:#1565c0;">{_email_format_price(n.get("est_price"))}</div>'
+        f'<div style="margin-top:6px;">{dday_html}</div>'
+        "</td>"
+        "</tr></table>"
+        "</td></tr>"
+        "</table>"
+    )
+
+
 def _build_notices_html(notices: list[dict], token: str, base_url: str) -> str:
-    """이메일 클라이언트가 CSS class·flex/grid를 대부분 지원 안 해서(2026-09-12 사용자 지시
-    — "메일 본문에 관심공고 페이지를 바로 보여줄 수 있도록") 표(table) + 인라인 style로
-    PublicReportPage.tsx와 최대한 비슷한 구성(배지 한 줄 + 제목 링크 + 발주기관/사업비/마감일)
-    을 다시 만든다."""
     by_section: dict[str, list[dict]] = {"plan": [], "prenotice": [], "active": []}
     for n in notices:
         by_section[_email_section_of(n)].append(n)
@@ -249,19 +352,7 @@ def _build_notices_html(notices: list[dict], token: str, base_url: str) -> str:
             f'<h3 style="margin:24px 0 8px;font-size:15px;color:#555;">'
             f"{_EMAIL_SECTION_LABELS[section]} ({len(section_notices)}건)</h3>"
         )
-        for n in section_notices:
-            notice_url = f"{base_url}/r/{token}/notices/{n['id']}"
-            org = n.get("org_name") or "발주기관 미상"
-            price = _email_format_price(n.get("est_price"))
-            close_dt = n.get("close_dt")
-            deadline = f"마감 {close_dt[:10]}" if close_dt else "마감 미상"
-            parts.append(
-                '<div style="padding:12px 0;border-bottom:1px solid #e5e5e5;">'
-                f'<a href="{notice_url}" style="font-size:15px;font-weight:600;color:#1a1a1a;text-decoration:none;">'
-                f"{n['title']}</a>"
-                f'<div style="font-size:13px;color:#777;margin-top:4px;">{org} · {price} · {deadline}</div>'
-                "</div>"
-            )
+        parts.extend(_build_notice_card_html(n, token, base_url) for n in section_notices)
     return "".join(parts)
 
 
@@ -297,12 +388,23 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
         f"총 {summary.get('total', 0)}건, 마감임박 {summary.get('closing_soon', 0)}건.\n\n"
         f"자세히 보기: {report_url}\n"
     )
+    generated_label = _email_format_date(row["generated_at"].astimezone(_KST).isoformat())
+    closing_soon = summary.get("closing_soon", 0)
+    closing_line = f" · 7일 내 마감 {closing_soon}건" if closing_soon > 0 else ""
+    # PublicReportPage.tsx 상단(로고+고객명 배지, "관심 공고" 제목, 기준일·건수)을 그대로
+    # 재현한다(2026-09-15 사용자 지시 — "메일 본문을 첨부된 이미지 양식을 그대로 사용해줘").
     html_body = (
-        f'<div style="font-family:sans-serif;max-width:640px;">'
-        f"<p>{row['name']}님을 위한 관심 공고 리포트가 도착했습니다.</p>"
-        f"<p>총 <b>{summary.get('total', 0)}건</b>, 마감임박 <b>{summary.get('closing_soon', 0)}건</b>.</p>"
+        f'<div style="font-family:sans-serif;max-width:680px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;"><tr>'
+        '<td style="font-size:18px;font-weight:800;color:#1a1a1a;">BidRadar</td>'
+        f'<td style="text-align:right;"><span style="display:inline-block;padding:2px 10px;border:1px solid #ccc;'
+        f'border-radius:12px;font-size:12px;color:#555;">{html.escape(row["name"])}</span></td>'
+        "</tr></table>"
+        '<h2 style="font-size:20px;margin:0 0 4px;">관심 공고</h2>'
+        f'<p style="font-size:13px;color:#777;margin:0 0 16px;">{generated_label} 기준 · 총 '
+        f"{summary.get('total', 0)}건{closing_line}</p>"
         f"{_build_notices_html(notices, row['token'], settings.public_base_url)}"
-        f'<p style="margin-top:24px;"><a href="{report_url}">웹에서 전체 리포트 보기</a></p>'
+        f'<p style="margin-top:20px;"><a href="{report_url}" style="color:#1565c0;">웹에서 전체 리포트 보기</a></p>'
         "</div>"
     )
     send_email(

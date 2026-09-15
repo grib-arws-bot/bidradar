@@ -48,7 +48,8 @@ export function CustomerEmailCard({ customer }: Props) {
     recipientMutation.mutate(customer.report_recipient_emails.filter((e) => e !== email));
   }
 
-  // "지금 발송" — 최신 관심 공고로 보고서를 새로 생성한 뒤 곧바로 발송한다. 예정된 자동발송
+  // "보고서 지금 생성 후 발송"(2026-09-15 버튼명 변경 — 무엇을 하는 버튼인지 이름에서 바로
+  // 알 수 있게) — 최신 관심 공고로 보고서를 새로 생성한 뒤 곧바로 발송한다. 예정된 자동발송
   // 시각(위 스케줄)과 무관하게 관리자가 임의 시점에 실행하는 것이므로, run_due_customer_emails
   // 와 달리 신규 매칭 0건이어도 발송을 막지 않는다("보고서 관리" 화면의 수동 발송과 같은
   // 원칙 — 관리자가 명시적으로 누른 동작은 그대로 실행).
@@ -110,7 +111,7 @@ export function CustomerEmailCard({ customer }: Props) {
             disabled={!hasRecipients}
             onClick={() => sendNowMutation.mutate()}
           >
-            지금 발송
+            보고서 지금 생성 후 발송
           </LoadingButton>
           <Typography variant="body2" color="text.secondary">
             {hasRecipients
