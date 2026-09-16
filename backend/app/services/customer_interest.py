@@ -292,10 +292,10 @@ def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> lis
 # 2026-09-12 — 전체 상한을 20→50으로 올리며(사용자 지시) 기존 5:5:10(1:1:2) 비율을 그대로
 # 유지해 10:10:30으로 스케일업.
 # 2026-09-15 — 발주계획을 _candidate_notices()에서 아예 제외하면서(매칭 신호가 구조적으로
-# 약해 이 자리를 채울 후보가 실질적으로 없었음) "plan" 섹션·자리를 제거했다. prenotice·
-# active 상한은 그대로 둬(다시 배분해달라는 요청은 없었음) 실질 상한이 50→40이 됐다 —
-# 필요하면 후속으로 조정.
-SECTION_LIMITS = {"prenotice": 10, "active": 30}
+# 약해 이 자리를 채울 후보가 실질적으로 없었음) "plan" 섹션·자리를 제거했다.
+# 2026-09-16 — 사용자 지시로 리포트 전체 상한을 30으로 낮추며(interest_report.py의
+# REPORT_LIMIT도 같이 조정), prenotice:active 기존 1:2 비율을 유지해 10:20으로 스케일다운.
+SECTION_LIMITS = {"prenotice": 10, "active": 20}
 
 
 def _section_of(n: dict) -> str:

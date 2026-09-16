@@ -27,7 +27,8 @@ from app.services.customer_interest import draft_from_profile, get_interest_prof
 from app.services.email_assets import logo_data_uri
 from app.services.report_commentary import ReportNotFoundError
 
-REPORT_LIMIT = 50  # 2026-09-12 사용자 지시로 20→50 (customer_interest.py의 SECTION_LIMITS도 같이 조정)
+REPORT_LIMIT = 30  # 2026-09-12 사용자 지시로 20→50, 2026-09-16 발주계획 제외 후 사용자 지시로 50→30
+# (customer_interest.py의 SECTION_LIMITS도 같이 조정)
 
 _KST = ZoneInfo("Asia/Seoul")  # D-day·기준일 표시는 사용자가 보는 시각(한국 표준시) 기준
 
@@ -274,7 +275,7 @@ def _email_badge(text: str, *, bg: str, color: str, border: str = "transparent")
 
 
 EMAIL_NOTICE_LIMIT = 20  # 2026-09-15 사용자 지시 — "메일에서는 공고가 많으면 보기 힘드니
-# 최대 20개만" (웹 리포트는 그대로 최대 REPORT_LIMIT=50건 전부 보여준다 — 이메일 표시 상한일
+# 최대 20개만" (웹 리포트는 그대로 최대 REPORT_LIMIT건 전부 보여준다 — 이메일 표시 상한일
 # 뿐 스냅샷 자체를 자르지 않음).
 
 
