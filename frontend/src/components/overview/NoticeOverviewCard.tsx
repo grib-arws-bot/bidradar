@@ -1,6 +1,10 @@
-import { Box, Card, Chip, Grid, Stack, Typography } from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import ZoomInIcon from "@mui/icons-material/ZoomIn";
+import { Box, Card, Chip, Dialog, DialogContent, DialogTitle, Grid, IconButton, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import Chart from "react-apexcharts";
+import type { ApexOptions } from "apexcharts";
 
 import { fetchNoticeOverview, fetchSystemOverview, type ChannelStatus, type NoticeDailyChart } from "@/api/overview";
 
@@ -31,32 +35,65 @@ function Dot({ color }: { color: string }) {
 // "전체" 합산 계열(source_id === null)만 검정 굵은 선으로 구분하고, 나머지 소스별 계열은
 // 얇은 색선으로 — 소스 수가 늘어도 안전하게 색을 순환한다. 범례는 그래프 자체가 아니라
 // 옆의 "데이터 수집채널" 카드가 대신한다(2026-09-12 사용자 지시).
-function DailyLineChart({ title, chart }: { title: string; chart: NoticeDailyChart }) {
+//
+// 옵션·시리즈 계산을 별도 함수로 뺀 이유(2026-09-16) — 카드 안의 작은 그래프와 클릭 시
+// 뜨는 확대 팝업(Dialog)이 데이터는 완전히 같고 높이만 다르다. 계산을 한 곳에만 두고
+// 두 군데서 height만 다르게 렌더링한다.
+function dailyChartSeriesAndOptions(chart: NoticeDailyChart): { options: ApexOptions; series: ApexOptions["series"] } {
   const categories = chart.dates.map(monthDayLabel);
   const perSourceCount = chart.series.length - 1;
   const colors = [...Array.from({ length: perSourceCount }, (_, i) => colorForIndex(i)), TOTAL_LINE_COLOR];
   const widths = [...Array(perSourceCount).fill(2), 4];
+  return {
+    options: {
+      chart: { toolbar: { show: false } },
+      xaxis: { categories },
+      yaxis: { labels: { formatter: (v: number) => v.toFixed(0) } },
+      stroke: { width: widths, curve: "smooth" },
+      dataLabels: { enabled: false },
+      colors,
+      legend: { show: false },
+      grid: { padding: { left: 8, right: 8 } },
+    },
+    series: chart.series.map((s) => ({ name: s.source_name, data: s.counts })),
+  };
+}
+
+// 클릭하면 팝업으로 크게 보여준다(2026-09-16 사용자 지시 — "전체 현황의 누적데이터,
+// 수집데이터 그래프를 클릭했을때 팝업 형식으로 크게 보여줘"). 작은 그래프 위에 마우스를
+// 올리면 확대 아이콘이 나타나 클릭 가능함을 알려준다.
+function DailyLineChart({ title, chart, onExpand }: { title: string; chart: NoticeDailyChart; onExpand: () => void }) {
+  const { options, series } = dailyChartSeriesAndOptions(chart);
 
   return (
     <Grid size={{ xs: 12, md: 4 }}>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
         {title}
       </Typography>
-      <Chart
-        type="line"
-        height={280}
-        options={{
-          chart: { toolbar: { show: false } },
-          xaxis: { categories },
-          yaxis: { labels: { formatter: (v: number) => v.toFixed(0) } },
-          stroke: { width: widths, curve: "smooth" },
-          dataLabels: { enabled: false },
-          colors,
-          legend: { show: false },
-          grid: { padding: { left: 8, right: 8 } },
+      <Box
+        onClick={onExpand}
+        sx={{
+          position: "relative",
+          cursor: "pointer",
+          borderRadius: 1,
+          "&:hover": { bgcolor: "action.hover" },
+          "&:hover .expand-hint": { opacity: 1 },
         }}
-        series={chart.series.map((s) => ({ name: s.source_name, data: s.counts }))}
-      />
+      >
+        <Box
+          className="expand-hint"
+          sx={{
+            position: "absolute", top: 4, right: 4, zIndex: 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 28, height: 28, borderRadius: "50%",
+            bgcolor: "background.paper", boxShadow: 1,
+            opacity: 0, transition: "opacity 0.15s",
+          }}
+        >
+          <ZoomInIcon fontSize="small" color="action" />
+        </Box>
+        <Chart type="line" height={280} options={options} series={series} />
+      </Box>
     </Grid>
   );
 }
@@ -109,6 +146,7 @@ function ChannelLegend({ channels, sourceOrder }: { channels: ChannelStatus[]; s
 export function NoticeOverviewCard() {
   const { data, isLoading } = useQuery({ queryKey: ["overview-notices"], queryFn: fetchNoticeOverview });
   const { data: systemData } = useQuery({ queryKey: ["overview-system"], queryFn: fetchSystemOverview });
+  const [expanded, setExpanded] = useState<{ title: string; chart: NoticeDailyChart } | null>(null);
 
   if (isLoading || !data) {
     return (
@@ -124,6 +162,10 @@ export function NoticeOverviewCard() {
     .filter((s) => s.source_id !== null)
     .map((s) => s.source_id as number);
 
+  const cumulativeTitle = "누적 데이터(일별, 소스별+전체, 삭제 데이터 제외)";
+  const collectedTitle = "수집 데이터(일별, 소스별+전체)";
+  const expandedChart = expanded && dailyChartSeriesAndOptions(expanded.chart);
+
   return (
     <Card sx={{ p: 3 }}>
       <Typography variant="h3" sx={{ mb: 2 }}>
@@ -131,9 +173,33 @@ export function NoticeOverviewCard() {
       </Typography>
       <Grid container spacing={4}>
         {systemData && <ChannelLegend channels={systemData.channels} sourceOrder={sourceOrder} />}
-        <DailyLineChart title="누적 데이터(일별, 소스별+전체, 삭제 데이터 제외)" chart={data.cumulative_daily} />
-        <DailyLineChart title="수집 데이터(일별, 소스별+전체)" chart={data.collected_daily} />
+        <DailyLineChart
+          title={cumulativeTitle}
+          chart={data.cumulative_daily}
+          onExpand={() => setExpanded({ title: cumulativeTitle, chart: data.cumulative_daily })}
+        />
+        <DailyLineChart
+          title={collectedTitle}
+          chart={data.collected_daily}
+          onExpand={() => setExpanded({ title: collectedTitle, chart: data.collected_daily })}
+        />
       </Grid>
+
+      <Dialog open={!!expanded} onClose={() => setExpanded(null)} maxWidth="lg" fullWidth>
+        <DialogTitle sx={{ pr: 6 }}>
+          {expanded?.title}
+          <IconButton
+            onClick={() => setExpanded(null)}
+            sx={{ position: "absolute", right: 8, top: 8 }}
+            aria-label="닫기"
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          {expandedChart && <Chart type="line" height={520} options={expandedChart.options} series={expandedChart.series} />}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
