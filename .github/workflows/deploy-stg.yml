@@ -36,7 +36,14 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: bidradar-stg
       DB_HOST_PORT: "15433"
-      BACKEND_HOST_PORT: "13001"
+      # 2026-09-16 -- this was 13001, but Windows regenerates a Hyper-V dynamic port
+      # exclusion range on every reboot; after today's reboot that range happened to be
+      # 12939-13038, which swallowed 13001 and made docker's port bind fail ("access
+      # forbidden by its access permissions" -- the classic symptom, fixable by restarting
+      # the winnat service, which needs admin rights this session doesn't have). Moved to
+      # 14001 to unblock now; if this recurs on a future reboot, `net stop winnat && net
+      # start winnat` (as Administrator) is the real fix, or pick yet another free port.
+      BACKEND_HOST_PORT: "14001"
       FRONTEND_HOST_PORT: "13201"
       DATABASE_URL: postgresql+psycopg://bidradar:devpassword@127.0.0.1:15433/bidradar
     steps:
