@@ -26,7 +26,11 @@ jobs:
     runs-on: [self-hosted, bidradar]
     # 2026-09-14 — deploy-prod.yml과 같은 이유로 30분으로 상향(pytest가 500건대로 늘어나며
     # 20분 상한에 실제로 걸림).
-    timeout-minutes: 30
+    # 2026-09-16 — 코사인 유사도 매칭(torch+bge-m3, 의사결정_로그 159번)으로 backend 이미지가
+    # 660MB→9.68GB가 되며 30분 상한에 실제로 다시 걸림(빌드 도중 강제 취소됨). git의 CRLF
+    # 변환으로 Dockerfile 등 텍스트 파일 바이트가 로컬 빌드 때와 달라지면 Docker 레이어
+    # 캐시가 깨져 토치·모델을 처음부터 다시 받을 수 있다는 점까지 고려해 60분으로 상향.
+    timeout-minutes: 60
     # 2026-09-15 — docker-compose.yml의 `name: bidradar`가 고정돼 있어(2026-09-01 ARWS와의
     # 충돌 방지용 고정) 개발자가 로컬 PC에서 `docker compose up -d`로 띄워둔 dev 스택과 이
     # CI 잡이 완전히 같은 컨테이너 이름을 두고 경합했다 — 실제로 이 잡의 "스테이징(로컬) 기동"
