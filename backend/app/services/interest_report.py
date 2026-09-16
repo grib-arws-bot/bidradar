@@ -24,6 +24,7 @@ from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSour
 from app.services.analysis_worker import submit as submit_background
 from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
+from app.services.email_assets import logo_data_uri
 from app.services.report_commentary import ReportNotFoundError
 
 REPORT_LIMIT = 50  # 2026-09-12 사용자 지시로 20→50 (customer_interest.py의 SECTION_LIMITS도 같이 조정)
@@ -380,7 +381,10 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
     generated_label = _email_format_date(row["generated_at"].astimezone(_KST).isoformat())
     closing_soon = summary.get("closing_soon", 0)
     closing_line = f" · 7일 내 마감 {closing_soon}건" if closing_soon > 0 else ""
-    logo_url = f"{settings.public_base_url}/email-logo.png"
+    # 2026-09-16 — 외부 URL(`{public_base_url}/email-logo.png`)로 참조했다가 실제 수신함에서
+    # 깨짐(Gmail이 prod의 자체서명 TLS 인증서를 신뢰 안 해 이미지 프록시가 못 가져옴) —
+    # base64 data URI로 본문에 직접 담아 외부 요청 자체를 없앤다(email_assets.py).
+    logo_url = logo_data_uri()
     cta_button = (
         '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td '
         'style="background:#DE5B21;border-radius:6px;">'
