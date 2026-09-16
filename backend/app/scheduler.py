@@ -85,7 +85,16 @@ def _due_customers(now_kst: datetime) -> list[tuple[int, str]]:
     """이 시각(now_kst)의 요일(ISO, 1=월~7=일)·"HH:MM" 쌍이 report_auto_send_schedule
     (2026-09-15 재설계 — [{"day":1,"time":"13:00"}, ...] 형태, 요일마다 다른 시각을 지정할
     수 있다. 이전엔 요일 목록×시각 목록의 카르테시안 곱으로 실행돼 "월 13시, 목 14시"처럼
-    특정 조합만 지정할 방법이 없었다) 중 하나와 정확히 일치하는 활성 고객의 (id, name) 목록."""
+    특정 조합만 지정할 방법이 없었다) 중 하나와 정확히 일치하는 활성 고객의 (id, name) 목록.
+
+    2026-09-16 발견/수정 — entry["day"]를 int(now_kst.isoweekday())와 `==`로 직접 비교했는데,
+    e2f3a4b5c6d7 마이그레이션이 jsonb_array_elements_text()로 기존 요일 값을 문자열로 옮기는
+    바람에(예: "3") DB에 저장된 day가 전부 문자열이었다 — "3" == 3은 항상 False라 이 재설계가
+    나온 날(2026-09-15)부터 오늘까지 자동발송이 단 한 건도 실제로 실행되지 못했다(사용자가
+    수동으로 "지금 발송"을 눌러야만 나갔음). 여기서 int(entry.get("day"))로 방어적으로
+    캐스팅해 데이터 타입이 다시 흔들려도(다음 마이그레이션 실수 등) 조용히 전부 실패하는
+    대신 정상 비교되게 한다 — 저장된 값 자체도 별도 데이터 백필로 정수로 고쳤다(마이그레이션
+    f4a5b6c7d8e9)."""
     hhmm = now_kst.strftime("%H:%M")
     weekday = now_kst.isoweekday()
     with engine.connect() as conn:
@@ -96,7 +105,10 @@ def _due_customers(now_kst: datetime) -> list[tuple[int, str]]:
     return [
         (row.id, row.name)
         for row in rows
-        if any(entry.get("day") == weekday and entry.get("time") == hhmm for entry in (row.report_auto_send_schedule or []))
+        if any(
+            int(entry.get("day")) == weekday and entry.get("time") == hhmm
+            for entry in (row.report_auto_send_schedule or [])
+        )
     ]
 
 

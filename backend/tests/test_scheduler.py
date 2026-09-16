@@ -180,6 +180,30 @@ def test_due_customers_matches_only_day_and_time():
             conn.execute(delete(customer).where(customer.c.id.in_(ids)))
 
 
+def test_due_customers_matches_when_day_stored_as_string():
+    """2026-09-16 발견 회귀 테스트 — e2f3a4b5c6d7 마이그레이션이 jsonb_array_elements_text()로
+    기존 요일 값을 옮기면서 day를 JSON 문자열("3")로 저장했다. _due_customers()가 정수
+    isoweekday()와 `==`로 직접 비교했다면 "3" == 3이 항상 False라 이 재설계가 나온
+    2026-09-15부터 발견 시점(2026-09-16)까지 자동발송이 단 한 건도 실행되지 못했다 — 실제
+    prod의 고객 4명 전원이 이 상태였다. 이 테스트는 그 정확한 데이터 모양(문자열 day)을
+    재현해 _due_customers()가 int() 캐스팅으로 여전히 정상 매칭하는지 검증한다."""
+    now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)  # 2026-09-14는 실제 월요일
+    ids = []
+    try:
+        with engine.begin() as conn:
+            string_day_id = _make_temp_customer(
+                conn, name="_테스트_고객_문자열요일",
+                schedule=[{"day": "1", "time": "09:00"}],  # 마이그레이션 버그가 만든 실제 모양
+            )
+            ids = [string_day_id]
+
+        due_ids = {cid for cid, _name in _due_customers(now_kst)}
+        assert string_day_id in due_ids
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(customer).where(customer.c.id.in_(ids)))
+
+
 def test_run_due_customer_emails_generates_and_sends_then_skips_zero_matches(monkeypatch):
     now_kst = datetime(2026, 9, 14, 9, 0, tzinfo=KST)
     monkeypatch.setattr("app.scheduler.time.sleep", lambda _seconds: None)  # 테스트 속도
