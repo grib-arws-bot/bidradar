@@ -16,9 +16,16 @@ from sqlalchemy import (
     Text,
     func,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import metadata
+
+# BAAI/bge-m3(자체 호스팅, app/services/embeddings.py) dense 임베딩 출력 차원(2026-09-16) —
+# 규칙 매칭과 나란히 비교할 코사인 유사도 매칭용. 새 외부 벤더 키 없이 서버에서 직접 추론
+# (다국어 검색 벤치마크에서 OpenAI text-embedding-3-small을 앞서는 경우가 많고, 한국어
+# 성능도 좋음 — 조사 결론).
+EMBEDDING_DIM = 1024
 
 org = Table(
     "org",
@@ -83,6 +90,9 @@ notice = Table(
     # 나머지는 이 컬럼에 최신 건의 id를 채워 무효화 표시한다 — 하드 삭제는 안 함(감사·추적
     # 가능성 유지). NULL이면 아직 유효(최신)한 공고. app/services/notice_dedup.py.
     Column("superseded_by_notice_id", Integer, ForeignKey("notice.id", ondelete="SET NULL")),
+    # 코사인 유사도 매칭(2026-09-16) — 제목+발주기관+지역+단계를 OpenAI로 임베딩한 벡터.
+    # 배치(app/services/embeddings.py)가 서서히 채우므로 NULL이 정상(아직 처리 안 됨).
+    Column("embedding", Vector(EMBEDDING_DIM)),
 )
 
 notice_version = Table(

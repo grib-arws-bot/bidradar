@@ -1,5 +1,6 @@
 import AccountTreeIcon from "@mui/icons-material/AccountTreeOutlined";
 import CategoryIcon from "@mui/icons-material/CategoryOutlined";
+import CompareArrowsIcon from "@mui/icons-material/CompareArrowsOutlined";
 import DescriptionIcon from "@mui/icons-material/DescriptionOutlined";
 import HomeIcon from "@mui/icons-material/HomeOutlined";
 import LogoutIcon from "@mui/icons-material/LogoutOutlined";
@@ -63,6 +64,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "공고데이터 수집", to: "/admin/channels", icon: <SourceIcon fontSize="small" /> },
       { label: "공고기관 현황", to: "/admin/agencies", icon: <AccountTreeIcon fontSize="small" /> },
       { label: "관심주제 분류", to: "/admin/topics", icon: <CategoryIcon fontSize="small" /> },
+      { label: "매칭 방식 비교", to: "/admin/matching-comparison", icon: <CompareArrowsIcon fontSize="small" /> },
     ],
   },
 ];

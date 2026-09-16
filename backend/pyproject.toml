@@ -23,6 +23,9 @@ dependencies = [
     "pytesseract>=0.3,<0.4",  # document_extract.py — 이미지·스캔본 PDF OCR(Tesseract 바인딩, 시스템 tesseract-ocr 필요)
     "pillow>=11.0,<13.0",  # OCR 대상 이미지 로딩(pytesseract 입력)
     "pymupdf>=1.24,<1.29",  # 스캔본 PDF 페이지를 이미지로 렌더링(OCR 폴백 전용) — poppler 불필요
+    "pgvector>=0.4,<0.5",  # app/services/embeddings.py — 코사인 유사도 매칭(notice.embedding 컬럼)
+    "sentence-transformers>=6.0,<6.1",  # app/services/embeddings.py — BAAI/bge-m3 자체 호스팅 임베딩
+    # (torch는 Dockerfile에서 CPU 전용 휠을 먼저 설치 — 기본 PyPI 인덱스는 CUDA 번들로 훨씬 커짐)
 ]
 
 [project.optional-dependencies]

@@ -227,6 +227,24 @@ def _serialize(n: dict, score: int, topics: list[str]) -> dict:
     }
 
 
+def _passes_hard_filters(n: dict, draft: InterestDraft, now: datetime) -> bool:
+    """점수 계산 방식(규칙 매칭·코사인 유사도 등)과 무관하게 항상 먼저 적용하는 하드 필터.
+    2026-09-16 — 코사인 유사도 매칭(cosine_matching.py)이 규칙 매칭과 공정하게 비교되려면
+    같은 후보 풀·같은 필터를 써야 해서 _score_all()에서 분리했다."""
+    # 이미 마감된 공고는 추천 대상에서 제외한다(2026-09-12 사용자 발견 — "입찰마감된
+    # 항목이 추천항목에 추가된게 있다"). notice_cleanup.py가 마감 후 며칠은 DB에 그대로
+    # 남겨두므로(공고 탐색에서 참고용으로 볼 수 있게) 존재 자체는 정상이지만, 추천은
+    # "아직 참여할 수 있는 것"만 의미가 있어 별개로 걸러야 한다. close_dt가 없는 소스
+    # (발주계획·사전규격 등)는 마감 여부를 판단할 근거가 없어 제외 대상이 아니다.
+    if n["close_dt"] is not None and n["close_dt"] < now:
+        return False
+    # 금액 하한(2026-09-07) — est_price가 하한 미만이거나 아예 미공개(None)면 제외한다.
+    # 미공개 공고는 하한을 만족하는지 확인할 방법이 없어 점수와 무관하게 하드 필터한다.
+    if draft.price_min is not None and (n["est_price"] is None or n["est_price"] < draft.price_min):
+        return False
+    return True
+
+
 def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> list[tuple[dict, int, dict[int, float]]]:
     """관심도 점수를 조회 시점에 그대로 계산해 전체 매칭 목록을 점수 내림차순으로 반환한다
     (2026-09-08 재설계 — 위 상수 블록 주석 참고). top_matches(리포트 생성)가 이 함수를 그대로
@@ -241,16 +259,7 @@ def _score_all(conn: Connection, draft: InterestDraft, *, min_score: int) -> lis
 
     scored: list[tuple[dict, int, dict[int, float]]] = []
     for n in notices:
-        # 이미 마감된 공고는 추천 대상에서 제외한다(2026-09-12 사용자 발견 — "입찰마감된
-        # 항목이 추천항목에 추가된게 있다"). notice_cleanup.py가 마감 후 며칠은 DB에 그대로
-        # 남겨두므로(공고 탐색에서 참고용으로 볼 수 있게) 존재 자체는 정상이지만, 추천은
-        # "아직 참여할 수 있는 것"만 의미가 있어 별개로 걸러야 한다. close_dt가 없는 소스
-        # (발주계획·사전규격 등)는 마감 여부를 판단할 근거가 없어 제외 대상이 아니다.
-        if n["close_dt"] is not None and n["close_dt"] < now:
-            continue
-        # 금액 하한(2026-09-07) — est_price가 하한 미만이거나 아예 미공개(None)면 제외한다.
-        # 미공개 공고는 하한을 만족하는지 확인할 방법이 없어 점수와 무관하게 하드 필터한다.
-        if draft.price_min is not None and (n["est_price"] is None or n["est_price"] < draft.price_min):
+        if not _passes_hard_filters(n, draft, now):
             continue
 
         score = 0.0

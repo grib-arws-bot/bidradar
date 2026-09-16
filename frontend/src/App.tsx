@@ -11,6 +11,7 @@ import { CustomerDetailPage } from "@/pages/CustomerDetailPage";
 import { CustomersPage } from "@/pages/CustomersPage";
 import { DataChannelsPage } from "@/pages/DataChannelsPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { MatchingComparisonPage } from "@/pages/MatchingComparisonPage";
 import { NoticeDetailPage } from "@/pages/NoticeDetailPage";
 import { NoticeExplorePage } from "@/pages/NoticeExplorePage";
 import { OverviewPage } from "@/pages/OverviewPage";
@@ -70,6 +71,7 @@ function AppRoutes() {
         <Route path="/admin/agencies" element={<AgencyStatusPage />} />
         <Route path="/admin/agencies/:sourceId" element={<AgencyChannelDetailPage />} />
         <Route path="/admin/topics" element={<TopicsPage />} />
+        <Route path="/admin/matching-comparison" element={<MatchingComparisonPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

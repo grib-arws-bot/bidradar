@@ -9,7 +9,11 @@ name: bidradar
 
 services:
   db:
-    image: postgres:16.4-bookworm
+    # 2026-09-16 — pgvector 확장을 쓰기 위해 postgres:16.4-bookworm에서 pgvector/pgvector로
+    # 교체(코사인 유사도 매칭, 의사결정_로그 157/158번 후속). 같은 Postgres 16 + Debian
+    # bookworm 베이스에 pgvector 확장만 미리 빌드해 넣은 드롭인 이미지라 데이터 포맷 변경
+    # 없음 — 버전 고정(CLAUDE.md "latest 태그 금지").
+    image: pgvector/pgvector:0.8.0-pg16-bookworm
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-bidradar}

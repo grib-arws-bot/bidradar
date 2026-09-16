@@ -33,6 +33,7 @@ from app.collector.runner import CollectionInProgressError, run_source_and_proce
 from app.db import engine
 from app.logging_config import configure_logging
 from app.models import customer, source
+from app.services.embeddings import run_pending_embeddings
 from app.services.interest_report import generate_report, send_report_email
 from app.services.mailer import SmtpNotConfiguredError
 from app.services.pending_analysis import run_pending_analysis
@@ -163,6 +164,16 @@ def run_pending_backlog() -> dict:
             result["extraction_candidates"], result["auto_extracted"],
             result["analyze_candidates"], result["auto_analyzed"],
         )
+
+    # 코사인 유사도 매칭용 임베딩 배치(2026-09-16, 자체 호스팅 bge-m3) — A1/A2와 나란히,
+    # 실패해도 서로 안 막는다.
+    try:
+        embed_result = run_pending_embeddings()
+        if embed_result["embedded"]:
+            logger.info("임베딩 배치 완료: 대상=%s 성공=%s", embed_result["candidates"], embed_result["embedded"])
+    except Exception:  # noqa: BLE001 — 임베딩 배치 실패가 다음 예정 실행을 막으면 안 됨
+        logger.exception("임베딩 배치 실패")
+
     return result
 
 

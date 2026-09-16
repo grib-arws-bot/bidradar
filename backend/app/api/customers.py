@@ -11,11 +11,14 @@ from pydantic import BaseModel
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
+from app.services.cosine_matching import top_matches_cosine
 from app.services.customer_interest import (
     InterestDraft,
+    draft_from_profile,
     get_interest_profile,
     list_customers,
     save_interest_profile,
+    top_matches,
 )
 from app.services.customer_management import (
     CustomerDraft,
@@ -237,6 +240,21 @@ def put_interests(customer_id: int, payload: InterestPayload, _email: str = Depe
             save_interest_profile(conn, customer_id, payload.to_draft())
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/{customer_id}/interest-matches/compare")
+def get_interest_matches_compare(customer_id: int, _email: str = Depends(require_auth)) -> dict:
+    """규칙 매칭(top_matches)과 코사인 유사도 매칭(top_matches_cosine)을 나란히 반환한다
+    (2026-09-16, MatchingComparisonPage.tsx 전용) — 규칙 매칭을 대체하는 게 아니라 비교
+    확인용."""
+    with engine.connect() as conn:
+        profile = get_interest_profile(conn, customer_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+        draft = draft_from_profile(profile)
+        rule_based = top_matches(conn, draft, limit=20)
+        cosine = top_matches_cosine(conn, draft, profile, limit=20)
+    return {"rule_based": rule_based, "cosine": cosine["matches"], "pending_embeddings": cosine["pending_embeddings"]}
 
 
 @router.post("/{customer_id}/reports", status_code=status.HTTP_201_CREATED)
