@@ -35,5 +35,13 @@ def test_submit_logs_but_does_not_raise_when_function_fails(caplog):
     with caplog.at_level("ERROR", logger="bidradar.analysis_worker"):
         with pytest.raises(RuntimeError):
             future.result(timeout=2)
-        time.sleep(0.05)  # done_callback이 별도 스레드에서 로깅할 시간을 준다
+        # done_callback은 별도 스레드에서 비동기로 로깅한다 — 고정 sleep(예: 0.05초)은 CI
+        # 러너가 다른 프로세스와 CPU를 다툴 때 스레드 스케줄링이 그만큼 늦어지면 그대로
+        # 깨진다(2026-09-17 실측: 이 테스트만 재현 없이 간헐적으로 실패). 대신 로그가 찍힐
+        # 때까지 짧게 폴링하되 상한(2초)을 둬서, 정말 안 찍히는 회귀는 여전히 잡아낸다.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if any("실패" in record.message for record in caplog.records):
+                break
+            time.sleep(0.01)
     assert any("실패" in record.message for record in caplog.records)
