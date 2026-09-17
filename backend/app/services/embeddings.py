@@ -39,7 +39,12 @@ def _model():
     조금 느릴 수 있다(이후 호출부터는 캐시된 인스턴스를 즉시 반환)."""
     from sentence_transformers import SentenceTransformer
 
-    return SentenceTransformer(EMBEDDING_MODEL)
+    # 2026-09-17 -- model.safetensors는 BAAI/bge-m3의 main 리비전엔 없는 파일이고, 허깅페이스가
+    # 온라인에서만 조회 가능한 별도 자동 변환 리비전으로 제공하는 것뿐이다(실제 컨테이너
+    # 실행으로 확인 -- HF_HUB_OFFLINE=1인 이 런타임에서 그 리비전을 못 찾아 로딩이 실패했다).
+    # Dockerfile이 정식 main 파일인 pytorch_model.bin만 받아두므로 여기서도 그것만 쓰도록
+    # 명시한다 -- use_safetensors=True로 두면 오프라인에서 매번 이 실패가 재현된다.
+    return SentenceTransformer(EMBEDDING_MODEL, model_kwargs={"use_safetensors": False})
 
 
 def _compute_embeddings(texts: list[str]) -> list[list[float]]:
