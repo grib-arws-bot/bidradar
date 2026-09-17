@@ -65,9 +65,15 @@ def _notice_embedding_text(title: str, org_name: str | None, region: str | None,
     return " · ".join(p for p in parts if p)
 
 
-def embed_customer_interest_text(profile: dict) -> str:
-    """고객이 선택한 관심주제 이름(+우선순위가 normal이 아니면 함께)·커스텀 키워드를 합친
-    텍스트 — 이 텍스트의 임베딩과 공고 임베딩의 코사인 유사도로 매칭한다."""
+def embed_customer_interest_text(profile: dict, profile_summary_md: str | None = None) -> str:
+    """고객이 선택한 관심주제 이름(+우선순위가 normal이 아니면 함께)·커스텀 키워드·
+    (있다면) AI 프로필 요약을 합친 텍스트 — 이 텍스트의 임베딩과 공고 임베딩의 코사인
+    유사도로 매칭한다.
+
+    2026-09-17 -- 프로필 요약(customer.profile_summary_md, 소개서 기반 LLM 요약)은 이미
+    존재하는데 이제껏 어떤 매칭 경로에서도 안 쓰였다 -- 관심주제 몇 개·키워드 몇 단어보다
+    훨씬 풍부한 신호라 우선순위를 높여 반영한다(사용자 지시). 관심주제/키워드가 아예 없는
+    고객도 소개서만 있으면 의미 있는 매칭이 가능해진다."""
     topic_names = {t["id"]: t["name"] for t in profile.get("topics", [])}
     topic_parts = []
     for topic_id in profile.get("topic_ids", []):
@@ -76,7 +82,10 @@ def embed_customer_interest_text(profile: dict) -> str:
             continue
         priority = profile.get("topic_priorities", {}).get(topic_id, "normal")
         topic_parts.append(f"{name}({priority})" if priority != "normal" else name)
-    return " · ".join(topic_parts + list(profile.get("terms", [])))
+    text = " · ".join(topic_parts + list(profile.get("terms", [])))
+    if profile_summary_md:
+        text = f"{text}\n\n{profile_summary_md}" if text else profile_summary_md
+    return text
 
 
 def _pending_embedding_notice_ids(conn: Connection, source_id: int | None, limit: int) -> list[int]:

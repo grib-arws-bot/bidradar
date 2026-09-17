@@ -133,3 +133,14 @@ def test_embed_customer_interest_text_includes_topics_and_terms():
     assert "AI/데이터(high)" in text
     assert "로봇/자동화" in text
     assert "스마트팜" in text
+
+
+def test_embed_customer_interest_text_includes_profile_summary_when_present():
+    profile = {"topics": [], "topic_ids": [], "topic_priorities": {}, "terms": []}
+    text = embed_customer_interest_text(profile, "AI 기반 산업안전 CCTV 솔루션을 제공하는 회사")
+    assert "AI 기반 산업안전 CCTV 솔루션을 제공하는 회사" in text
+
+
+def test_embed_customer_interest_text_without_profile_summary_unchanged():
+    profile = {"topics": [{"id": 1, "name": "AI/데이터"}], "topic_ids": [1], "topic_priorities": {}, "terms": []}
+    assert embed_customer_interest_text(profile) == embed_customer_interest_text(profile, None)

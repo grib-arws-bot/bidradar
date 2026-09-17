@@ -22,7 +22,7 @@ from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
-from app.models import interest_topic, notice, notice_score, source
+from app.models import customer, interest_topic, notice, notice_score, source
 from app.services.cosine_matching import top_matches_cosine
 from app.services.customer_interest import InterestDraft, get_interest_profile
 
@@ -67,7 +67,18 @@ def _draft() -> InterestDraft:
 
 
 def _profile() -> dict:
-    return {"topics": [{"id": 1, "name": "테스트주제"}], "topic_ids": [1], "topic_priorities": {}, "terms": []}
+    # customer_id는 top_matches_cosine이 AI 프로필 요약(profile_summary_md)을 조회할 때 쓴다
+    # (2026-09-17) — get_interest_profile()이 실제로 채워주는 필드라 여기서도 실제 고객 하나를
+    # 가리키게 한다(시드 데이터의 "그립" 내부 고객 등 항상 최소 1건 존재).
+    with engine.connect() as conn:
+        customer_id = conn.execute(select(customer.c.id).limit(1)).scalar_one()
+    return {
+        "customer_id": customer_id,
+        "topics": [{"id": 1, "name": "테스트주제"}],
+        "topic_ids": [1],
+        "topic_priorities": {},
+        "terms": [],
+    }
 
 
 def test_excludes_notices_without_embedding():
