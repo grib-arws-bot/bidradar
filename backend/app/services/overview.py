@@ -16,7 +16,16 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import desc, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import customer, customer_interest, newsletter_report, notice, report_send_log
+from app.models import (
+    analysis,
+    customer,
+    customer_interest,
+    newsletter_report,
+    notice,
+    notice_strategy,
+    report_send_log,
+    source_run,
+)
 from app.services.llm_usage import get_llm_usage_summary
 from app.services.source_registry import list_sources
 from app.services.system_resources import get_system_resources
@@ -141,6 +150,42 @@ NOTICE_DAILY_SERIES_DAYS = 14
 NOTICE_TOTAL_SOURCE_ID = None  # "전체" 합산 계열의 source_id — 실제 소스 id와 안 겹치게 None
 
 
+def _daily_kst_dates(days: int) -> tuple[date, list[str]]:
+    """공고 그래프와 같은 규칙 — KST 자정 기준 최근 days일, 오늘은 현재까지만(쿼리 시점
+    이후는 애초에 데이터가 없으니 별도 처리 불필요, 2026-09-17 사용자 지시)."""
+    start_date = (datetime.now(_KST) - timedelta(days=days - 1)).date()
+    return start_date, [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
+
+
+def _daily_kst_series(conn: Connection, date_col, days: int, extra_where=None) -> list[int]:
+    """date_col 기준 최근 days일(KST)의 일별 건수 하나. NULL인 date_col은 day_expr 자체가
+    NULL이 돼 자동으로 제외된다(예: embedded_at 미완료 건은 extra_where 없이도 안 셈)."""
+    day_expr = func.date(func.timezone("Asia/Seoul", date_col))
+    start_date, _ = _daily_kst_dates(days)
+    stmt = select(day_expr.label("day"), func.count().label("n")).where(day_expr >= start_date).group_by(day_expr)
+    if extra_where is not None:
+        stmt = stmt.where(extra_where)
+    counts_by_day = {r.day: r.n for r in conn.execute(stmt).all()}
+    return [counts_by_day.get(start_date + timedelta(days=i), 0) for i in range(days)]
+
+
+def _daily_kst_cumulative(conn: Connection, date_col, days: int, extra_where=None) -> list[int]:
+    """_daily_kst_series와 같은 날짜 규칙의 누적(러닝토탈) 버전 — "임베딩 완료 누적" 계열용."""
+    day_expr = func.date(func.timezone("Asia/Seoul", date_col))
+    start_date, _ = _daily_kst_dates(days)
+    before_stmt = select(func.count()).where(day_expr < start_date)
+    if extra_where is not None:
+        before_stmt = before_stmt.where(extra_where)
+    running = conn.execute(before_stmt).scalar_one()
+
+    daily_counts = _daily_kst_series(conn, date_col, days, extra_where)
+    cumulative = []
+    for c in daily_counts:
+        running += c
+        cumulative.append(running)
+    return cumulative
+
+
 def _notice_daily_raw_data(conn: Connection, days: int):
     """두 그래프가 공통으로 쓰는 원자료 — (날짜 목록, 소스명 매핑, 소스별 window-이전 누적,
     소스별 일별 신규 건수). 분석상태별 구분(미분석/첨부분석완료/AI분석완료)은 2026-09-12
@@ -205,8 +250,66 @@ def get_notice_overview(conn: Connection) -> dict:
     cumulative_series.append(
         {"source_id": NOTICE_TOTAL_SOURCE_ID, "source_name": "전체", "counts": cumulative_grand_total}
     )
+    # 2026-09-17 사용자 지시 — 코사인 매칭 임베딩 백필 진행 상황을 매번 SQL로 직접 확인하지
+    # 않아도 되게, 이 그래프에 "임베딩 완료 누적" 계열을 하나 더 얹는다(embedded_at 기준).
+    cumulative_series.append(
+        {
+            "source_id": NOTICE_TOTAL_SOURCE_ID,
+            "source_name": "임베딩 완료 누적",
+            "counts": _daily_kst_cumulative(conn, notice.c.embedded_at, days),
+        }
+    )
 
     return {
         "cumulative_daily": {"dates": dates, "series": cumulative_series},
         "collected_daily": {"dates": dates, "series": collected_series},
+    }
+
+
+def get_ai_processing_overview(conn: Connection) -> dict:
+    """신규 그래프 — 일별 AI 처리 현황(2026-09-17 사용자 지시, 검토 대화에서 제안한 "일별
+    AI분석 수"+"사업전략 생성 건수"를 한 그래프로 묶음, 카드 3개↔그래프 4개 제약 안에
+    담기 위해). analysis 테이블은 현재 step="A2_structure"만 실제로 쓰인다(A1은 별도
+    analysis_doc 테이블, A5/A6는 아직 미구현) — 그래도 다른 step이 생겨도 "AI분석" 계열이
+    A2만 세도록 명시 필터를 둔다."""
+    days = NOTICE_DAILY_SERIES_DAYS
+    _, dates = _daily_kst_dates(days)
+    return {
+        "dates": dates,
+        "series": [
+            {
+                "name": "AI분석(A2)",
+                "counts": _daily_kst_series(conn, analysis.c.created_at, days, analysis.c.step == "A2_structure"),
+            },
+            {
+                "name": "사업전략 생성",
+                "counts": _daily_kst_series(conn, notice_strategy.c.created_at, days),
+            },
+        ],
+    }
+
+
+def get_ops_overview(conn: Connection) -> dict:
+    """신규 그래프 — 일별 운영 현황(수집 성공/실패 + 리포트 발송, 2026-09-17). source_run의
+    status(ok/warn/fail/inactive) 중 warn은 "성공은 했지만 주의가 필요한 상태"라 성공 쪽에
+    합산한다 — 실패(fail)와 구분이 중요한 건 "그날 수집 자체가 안 됐는지"이지 warn 여부까지
+    별도 계열로 쪼개면(리포트 발송과 합쳐 4계열) 오히려 읽기 어려워진다는 판단."""
+    days = NOTICE_DAILY_SERIES_DAYS
+    _, dates = _daily_kst_dates(days)
+    return {
+        "dates": dates,
+        "series": [
+            {
+                "name": "수집 성공",
+                "counts": _daily_kst_series(conn, source_run.c.run_at, days, source_run.c.status.in_(["ok", "warn"])),
+            },
+            {
+                "name": "수집 실패",
+                "counts": _daily_kst_series(conn, source_run.c.run_at, days, source_run.c.status == "fail"),
+            },
+            {
+                "name": "리포트 발송",
+                "counts": _daily_kst_series(conn, report_send_log.c.sent_at, days),
+            },
+        ],
     }

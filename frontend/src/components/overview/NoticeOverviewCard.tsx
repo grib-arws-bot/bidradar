@@ -6,7 +6,15 @@ import { useState } from "react";
 import Chart from "react-apexcharts";
 import type { ApexOptions } from "apexcharts";
 
-import { fetchNoticeOverview, fetchSystemOverview, type ChannelStatus, type NoticeDailyChart } from "@/api/overview";
+import {
+  fetchAiProcessingOverview,
+  fetchNoticeOverview,
+  fetchOpsOverview,
+  fetchSystemOverview,
+  type ChannelStatus,
+  type DailySeriesChart,
+  type NoticeDailyChart,
+} from "@/api/overview";
 
 const STATUS_LABEL: Record<string, { label: string; color: "success" | "warning" | "error" | "default" }> = {
   ok: { label: "정상", color: "success" },
@@ -98,6 +106,63 @@ function DailyLineChart({ title, chart, onExpand }: { title: string; chart: Noti
   );
 }
 
+// 2026-09-17 — "일별 AI 처리 현황"·"일별 운영 현황" 그래프용. 위 dailyChartSeriesAndOptions는
+// "소스별 얇은 선 + 전체 굵은 선"이 전제인데, 이 두 그래프는 그런 "전체 합산" 개념이 없는
+// 대등한 계열 2~3개(예: AI분석/사업전략, 수집성공/수집실패/리포트발송)라 완전히 같은 굵기로
+// 그리고, 옆에 별도 범례 카드가 없으니 그래프 자체에 범례를 표시한다.
+function simpleDailyChartSeriesAndOptions(chart: DailySeriesChart): { options: ApexOptions; series: ApexOptions["series"] } {
+  const categories = chart.dates.map(monthDayLabel);
+  return {
+    options: {
+      chart: { toolbar: { show: false } },
+      xaxis: { categories },
+      yaxis: { labels: { formatter: (v: number) => v.toFixed(0) } },
+      stroke: { width: 2, curve: "smooth" },
+      dataLabels: { enabled: false },
+      colors: chart.series.map((_, i) => colorForIndex(i)),
+      legend: { show: true, position: "top", horizontalAlign: "left" },
+      grid: { padding: { left: 8, right: 8 } },
+    },
+    series: chart.series.map((s) => ({ name: s.name, data: s.counts })),
+  };
+}
+
+function SimpleDailyLineChart({ title, chart, onExpand }: { title: string; chart: DailySeriesChart; onExpand: () => void }) {
+  const { options, series } = simpleDailyChartSeriesAndOptions(chart);
+
+  return (
+    <Grid size={{ xs: 12, md: 6 }}>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        {title}
+      </Typography>
+      <Box
+        onClick={onExpand}
+        sx={{
+          position: "relative",
+          cursor: "pointer",
+          borderRadius: 1,
+          "&:hover": { bgcolor: "action.hover" },
+          "&:hover .expand-hint": { opacity: 1 },
+        }}
+      >
+        <Box
+          className="expand-hint"
+          sx={{
+            position: "absolute", top: 4, right: 4, zIndex: 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 28, height: 28, borderRadius: "50%",
+            bgcolor: "background.paper", boxShadow: 1,
+            opacity: 0, transition: "opacity 0.15s",
+          }}
+        >
+          <ZoomInIcon fontSize="small" color="action" />
+        </Box>
+        <Chart type="line" height={280} options={options} series={series} />
+      </Box>
+    </Grid>
+  );
+}
+
 // 그래프 범례를 겸하는 "데이터 수집채널" 목록 — 소스 순서를 collected_daily.series(그래프가
 // 실제로 그리는 순서)와 맞춰서 점 색을 매핑한다(채널 목록·그래프 계열이 다른 조회라 소스
 // 구성이 완전히 일치하지 않을 수 있어, 못 찾으면 회색으로 표시).
@@ -146,7 +211,13 @@ function ChannelLegend({ channels, sourceOrder }: { channels: ChannelStatus[]; s
 export function NoticeOverviewCard() {
   const { data, isLoading } = useQuery({ queryKey: ["overview-notices"], queryFn: fetchNoticeOverview });
   const { data: systemData } = useQuery({ queryKey: ["overview-system"], queryFn: fetchSystemOverview });
-  const [expanded, setExpanded] = useState<{ title: string; chart: NoticeDailyChart } | null>(null);
+  const { data: aiData } = useQuery({ queryKey: ["overview-ai-processing"], queryFn: fetchAiProcessingOverview });
+  const { data: opsData } = useQuery({ queryKey: ["overview-ops"], queryFn: fetchOpsOverview });
+  const [expanded, setExpanded] = useState<
+    | { kind: "source"; title: string; chart: NoticeDailyChart }
+    | { kind: "simple"; title: string; chart: DailySeriesChart }
+    | null
+  >(null);
 
   if (isLoading || !data) {
     return (
@@ -164,7 +235,10 @@ export function NoticeOverviewCard() {
 
   const cumulativeTitle = "누적 데이터(일별, 소스별+전체, 삭제 데이터 제외)";
   const collectedTitle = "수집 데이터(일별, 소스별+전체)";
-  const expandedChart = expanded && dailyChartSeriesAndOptions(expanded.chart);
+  const aiTitle = "AI 처리 현황(일별, AI분석+사업전략 생성)";
+  const opsTitle = "운영 현황(일별, 수집 성공/실패+리포트 발송)";
+  const expandedChart =
+    expanded && (expanded.kind === "source" ? dailyChartSeriesAndOptions(expanded.chart) : simpleDailyChartSeriesAndOptions(expanded.chart));
 
   return (
     <Card sx={{ p: 3 }}>
@@ -176,13 +250,27 @@ export function NoticeOverviewCard() {
         <DailyLineChart
           title={cumulativeTitle}
           chart={data.cumulative_daily}
-          onExpand={() => setExpanded({ title: cumulativeTitle, chart: data.cumulative_daily })}
+          onExpand={() => setExpanded({ kind: "source", title: cumulativeTitle, chart: data.cumulative_daily })}
         />
         <DailyLineChart
           title={collectedTitle}
           chart={data.collected_daily}
-          onExpand={() => setExpanded({ title: collectedTitle, chart: data.collected_daily })}
+          onExpand={() => setExpanded({ kind: "source", title: collectedTitle, chart: data.collected_daily })}
         />
+        {aiData && (
+          <SimpleDailyLineChart
+            title={aiTitle}
+            chart={aiData}
+            onExpand={() => setExpanded({ kind: "simple", title: aiTitle, chart: aiData })}
+          />
+        )}
+        {opsData && (
+          <SimpleDailyLineChart
+            title={opsTitle}
+            chart={opsData}
+            onExpand={() => setExpanded({ kind: "simple", title: opsTitle, chart: opsData })}
+          />
+        )}
       </Grid>
 
       <Dialog open={!!expanded} onClose={() => setExpanded(null)} maxWidth="lg" fullWidth>

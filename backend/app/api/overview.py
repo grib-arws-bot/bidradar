@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends
 
 from app.db import engine
 from app.deps import require_auth
-from app.services.overview import get_customer_overview, get_notice_overview, get_system_overview
+from app.services.overview import (
+    get_ai_processing_overview,
+    get_customer_overview,
+    get_notice_overview,
+    get_ops_overview,
+    get_system_overview,
+)
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 
@@ -28,3 +34,17 @@ def get_system_overview_route(_email: str = Depends(require_auth)) -> dict:
 def get_notice_overview_route(_email: str = Depends(require_auth)) -> dict:
     with engine.connect() as conn:
         return get_notice_overview(conn)
+
+
+# 2026-09-17 — "공고 데이터" 카드에 그래프 2개 추가(일별 AI 처리 현황·일별 운영 현황). 위와
+# 같은 이유로 별도 엔드포인트로 분리해 병렬 로딩한다.
+@router.get("/ai-processing")
+def get_ai_processing_overview_route(_email: str = Depends(require_auth)) -> dict:
+    with engine.connect() as conn:
+        return get_ai_processing_overview(conn)
+
+
+@router.get("/ops")
+def get_ops_overview_route(_email: str = Depends(require_auth)) -> dict:
+    with engine.connect() as conn:
+        return get_ops_overview(conn)

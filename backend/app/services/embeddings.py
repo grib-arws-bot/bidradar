@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from app.db import engine
@@ -119,7 +119,11 @@ def embed_one_notice(notice_id: int) -> None:
             return
         text = _notice_embedding_text(row["title"], row["org_name"], row["region"], row["stage"])
         embedding = _compute_embeddings([text])[0]
-        conn.execute(notice.update().where(notice.c.id == notice_id).values(embedding=embedding))
+        conn.execute(
+            notice.update()
+            .where(notice.c.id == notice_id)
+            .values(embedding=embedding, embedded_at=func.now())
+        )
 
 
 def run_pending_embeddings(source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT) -> dict:

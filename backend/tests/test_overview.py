@@ -16,7 +16,14 @@ from fastapi.testclient import TestClient
 
 from app.db import engine
 from app.main import app
-from app.services.overview import _last_n_months, get_customer_overview, get_notice_overview, get_system_overview
+from app.services.overview import (
+    _last_n_months,
+    get_ai_processing_overview,
+    get_customer_overview,
+    get_notice_overview,
+    get_ops_overview,
+    get_system_overview,
+)
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -125,14 +132,73 @@ def test_get_notice_overview_cumulative_total_is_non_decreasing():
 
 
 def test_get_notice_overview_cumulative_total_equals_sum_of_sources():
-    """"전체" 누적 계열은 소스별 누적 계열들의 합과 매 날짜마다 같아야 한다."""
+    """"전체" 누적 계열은 소스별 누적 계열들의 합과 매 날짜마다 같아야 한다. "임베딩 완료
+    누적"(2026-09-17 추가, source_id=None)은 "전체"와 마찬가지로 소스 합산이 아니므로
+    source_id로 걸러야 한다 — 이름만으로 거르면 이 계열까지 "소스"로 잘못 합산된다."""
     with engine.connect() as conn:
         result = get_notice_overview(conn)
     series = result["cumulative_daily"]["series"]
     total = _series_by_name(series, "전체")["counts"]
-    per_source = [s for s in series if s["source_name"] != "전체"]
+    per_source = [s for s in series if s["source_id"] is not None]
     for i in range(len(total)):
         assert total[i] == sum(s["counts"][i] for s in per_source)
+
+
+def test_get_notice_overview_embedded_cumulative_series_present_and_non_decreasing():
+    """2026-09-17 추가 — "임베딩 완료 누적"은 cumulative_daily에만 있고(collected_daily엔
+    없음), 러닝토탈이라 날짜가 지날수록 줄어들면 안 된다."""
+    with engine.connect() as conn:
+        result = get_notice_overview(conn)
+    embedded = _series_by_name(result["cumulative_daily"]["series"], "임베딩 완료 누적")["counts"]
+    assert len(embedded) == 14
+    assert all(embedded[i] <= embedded[i + 1] for i in range(len(embedded) - 1))
+    assert not any(s["source_name"] == "임베딩 완료 누적" for s in result["collected_daily"]["series"])
+
+
+def test_get_ai_processing_overview_shape():
+    with engine.connect() as conn:
+        result = get_ai_processing_overview(conn)
+    assert len(result["dates"]) == 14
+    names = {s["name"] for s in result["series"]}
+    assert names == {"AI분석(A2)", "사업전략 생성"}
+    for s in result["series"]:
+        assert len(s["counts"]) == 14
+        assert all(c >= 0 for c in s["counts"])
+
+
+def test_get_ops_overview_shape():
+    with engine.connect() as conn:
+        result = get_ops_overview(conn)
+    assert len(result["dates"]) == 14
+    names = {s["name"] for s in result["series"]}
+    assert names == {"수집 성공", "수집 실패", "리포트 발송"}
+    for s in result["series"]:
+        assert len(s["counts"]) == 14
+        assert all(c >= 0 for c in s["counts"])
+
+
+def test_overview_ai_processing_requires_auth():
+    assert TestClient(app).get("/api/overview/ai-processing").status_code == 401
+
+
+def test_overview_ops_requires_auth():
+    assert TestClient(app).get("/api/overview/ops").status_code == 401
+
+
+def test_overview_ai_processing_shape(client: TestClient):
+    response = client.get("/api/overview/ai-processing")
+    assert response.status_code == 200
+    body = response.json()
+    assert {"dates", "series"} <= body.keys()
+    assert len(body["dates"]) == 14
+
+
+def test_overview_ops_shape(client: TestClient):
+    response = client.get("/api/overview/ops")
+    assert response.status_code == 200
+    body = response.json()
+    assert {"dates", "series"} <= body.keys()
+    assert len(body["dates"]) == 14
 
 
 def test_get_notice_overview_collected_total_matches_cumulative_day_over_day_growth():

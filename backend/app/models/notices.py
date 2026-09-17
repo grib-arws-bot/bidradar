@@ -90,9 +90,14 @@ notice = Table(
     # 나머지는 이 컬럼에 최신 건의 id를 채워 무효화 표시한다 — 하드 삭제는 안 함(감사·추적
     # 가능성 유지). NULL이면 아직 유효(최신)한 공고. app/services/notice_dedup.py.
     Column("superseded_by_notice_id", Integer, ForeignKey("notice.id", ondelete="SET NULL")),
-    # 코사인 유사도 매칭(2026-09-16) — 제목+발주기관+지역+단계를 OpenAI로 임베딩한 벡터.
-    # 배치(app/services/embeddings.py)가 서서히 채우므로 NULL이 정상(아직 처리 안 됨).
+    # 코사인 유사도 매칭(2026-09-16) — 제목+발주기관+지역+단계를 자체 호스팅 bge-m3로 임베딩한
+    # 벡터(자체 호스팅 전환은 의사결정_로그 159번). 배치(app/services/embeddings.py)가 서서히
+    # 채우므로 NULL이 정상(아직 처리 안 됨).
     Column("embedding", Vector(EMBEDDING_DIM)),
+    # 임베딩이 실제로 채워진 시각(2026-09-17, 전체 현황 "누적 데이터" 그래프의 "임베딩 완료
+    # 누적" 계열용) — embedding 자체엔 시각 정보가 없어 이 컬럼 없이는 "언제 얼마나 채워졌는지"
+    # 과거 추이를 재구성할 방법이 없다. NULL이면 아직 미완료.
+    Column("embedded_at", DateTime(timezone=True)),
 )
 
 notice_version = Table(

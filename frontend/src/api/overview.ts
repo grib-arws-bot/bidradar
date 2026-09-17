@@ -104,3 +104,25 @@ export async function fetchNoticeOverview(): Promise<NoticeOverview> {
   const { data } = await apiClient.get<NoticeOverview>("/overview/notices");
   return data;
 }
+
+// 2026-09-17 — "공고 데이터" 카드에 그래프 2개 추가. 소스별 계열이 없는 단순한 이름표 기반
+// 계열이라 NoticeDailyChart(source_id 필수)와는 별도 타입으로 둔다.
+export interface DailyNamedSeries {
+  name: string;
+  counts: number[];
+}
+
+export interface DailySeriesChart {
+  dates: string[]; // "YYYY-MM-DD"(KST), 최근 14일
+  series: DailyNamedSeries[];
+}
+
+export async function fetchAiProcessingOverview(): Promise<DailySeriesChart> {
+  const { data } = await apiClient.get<DailySeriesChart>("/overview/ai-processing");
+  return data;
+}
+
+export async function fetchOpsOverview(): Promise<DailySeriesChart> {
+  const { data } = await apiClient.get<DailySeriesChart>("/overview/ops");
+  return data;
+}
