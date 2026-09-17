@@ -86,6 +86,17 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-bidradar}:${POSTGRES_PASSWORD:-bidradar}@db:5432/${POSTGRES_DB:-bidradar}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # 2026-09-17 -- 고객 보고서 자동발송(run_due_customer_emails)이 이 scheduler 프로세스
+      # 안에서 도는데, backend 서비스에만 SMTP_* 를 넣어놔서 여기선 SMTP_HOST가 항상
+      # 빈 문자열이었다 -- 예약 발송이 실제로 걸린 순간(오늘 13:00 KST)에야 "SMTP 미설정"으로
+      # 실패하는 게 로그로 드러났다(재시도 로직이 없어 그 분(分)을 놓치면 다음 예정 시각까지
+      # 그냥 넘어간다). backend와 동일하게 맞춘다.
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-report@grib.co.kr}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:13200}
     volumes:
       - ./logs:/app/logs
     depends_on:
