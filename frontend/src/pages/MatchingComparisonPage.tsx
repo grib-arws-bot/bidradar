@@ -1,4 +1,4 @@
-import { Alert, Box, Card, Chip, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
@@ -132,6 +132,16 @@ export function MatchingComparisonPage() {
           </MenuItem>
         ))}
       </TextField>
+
+      {compareQuery.isFetching && (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
+          <CircularProgress size={20} />
+          <Typography variant="body2" color="text.secondary">
+            비교 결과 계산 중... (코사인 유사도 모델이 이번 서버 재시작 후 처음 쓰이는
+            경우 1분 가까이 걸릴 수 있습니다 — 이후 요청부터는 훨씬 빨라집니다)
+          </Typography>
+        </Stack>
+      )}
 
       {compareQuery.isError && (
         <Alert severity="error">{apiErrorMessage(compareQuery.error, "비교 결과를 불러오지 못했습니다.")}</Alert>
