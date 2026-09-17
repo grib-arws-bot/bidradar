@@ -134,6 +134,17 @@ jobs:
           Write-Host "    If this looks good, run 'Deploy - Production' from the GitHub Actions tab."
           Write-Host "    (Optional manual look: http://127.0.0.1:${env:FRONTEND_HOST_PORT}/ )"
 
+      # 2026-09-17 -- 이 잡은 scheduler를 "이미지가 정상 기동하는지" 확인 용도로만 띄운다.
+      # 그런데 "docker compose up -d"는 잡이 끝나도 컨테이너를 안 내려서, scheduler가 매번
+      # 다음 배포 때까지(길게는 며칠) 계속 살아 run_due_sources(실제 나라장터 등 외부 사이트
+      # 크롤링)를 prod와 별개로 매분 계속 돌리고 있었다(실측으로 발견 -- 4시간 넘게 방치된
+      # 사례). backend/frontend는 그냥 HTTP를 서빙할 뿐이라 계속 떠 있어도 부작용이 없지만
+      # scheduler는 외부에 실제 요청을 내보내므로 이것만 멈춘다.
+      - name: 스테이징 스케줄러 중지 (실제 외부 소스 크롤링 방지)
+        shell: powershell
+        working-directory: infra
+        run: docker compose stop scheduler
+
       - name: .env 파일 정리(시크릿 잔존 방지)
         if: always()
         shell: powershell
