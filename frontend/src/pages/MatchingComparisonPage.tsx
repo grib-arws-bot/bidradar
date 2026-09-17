@@ -1,4 +1,4 @@
-import { Alert, Box, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
@@ -86,8 +86,12 @@ function MatchColumn({
 }
 
 // 관심공고 추천이 규칙(키워드) 매칭 하나뿐이라 "관계없는 것들이 섞인다"는 지적에, 코사인
-// 유사도 매칭을 나란히 계산해 두 방식을 비교해보는 페이지(2026-09-16, 의사결정_로그
-// 157/158번 후속). 아직 규칙 매칭을 대체하지 않는다 — 눈으로 먼저 비교해보기 위함.
+// 유사도 매칭을 나란히 계산해 비교해보는 페이지(2026-09-16, 의사결정_로그 157/158번 후속).
+// 아직 규칙 매칭을 대체하지 않는다 — 눈으로 먼저 비교해보기 위함. 2026-09-17 — 규칙 매칭과
+// 코사인(제목만)의 일치율이 20건 중 2~3건으로 너무 낮다는 지적에, 규칙 매칭은 이미 A1 첨부
+// 텍스트로 재채점한다는 걸 확인하고 코사인(첨부 포함)을 추가해 3방향 비교로 확장했다. 또한
+// 코사인 계산이 모델 첫 로딩 시 1분 가까이 걸릴 수 있어(관측됨), 고객 선택만으로 자동 실행
+// 하지 않고 "매칭 시작" 버튼을 눌러야 계산하도록 바꿨다(사용자 지시).
 export function MatchingComparisonPage() {
   const customersQuery = useQuery({ queryKey: ["customers"], queryFn: fetchCustomers });
   const [customerId, setCustomerId] = useState<number | null>(null);
@@ -101,37 +105,47 @@ export function MatchingComparisonPage() {
   const compareQuery = useQuery({
     queryKey: ["interest-matches-compare", customerId],
     queryFn: () => fetchInterestMatchesCompare(customerId!),
-    enabled: customerId !== null,
+    enabled: false, // 자동 실행 안 함 — "매칭 시작" 버튼을 눌러야 refetch()로 계산
     retry: false,
   });
 
   const ruleIds = new Set((compareQuery.data?.rule_based ?? []).map((m) => m.id));
   const cosineIds = new Set((compareQuery.data?.cosine ?? []).map((m) => m.id));
+  const cosineAttachmentIds = new Set((compareQuery.data?.cosine_attachment ?? []).map((m) => m.id));
 
   return (
     <Stack spacing={3}>
       <Box>
         <Typography variant="h2">매칭 방식 비교</Typography>
         <Typography variant="body2" color="text.secondary">
-          규칙(키워드) 매칭과 코사인 유사도 매칭이 같은 고객에게 얼마나 다르게 추천하는지
-          비교합니다. 초록 테두리는 두 방식이 모두 추천한 공고입니다.
+          규칙(키워드) 매칭·코사인 유사도(제목만)·코사인 유사도(첨부 포함)가 같은 고객에게
+          얼마나 다르게 추천하는지 비교합니다. 초록 테두리는 다른 방식에서도 나온 공고입니다.
         </Typography>
       </Box>
 
-      <TextField
-        select
-        size="small"
-        label="고객"
-        value={customerId ?? ""}
-        onChange={(e) => setCustomerId(Number(e.target.value))}
-        sx={{ maxWidth: 320 }}
-      >
-        {(customersQuery.data ?? []).map((c) => (
-          <MenuItem key={c.id} value={c.id}>
-            {c.name}
-          </MenuItem>
-        ))}
-      </TextField>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <TextField
+          select
+          size="small"
+          label="고객"
+          value={customerId ?? ""}
+          onChange={(e) => setCustomerId(Number(e.target.value))}
+          sx={{ maxWidth: 320 }}
+        >
+          {(customersQuery.data ?? []).map((c) => (
+            <MenuItem key={c.id} value={c.id}>
+              {c.name}
+            </MenuItem>
+          ))}
+        </TextField>
+        <Button
+          variant="contained"
+          disabled={customerId === null || compareQuery.isFetching}
+          onClick={() => compareQuery.refetch()}
+        >
+          매칭 시작
+        </Button>
+      </Stack>
 
       {compareQuery.isFetching && (
         <Stack direction="row" spacing={1.5} alignItems="center" sx={{ py: 2 }}>
@@ -149,24 +163,37 @@ export function MatchingComparisonPage() {
 
       {compareQuery.data && compareQuery.data.pending_embeddings > 0 && (
         <Alert severity="info">
-          아직 임베딩 계산이 안 된 공고 {compareQuery.data.pending_embeddings}건이 있어 코사인
-          결과에서 제외됐습니다 — 배치가 10분마다 자동으로 채웁니다.
+          아직 임베딩(제목) 계산이 안 된 공고 {compareQuery.data.pending_embeddings}건이 있어
+          코사인(제목만) 결과에서 제외됐습니다 — 배치가 10분마다 자동으로 채웁니다.
+        </Alert>
+      )}
+
+      {compareQuery.data && compareQuery.data.pending_embeddings_attachment > 0 && (
+        <Alert severity="info">
+          아직 임베딩(첨부 포함) 계산이 안 된 공고 {compareQuery.data.pending_embeddings_attachment}건이
+          있어 코사인(첨부 포함) 결과에서 제외됐습니다 — 배치가 10분마다 자동으로 채웁니다.
         </Alert>
       )}
 
       {compareQuery.data && (
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 3 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 1fr" }, gap: 3 }}>
           <MatchColumn
             title="규칙 매칭"
             items={compareQuery.data.rule_based}
-            otherIds={cosineIds}
+            otherIds={new Set([...cosineIds, ...cosineAttachmentIds])}
             emptyHint="규칙 매칭 결과가 없습니다."
           />
           <MatchColumn
-            title="코사인 유사도 매칭"
+            title="코사인 유사도(제목만)"
             items={compareQuery.data.cosine}
-            otherIds={ruleIds}
-            emptyHint="코사인 매칭 결과가 없습니다 — 공고 임베딩이 아직 없거나 OPENAI_API_KEY 미설정일 수 있습니다."
+            otherIds={new Set([...ruleIds, ...cosineAttachmentIds])}
+            emptyHint="코사인 매칭 결과가 없습니다 — 공고 임베딩이 아직 없을 수 있습니다."
+          />
+          <MatchColumn
+            title="코사인 유사도(첨부 포함)"
+            items={compareQuery.data.cosine_attachment}
+            otherIds={new Set([...ruleIds, ...cosineIds])}
+            emptyHint="코사인 매칭 결과가 없습니다 — 첨부 임베딩이 아직 없을 수 있습니다."
           />
         </Box>
       )}

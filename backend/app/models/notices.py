@@ -98,6 +98,13 @@ notice = Table(
     # 누적" 계열용) — embedding 자체엔 시각 정보가 없어 이 컬럼 없이는 "언제 얼마나 채워졌는지"
     # 과거 추이를 재구성할 방법이 없다. NULL이면 아직 미완료.
     Column("embedded_at", DateTime(timezone=True)),
+    # 2026-09-17 — 제목만으로는 규칙 매칭(첨부 전체를 이미 반영, rule_ver=2)과 정보량 차이가
+    # 너무 커서(20건 중 2~3건만 일치) 비교가 무의미하다는 지적 — A1 첨부 전체 추출 텍스트를
+    # 더한 두 번째 임베딩을 별도 컬럼에 둔다. embedding을 덮어쓰지 않는 이유: 덮어쓰면
+    # "제목만" 결과가 사라져 매칭 방식 비교 화면에서 3방향 비교(규칙/코사인-제목/코사인-첨부)
+    # 자체가 불가능해진다.
+    Column("embedding_a1", Vector(EMBEDDING_DIM)),
+    Column("embedded_a1_at", DateTime(timezone=True)),
 )
 
 notice_version = Table(

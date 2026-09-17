@@ -44,12 +44,14 @@ def client() -> TestClient:
     return c
 
 
-def _make_notice(conn, source_id: int, *, embedding=None, close_dt=None, title="[테스트] 코사인 매칭") -> int:
+def _make_notice(
+    conn, source_id: int, *, embedding=None, embedding_a1=None, close_dt=None, title="[테스트] 코사인 매칭"
+) -> int:
     return conn.execute(
         insert(notice).values(
             source_id=source_id, source_ver=1, stage="입찰공고", title=title,
             url=f"https://example.grib-test.kr/notice/cosine-{id(object())}",
-            embedding=embedding, close_dt=close_dt,
+            embedding=embedding, embedding_a1=embedding_a1, close_dt=close_dt,
         ).returning(notice.c.id)
     ).scalar_one()
 
@@ -136,16 +138,36 @@ def test_orders_by_similarity_closest_first():
         _cleanup([close_id, far_id])
 
 
-def test_compare_endpoint_returns_both_result_shapes(client: TestClient):
-    """API 계층 배선 확인 — 규칙 매칭·코사인 매칭 결과를 한 응답에 같이 담아 돌려주는지만
-    본다(각 알고리즘의 세부 동작은 위 서비스 계층 테스트가 이미 검증)."""
+def test_top_matches_cosine_attachment_variant_uses_embedding_a1_column():
+    """variant="attachment"는 embedding이 아니라 embedding_a1을 봐야 한다 — 반대로 채워진
+    공고(embedding만 있고 embedding_a1은 없음)는 이 variant에서 제외돼야 한다."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        with_a1_id = _make_notice(conn, source_id, embedding_a1=CLOSE_VECTOR)
+        title_only_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR)
+    try:
+        with mock.patch("app.services.cosine_matching.embed_texts", return_value=[QUERY_VECTOR]):
+            with engine.connect() as conn:
+                result = top_matches_cosine(conn, _draft(), _profile(), limit=20, variant="attachment")
+        matched_ids = {m["id"] for m in result["matches"]}
+        assert with_a1_id in matched_ids
+        assert title_only_id not in matched_ids
+    finally:
+        _cleanup([with_a1_id, title_only_id])
+
+
+def test_compare_endpoint_returns_three_way_result_shapes(client: TestClient):
+    """API 계층 배선 확인 — 규칙 매칭·코사인(제목)·코사인(첨부) 3방향 결과를 한 응답에 같이
+    담아 돌려주는지만 본다(각 알고리즘의 세부 동작은 위 서비스 계층 테스트가 이미 검증)."""
     customer_id = client.post("/api/customers", json={"name": "[테스트] 비교 페이지", "plan_tier": "standard"}).json()["id"]
     try:
         with mock.patch("app.services.cosine_matching.embed_texts", return_value=[QUERY_VECTOR]):
             response = client.get(f"/api/customers/{customer_id}/interest-matches/compare")
         assert response.status_code == 200
         body = response.json()
-        assert {"rule_based", "cosine", "pending_embeddings"} <= body.keys()
+        assert {
+            "rule_based", "cosine", "pending_embeddings", "cosine_attachment", "pending_embeddings_attachment",
+        } <= body.keys()
     finally:
         with engine.begin() as conn:
             from app.models import customer

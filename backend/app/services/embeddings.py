@@ -13,23 +13,46 @@ text-embedding-3-small을 앞서는 경우가 많다는 조사 결과도 근거.
 pending_analysis.py(대기건 배치 처리)와 같은 패턴을 그대로 따른다: 후보 조회는 읽기전용
 커넥션 하나 + 처리는 공고 하나마다 별도의 짧은 트랜잭션(오래 열린 트랜잭션이 락을 잡아
 다른 작업을 막은 2026-09-05 사고 재발 방지).
+
+2026-09-17 — 매칭 방식 비교 화면에서 규칙 매칭과 코사인(제목만) 매칭의 일치율이 20건 중
+2~3건뿐이라는 지적이 나와 봤더니, 규칙 매칭은 이미 A1 첨부 전체 추출 텍스트로 재채점하는데
+(rule_ver=2, notice_topic_scoring.py) 코사인은 제목·발주기관·지역·단계만 봐서 정보량 차이가
+컸다. A1 텍스트를 더한 두 번째 임베딩(notice.embedding_a1)을 추가해 규칙/코사인-제목/
+코사인-첨부 3방향 비교가 가능하게 한다 — 기존 embedding 컬럼은 덮어쓰지 않는다(덮어쓰면
+"제목만" 결과가 사라져 비교 자체가 안 됨). 아래 함수들은 `variant` 인자로 두 컬럼을 같은
+코드 경로로 처리한다.
 """
 
 from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
+from sqlalchemy.sql import ColumnElement
 
 from app.db import engine
-from app.models import notice, org
+from app.models import analysis, analysis_doc, notice, org
 
 logger = logging.getLogger("bidradar.embeddings")
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 DEFAULT_BATCH_LIMIT = 200  # pending_analysis.py와 동일한 상한 원칙 — 무제한 배치 방지
+# bge-m3 컨텍스트 한도(8192 토큰) 안에서 여유 있게 문서 앞부분 위주로만 담는다 — 전문을
+# 다 넣진 않는다.
+A1_TEXT_MAX_CHARS = 4000
+
+Variant = Literal["title", "attachment"]
+
+
+def _embedding_column(variant: Variant) -> ColumnElement:
+    return notice.c.embedding_a1 if variant == "attachment" else notice.c.embedding
+
+
+def _embedded_at_column(variant: Variant) -> ColumnElement:
+    return notice.c.embedded_a1_at if variant == "attachment" else notice.c.embedded_at
 
 
 @lru_cache(maxsize=1)
@@ -60,9 +83,39 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     return _compute_embeddings(texts)
 
 
-def _notice_embedding_text(title: str, org_name: str | None, region: str | None, stage: str) -> str:
+def _notice_embedding_text(
+    title: str, org_name: str | None, region: str | None, stage: str, attachment_text: str | None = None
+) -> str:
     parts = [title, org_name, region, stage]
-    return " · ".join(p for p in parts if p)
+    text = " · ".join(p for p in parts if p)
+    if attachment_text:
+        text = f"{text}\n\n{attachment_text}"
+    return text
+
+
+def _latest_attachment_text(conn: Connection, notice_id: int) -> str | None:
+    """이 공고의 가장 최근 분석(analysis, ver 최대)에서 A1이 성공적으로 추출한 첨부 텍스트를
+    모아 반환한다. 실패한 추출(extract_ok=false)은 제외 — 에러 메시지나 빈 내용이 임베딩에
+    섞이면 안 된다. 분석 이력이 없으면(아직 A1을 안 돌렸으면) None."""
+    latest_analysis_id = conn.execute(
+        select(analysis.c.id)
+        .where(analysis.c.notice_id == notice_id)
+        .order_by(analysis.c.ver.desc(), analysis.c.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_analysis_id is None:
+        return None
+    texts = conn.execute(
+        select(analysis_doc.c.text)
+        .where(
+            analysis_doc.c.analysis_id == latest_analysis_id,
+            analysis_doc.c.extract_ok.is_(True),
+            analysis_doc.c.text.is_not(None),
+        )
+    ).scalars().all()
+    if not texts:
+        return None
+    return "\n\n".join(texts)[:A1_TEXT_MAX_CHARS]
 
 
 def embed_customer_interest_text(profile: dict, profile_summary_md: str | None = None) -> str:
@@ -88,14 +141,17 @@ def embed_customer_interest_text(profile: dict, profile_summary_md: str | None =
     return text
 
 
-def _pending_embedding_notice_ids(conn: Connection, source_id: int | None, limit: int) -> list[int]:
-    """아직 임베딩이 없는 공고 id 목록. 무효화된(단계 진행으로 대체된) 공고는 애초에 매칭
-    대상이 아니므로(customer_interest._candidate_notices와 동일 기준) 임베딩도 안 만든다.
-    source_id는 pending_analysis.py의 _pending_extraction_notice_ids와 동일한 목적(테스트가
-    임시 소스 하나로 범위를 좁혀 실제 운영 데이터를 안 건드리게)으로 둔 선택적 필터."""
+def _pending_embedding_notice_ids(
+    conn: Connection, source_id: int | None, limit: int, *, variant: Variant = "title"
+) -> list[int]:
+    """아직 해당 variant 임베딩이 없는 공고 id 목록. 무효화된(단계 진행으로 대체된) 공고는
+    애초에 매칭 대상이 아니므로(customer_interest._candidate_notices와 동일 기준) 임베딩도
+    안 만든다. source_id는 pending_analysis.py의 _pending_extraction_notice_ids와 동일한
+    목적(테스트가 임시 소스 하나로 범위를 좁혀 실제 운영 데이터를 안 건드리게)으로 둔 선택적
+    필터."""
     stmt = (
         select(notice.c.id)
-        .where(notice.c.embedding.is_(None), notice.c.superseded_by_notice_id.is_(None))
+        .where(_embedding_column(variant).is_(None), notice.c.superseded_by_notice_id.is_(None))
         .order_by(notice.c.id)
         .limit(limit)
     )
@@ -104,7 +160,7 @@ def _pending_embedding_notice_ids(conn: Connection, source_id: int | None, limit
     return conn.execute(stmt).scalars().all()
 
 
-def embed_one_notice(notice_id: int) -> None:
+def embed_one_notice(notice_id: int, *, variant: Variant = "title") -> None:
     """공고 1건의 임베딩을 계산해 저장한다. 자기 트랜잭션 안에서 실행되고, 예외는 이 함수를
     부르는 배치 루프(run_pending_embeddings)가 로그만 남기고 삼킨다 — 공고 하나의 실패가
     나머지 배치를 막으면 안 된다."""
@@ -117,26 +173,30 @@ def embed_one_notice(notice_id: int) -> None:
         ).mappings().first()
         if row is None:
             return
-        text = _notice_embedding_text(row["title"], row["org_name"], row["region"], row["stage"])
+        attachment_text = _latest_attachment_text(conn, notice_id) if variant == "attachment" else None
+        text = _notice_embedding_text(row["title"], row["org_name"], row["region"], row["stage"], attachment_text)
         embedding = _compute_embeddings([text])[0]
         conn.execute(
             notice.update()
             .where(notice.c.id == notice_id)
-            .values(embedding=embedding, embedded_at=func.now())
+            .values(**{_embedding_column(variant).name: embedding, _embedded_at_column(variant).name: func.now()})
         )
 
 
-def run_pending_embeddings(source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT) -> dict:
+def run_pending_embeddings(
+    source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT, variant: Variant = "title"
+) -> dict:
     """10분마다 도는 run_pending_backlog(app/scheduler.py)에 A1/A2와 나란히 등록해, 아직
-    임베딩이 없는 공고를 배치로 채운다."""
+    임베딩이 없는 공고를 배치로 채운다. variant="title"과 "attachment" 둘 다 같은 주기로
+    따로 호출돼(app/scheduler.py) 두 컬럼이 독립적으로 채워진다."""
     with engine.connect() as conn:
-        candidates = _pending_embedding_notice_ids(conn, source_id, batch_limit)
+        candidates = _pending_embedding_notice_ids(conn, source_id, batch_limit, variant=variant)
 
     embedded = 0
     for notice_id in candidates:
         try:
-            embed_one_notice(notice_id)
+            embed_one_notice(notice_id, variant=variant)
             embedded += 1
         except Exception:  # noqa: BLE001 — 공고 하나의 실패가 나머지 배치를 막으면 안 됨
-            logger.exception("공고 임베딩 실패: notice_id=%s", notice_id)
+            logger.exception("공고 임베딩 실패: notice_id=%s variant=%s", notice_id, variant)
     return {"candidates": len(candidates), "embedded": embedded}

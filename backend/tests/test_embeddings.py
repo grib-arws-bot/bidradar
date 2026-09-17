@@ -16,8 +16,11 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://bidradar:devpassword
 from sqlalchemy import delete, insert, select
 
 from app.db import engine
-from app.models import notice, org, source
+from app.models import analysis, analysis_doc, notice, org, source
 from app.services.embeddings import (
+    A1_TEXT_MAX_CHARS,
+    _latest_attachment_text,
+    _notice_embedding_text,
     embed_customer_interest_text,
     embed_one_notice,
     run_pending_embeddings,
@@ -41,22 +44,40 @@ def _make_temp_source(conn) -> int:
     ).scalar_one()
 
 
-def _make_notice(conn, source_id: int, *, embedding=None, superseded_by=None) -> int:
+def _make_notice(conn, source_id: int, *, embedding=None, embedding_a1=None, superseded_by=None) -> int:
     org_id = conn.execute(insert(org).values(name="테스트발주기관_임베딩").returning(org.c.id)).scalar_one()
     return conn.execute(
         insert(notice).values(
             source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 임베딩 대상 공고",
             org_id=org_id, url="https://example.grib-test.kr/notice/embedding-test",
-            embedding=embedding, superseded_by_notice_id=superseded_by,
+            embedding=embedding, embedding_a1=embedding_a1, superseded_by_notice_id=superseded_by,
         ).returning(notice.c.id)
     ).scalar_one()
 
 
 def _cleanup(source_id: int, notice_ids: list[int]) -> None:
     with engine.begin() as conn:
+        # analysis.notice_id는 ondelete 지정이 없어(RESTRICT) notice보다 먼저 지워야 한다
+        # (analysis_doc은 analysis에 CASCADE라 analysis만 지우면 같이 지워짐).
+        conn.execute(delete(analysis).where(analysis.c.notice_id.in_(notice_ids)))
         conn.execute(delete(notice).where(notice.c.id.in_(notice_ids)))
         conn.execute(delete(org).where(org.c.name == "테스트발주기관_임베딩"))
         conn.execute(delete(source).where(source.c.id == source_id))
+
+
+def _make_analysis_with_doc(conn, notice_id: int, *, text: str | None, extract_ok: bool = True, ver: int = 1) -> int:
+    analysis_id = conn.execute(
+        insert(analysis)
+        .values(notice_id=notice_id, source_kind="notice", input_ref="test", ver=ver)
+        .returning(analysis.c.id)
+    ).scalar_one()
+    conn.execute(
+        insert(analysis_doc).values(
+            analysis_id=analysis_id, name="test.hwp", kind="hwp", bytes=100, sha256="x" * 64,
+            extract_ok=extract_ok, text=text,
+        )
+    )
+    return analysis_id
 
 
 def test_embed_one_notice_saves_vector():
@@ -71,6 +92,23 @@ def test_embed_one_notice_saves_vector():
             assert saved is not None
             assert len(saved) == 1024
             mock_call.assert_called_once()
+        finally:
+            _cleanup(source_id, [notice_id])
+
+
+def test_embed_one_notice_attachment_variant_saves_to_embedding_a1_column():
+    with mock.patch("app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]):
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_id = _make_notice(conn, source_id)
+        try:
+            embed_one_notice(notice_id, variant="attachment")
+            with engine.connect() as conn:
+                row = conn.execute(
+                    select(notice.c.embedding, notice.c.embedding_a1).where(notice.c.id == notice_id)
+                ).one()
+            assert row.embedding is None  # title variant 컬럼은 안 건드림
+            assert row.embedding_a1 is not None
         finally:
             _cleanup(source_id, [notice_id])
 
@@ -120,6 +158,107 @@ def test_run_pending_embeddings_continues_past_one_failure():
             assert result == {"candidates": 2, "embedded": 1}
         finally:
             _cleanup(source_id, [failing_id, ok_id])
+
+
+def test_run_pending_embeddings_attachment_variant_is_independent_of_title_variant():
+    """title 컬럼이 이미 채워져 있어도 attachment 컬럼은 별도로 대기 후보에 잡혀야 한다 —
+    두 variant가 서로 독립적으로 채워진다는 설계의 핵심 전제."""
+    with mock.patch("app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]):
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_id = _make_notice(conn, source_id, embedding=FAKE_VECTOR)  # title은 이미 완료
+        try:
+            result = run_pending_embeddings(source_id, batch_limit=200, variant="attachment")
+            assert result == {"candidates": 1, "embedded": 1}
+            with engine.connect() as conn:
+                embedding_a1 = conn.execute(
+                    select(notice.c.embedding_a1).where(notice.c.id == notice_id)
+                ).scalar_one()
+            assert embedding_a1 is not None
+        finally:
+            _cleanup(source_id, [notice_id])
+
+
+def test_notice_embedding_text_includes_attachment_text_when_present():
+    text = _notice_embedding_text("제목", "발주기관", "서울", "입찰공고", "첨부파일 본문 내용")
+    assert "첨부파일 본문 내용" in text
+    assert "제목" in text
+
+
+def test_notice_embedding_text_without_attachment_text_unchanged():
+    assert _notice_embedding_text("제목", "발주기관", "서울", "입찰공고") == _notice_embedding_text(
+        "제목", "발주기관", "서울", "입찰공고", None
+    )
+
+
+def test_latest_attachment_text_excludes_failed_extractions():
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn)
+        notice_id = _make_notice(conn, source_id)
+        _make_analysis_with_doc(conn, notice_id, text="실패한 추출 흔적", extract_ok=False)
+    try:
+        with engine.connect() as conn:
+            assert _latest_attachment_text(conn, notice_id) is None
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
+def test_latest_attachment_text_truncates_to_budget():
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn)
+        notice_id = _make_notice(conn, source_id)
+        _make_analysis_with_doc(conn, notice_id, text="가" * (A1_TEXT_MAX_CHARS + 500))
+    try:
+        with engine.connect() as conn:
+            result = _latest_attachment_text(conn, notice_id)
+        assert len(result) == A1_TEXT_MAX_CHARS
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
+def test_latest_attachment_text_uses_latest_analysis_version():
+    """재분석(ver 증가)이 있으면 예전 버전의 첨부 텍스트가 아니라 최신 버전만 써야 한다."""
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn)
+        notice_id = _make_notice(conn, source_id)
+        _make_analysis_with_doc(conn, notice_id, text="예전 버전 내용", ver=1)
+        _make_analysis_with_doc(conn, notice_id, text="최신 버전 내용", ver=2)
+    try:
+        with engine.connect() as conn:
+            result = _latest_attachment_text(conn, notice_id)
+        assert result == "최신 버전 내용"
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
+def test_embed_one_notice_attachment_variant_includes_attachment_text_in_embedded_text():
+    with mock.patch("app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]) as mock_call:
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_id = _make_notice(conn, source_id)
+            _make_analysis_with_doc(conn, notice_id, text="공고문 첨부의 실제 사업 내용")
+        try:
+            embed_one_notice(notice_id, variant="attachment")
+            embedded_text = mock_call.call_args[0][0][0]
+            assert "공고문 첨부의 실제 사업 내용" in embedded_text
+        finally:
+            _cleanup(source_id, [notice_id])
+
+
+def test_embed_one_notice_title_variant_does_not_include_attachment_text():
+    """variant="title"(기본값)은 A1 텍스트가 있어도 무시해야 한다 — "제목만" 비교 기준이
+    흔들리면 안 된다."""
+    with mock.patch("app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]) as mock_call:
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_id = _make_notice(conn, source_id)
+            _make_analysis_with_doc(conn, notice_id, text="이 텍스트는 title variant에 섞이면 안 됨")
+        try:
+            embed_one_notice(notice_id)
+            embedded_text = mock_call.call_args[0][0][0]
+            assert "이 텍스트는 title variant에 섞이면 안 됨" not in embedded_text
+        finally:
+            _cleanup(source_id, [notice_id])
 
 
 def test_embed_customer_interest_text_includes_topics_and_terms():

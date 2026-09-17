@@ -14,12 +14,17 @@ from sqlalchemy.engine import Connection
 
 from app.models import customer, notice
 from app.services.customer_interest import InterestDraft, _candidate_notices, _passes_hard_filters, _serialize
-from app.services.embeddings import embed_customer_interest_text, embed_texts
+from app.services.embeddings import Variant, _embedding_column, embed_customer_interest_text, embed_texts
 
 
-def top_matches_cosine(conn: Connection, draft: InterestDraft, profile: dict, *, limit: int = 20) -> dict:
+def top_matches_cosine(
+    conn: Connection, draft: InterestDraft, profile: dict, *, limit: int = 20, variant: Variant = "title"
+) -> dict:
     """규칙 매칭과 동일한 후보 풀·하드 필터를 쓰고, 점수만 코사인 유사도로 낸다.
-    notice.embedding이 아직 없는 공고(배치가 덜 끝남)는 이번 비교에서 제외한다 —
+    variant="title"은 제목·발주기관·지역·단계만, "attachment"는 A1 첨부 전체 추출 텍스트까지
+    반영한 임베딩(notice.embedding_a1)을 쓴다(2026-09-17 — 규칙 매칭과의 일치율이 너무 낮다는
+    지적에, 규칙 매칭이 이미 첨부 텍스트를 보고 있어 정보량 차이가 원인이었음을 확인하고
+    추가). 해당 variant의 임베딩이 아직 없는 공고(배치가 덜 끝남)는 이번 비교에서 제외한다 —
     `pending_embeddings`로 그 건수를 같이 반환해 화면에 안내할 수 있게 한다."""
     now = datetime.now(timezone.utc)
     candidates = [n for n in _candidate_notices(conn) if _passes_hard_filters(n, draft, now)]
@@ -27,10 +32,11 @@ def top_matches_cosine(conn: Connection, draft: InterestDraft, profile: dict, *,
     if not candidates_by_id:
         return {"matches": [], "pending_embeddings": 0}
 
+    embedding_col = _embedding_column(variant)
     embedded_count = conn.execute(
         select(func.count())
         .select_from(notice)
-        .where(notice.c.id.in_(candidates_by_id.keys()), notice.c.embedding.is_not(None))
+        .where(notice.c.id.in_(candidates_by_id.keys()), embedding_col.is_not(None))
     ).scalar_one()
     pending_embeddings = len(candidates_by_id) - embedded_count
 
@@ -44,10 +50,10 @@ def top_matches_cosine(conn: Connection, draft: InterestDraft, profile: dict, *,
     query_text = embed_customer_interest_text(profile, profile_summary_md)
     query_embedding = embed_texts([query_text])[0]
 
-    distance = notice.c.embedding.cosine_distance(query_embedding)
+    distance = embedding_col.cosine_distance(query_embedding)
     rows = conn.execute(
         select(notice.c.id, distance.label("distance"))
-        .where(notice.c.id.in_(candidates_by_id.keys()), notice.c.embedding.is_not(None))
+        .where(notice.c.id.in_(candidates_by_id.keys()), embedding_col.is_not(None))
         .order_by(distance)
         .limit(limit)
     ).all()

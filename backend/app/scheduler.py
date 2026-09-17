@@ -166,13 +166,20 @@ def run_pending_backlog() -> dict:
         )
 
     # 코사인 유사도 매칭용 임베딩 배치(2026-09-16, 자체 호스팅 bge-m3) — A1/A2와 나란히,
-    # 실패해도 서로 안 막는다.
-    try:
-        embed_result = run_pending_embeddings()
-        if embed_result["embedded"]:
-            logger.info("임베딩 배치 완료: 대상=%s 성공=%s", embed_result["candidates"], embed_result["embedded"])
-    except Exception:  # noqa: BLE001 — 임베딩 배치 실패가 다음 예정 실행을 막으면 안 됨
-        logger.exception("임베딩 배치 실패")
+    # 실패해도 서로 안 막는다. 2026-09-17 — "제목만"(title)에 이어 "A1 첨부 포함"(attachment)
+    # 두 번째 컬럼도 같은 주기로 채운다(매칭 방식 비교 화면의 3방향 비교용). title 쪽은 이미
+    # 전량 처리돼 있으면 매 회차 후보 0건으로 사실상 no-op이라, attachment 쪽 배치 용량을
+    # 뺏지 않는다.
+    for variant in ("title", "attachment"):
+        try:
+            embed_result = run_pending_embeddings(variant=variant)
+            if embed_result["embedded"]:
+                logger.info(
+                    "임베딩 배치 완료(%s): 대상=%s 성공=%s",
+                    variant, embed_result["candidates"], embed_result["embedded"],
+                )
+        except Exception:  # noqa: BLE001 — 임베딩 배치 실패가 다음 예정 실행을 막으면 안 됨
+            logger.exception("임베딩 배치 실패(%s)", variant)
 
     return result
 

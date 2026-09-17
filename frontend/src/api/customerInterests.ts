@@ -69,6 +69,11 @@ export interface InterestMatchesCompare {
   // 후보 공고 중 아직 임베딩이 없는 건수(배치가 10분마다 채워나감) — 0이 아니면 코사인
   // 결과가 아직 불완전할 수 있다는 안내에 쓴다.
   pending_embeddings: number;
+  // 2026-09-17 — A1 첨부 전체 추출 텍스트까지 반영한 두 번째 코사인 결과(규칙 매칭과의
+  // 일치율이 "제목만"보다 훨씬 높을 것으로 기대 — 규칙 매칭도 이미 첨부 텍스트를 봄).
+  // embedding과 별도 컬럼(embedding_a1)이라 pending 건수도 따로 온다.
+  cosine_attachment: MatchItem[];
+  pending_embeddings_attachment: number;
 }
 
 export async function fetchInterestMatchesCompare(customerId: number): Promise<InterestMatchesCompare> {
