@@ -115,16 +115,25 @@ def test_run_due_sources_triggers_only_due_sources_and_continues_past_failures()
 
 
 def test_run_pending_backlog_returns_counts_from_run_pending_analysis():
+    """2026-09-18 -- run_pending_backlog이 A1/A2 잔고 처리 외에 임베딩 배치(title/attachment
+    두 variant, app/services/embeddings.py)도 나란히 부른다(2026-09-16/17 추가) -- 이걸 안
+    막으면 이 "단위" 테스트가 실제 bge-m3 모델을 로딩해 로컬 dev DB의 진짜 대기 공고
+    수백 건을 실제로 임베딩하는 부작용이 생겨 464초까지 걸리는 걸 실측 확인했다(pytest-xdist
+    병렬화 효과가 안 나온 원인 조사 중 발견). run_pending_analysis처럼 이것도 명시적으로
+    막아야 이 테스트가 검증하려는 "오케스트레이션 결과 반환"만 순수하게 확인된다."""
     fake_result = {"extraction_candidates": 2, "auto_extracted": 2, "analyze_candidates": 8, "auto_analyzed": 8}
-    with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result) as mock_run:
+    with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result) as mock_run, \
+         mock.patch("app.scheduler.run_pending_embeddings") as mock_embed:
         result = run_pending_backlog()
     mock_run.assert_called_once_with()
+    assert mock_embed.call_count == 2  # variant="title" 1회 + variant="attachment" 1회
     assert result == fake_result
 
 
 def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():
     # run_due_sources(매 분)와 별개 잡이라 이번 회차 실패가 스케줄러 자체를 죽이면 안 됨.
-    with mock.patch("app.scheduler.run_pending_analysis", side_effect=RuntimeError("가짜 실패")):
+    with mock.patch("app.scheduler.run_pending_analysis", side_effect=RuntimeError("가짜 실패")), \
+         mock.patch("app.scheduler.run_pending_embeddings"):
         result = run_pending_backlog()
     assert result == {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
 

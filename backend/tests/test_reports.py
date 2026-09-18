@@ -40,9 +40,18 @@ def _run_immediately(fn, *args, **kwargs):
 def _no_real_extraction():
     """리포트 생성이 이제 매칭된 공고마다 첨부문서 자동분석(A1)을 시도한다(2026-09-05) —
     테스트에서까지 실제 나라장터/IRIS로 나가면 느리고 외부망에 의존하게 되므로 막는다.
-    추출 로직 자체는 test_analysis_pilot.py가 이미 따로 검증한다."""
+    추출 로직 자체는 test_analysis_pilot.py가 이미 따로 검증한다.
+
+    2026-09-18 — `app.services.notice_strategy`도 `run_extraction_pilot`을 별도로 import해
+    "사업 추진 전략" 생성 시(_ensure_notice_analyzed) 동기로 직접 호출한다 — interest_report
+    쪽만 막고 이건 안 막아서, G2B처럼 "라이브 API로 찾아야 하는" 소스의 실제 공고 하나가
+    전략 생성 테스트에 우연히 걸리면 나라장터 API를 페이지 수십 장 실제로 순회하며 4~5분씩
+    걸리는 사고가 실측 확인됐다(test_public_notice_strategy_generation_is_idempotent가
+    276~300초 — pytest-xdist 병렬화 효과가 안 나온 원인을 조사하다가 발견). 같은 이유로
+    같이 막는다."""
     with mock.patch("app.services.interest_report.run_extraction_pilot") as m, \
-         mock.patch("app.services.interest_report.submit_background", side_effect=_run_immediately):
+         mock.patch("app.services.interest_report.submit_background", side_effect=_run_immediately), \
+         mock.patch("app.services.notice_strategy.run_extraction_pilot"):
         yield m
 
 

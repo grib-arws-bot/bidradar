@@ -94,10 +94,12 @@ jobs:
         working-directory: backend
         run: python -m app.cli seed-if-empty
 
+      # 2026-09-18 — pytest-xdist 병렬화(deploy-prod.yml과 동일 이유·동일 워커 수 4 —
+      # project_deploy_speed_ideas_20260917 메모, 실측 20분→7분45초).
       - name: 백엔드 테스트 (pytest)
         shell: powershell
         working-directory: backend
-        run: python -m pytest
+        run: python -m pytest -n 4
 
       - name: 프론트엔드 빌드 확인 (타입체크 포함)
         shell: powershell

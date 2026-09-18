@@ -58,12 +58,18 @@ jobs:
         working-directory: infra
         run: docker compose up -d db
 
+      # 2026-09-18 — pytest-xdist로 병렬화(레지스트리 도입과 함께 "빌드/배포 시간 단축" 요청의
+      # 일부, project_deploy_speed_ideas_20260917 메모 2순위). conftest.py의 테스트별
+      # 트랜잭션+롤백 격리(_isolate_db_per_test) 덕분에 여러 워커가 같은 dev DB에 동시 접속해도
+      # 안전하다 — 실측으로 20분→7분45초. 워커 수는 auto(코어 자동감지) 대신 4로 고정 — SQLAlchemy
+      # 엔진이 워커(프로세스)당 커넥션 풀을 새로 만들어 Postgres max_connections 여유를 아끼고,
+      # 이 러너가 다른 로컬 작업과 CPU 경합을 겪은 전례(9/17)가 있어 보수적으로 잡음.
       - name: 백엔드 테스트 (pytest)
         shell: powershell
         working-directory: backend
         run: |
           python -m pip install -e ".[dev]"
-          python -m pytest
+          python -m pytest -n 4
 
       - name: 프론트엔드 빌드 확인 (타입체크 포함)
         shell: powershell

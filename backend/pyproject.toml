@@ -32,6 +32,10 @@ dependencies = [
 dev = [
     "pytest>=8.3,<8.4",
     "httpx>=0.27,<0.28",
+    # 2026-09-18 — 539건에 13~20분 걸리는 게 매 배포마다 반복되는 고정비용이라 병렬화.
+    # conftest.py의 테스트별 트랜잭션+롤백 격리 덕분에(_isolate_db_per_test) 여러 워커가
+    # 같은 dev DB에 동시 접속해도 서로 안 보이고 충돌 안 남 — conftest.py 자체는 무수정.
+    "pytest-xdist>=3.6,<3.7",
 ]
 
 [build-system]
