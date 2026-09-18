@@ -10,20 +10,23 @@
 #   0) 로컬 HEAD가 origin/main과 일치 + 워킹트리 clean 확인
 #   1) 로컬에서 backend·frontend·scheduler 이미지 빌드
 #   2) 사람이 로컬(stg) 화면으로 직접 확인했는지 확인(CI에서는 생략)
-#   3) 이미지에 git 커밋 해시 태그 추가(롤백용, :latest와 별도 보관)
-#   4) 이미지를 tar.gz로 저장해 서버로 전송
-#   5) 서버의 git 체크아웃(~/bidradar)을 origin/main으로 fast-forward
-#   6) 로컬 .env에는 있는데 prod .env에는 없는 변수가 있는지 확인해서 경고
-#   7) 서버에서: 교체 직전 이미지를 :candidate-previous로 백업 → 새 이미지 로드 → 재기동
-#      (docker load, --build 없이 이미지만 교체 — 서버는 4코어/8GB로 ARWS와 공유하는 셈이라
-#      무거운 빌드를 서버에서 직접 돌리는 걸 피한다)
-#   8) 로컬 임시 파일 정리
+#   3) 이미지에 git 커밋 해시 태그 추가(롤백용, :latest와 별도 보관) + 레지스트리 경로 태그
+#   4) 서버의 git 체크아웃(~/bidradar)을 origin/main으로 fast-forward(레지스트리 서비스
+#      정의를 push보다 먼저 반영해야 함)
+#   5) 서버의 자체 호스팅 레지스트리(registry:2, 127.0.0.1:5000)가 떠 있는지 확인
+#   6) SSH 터널로 그 레지스트리에 이미지 push(2026-09-18, 의사결정_로그 169번 — tar+scp를
+#      대체. 레지스트리가 레이어 단위로 diff 전송하므로 안 바뀐 큰 레이어는 재전송 안 함)
+#   7) 로컬 .env에는 있는데 prod .env에는 없는 변수가 있는지 확인해서 경고
+#   8) 서버에서: 교체 직전 이미지를 :candidate-previous로 백업 → 레지스트리에서 pull 후
+#      원래 이름으로 재태깅 → 재기동(--build 없이 이미지만 교체 — 서버는 4코어/8GB로 ARWS와
+#      공유하는 셈이라 무거운 빌드를 서버에서 직접 돌리는 걸 피한다)
 #   9) 프로덕션 응답 확인 + 로그인 스모크 테스트(HTTP 200뿐 아니라 실제 로그인까지 확인)
 #
 # 전제:
 #   - 로컬 PC에서 이미 `docker compose up -d --build`로 확인해본 뒤 이 스크립트를 실행할 것.
 #   - SSH 접속(thingx.grib-iot.com)은 키 인증이 이미 설정되어 있음(ARWS 배포와 동일한 키 재사용
-#     — 같은 서버·같은 관리 주체이므로 별도 키 발급 불필요, 2026-09-10 확인).
+#     — 같은 서버·같은 관리 주체이므로 별도 키 발급 불필요, 2026-09-10 확인). 2026-09-18부터
+#     이 SSH 연결 위에 레지스트리 push용 터널(-L)도 얹는다 — 새 포트를 열 필요 없음.
 #   - infra/tls-proxy/certs/selfsigned.crt·key가 서버에 이미 있어야 함(최초 1회
 #     `sh infra/tls-proxy/gen-cert.sh`를 서버에서 직접 실행 — git에 커밋 안 됨).
 #
@@ -40,12 +43,18 @@ param(
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
+function Stop-RegistryTunnel {
+    # 2026-09-18 — push용 SSH 터널(-L)이 떠 있으면 실패 시에도 반드시 정리한다. 안 떠 있으면
+    # (아직 6단계 전이면) 조용히 넘어간다.
+    if ($script:tunnelProcess -and -not $script:tunnelProcess.HasExited) {
+        Stop-Process -Id $script:tunnelProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-Success([string]$description) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host "실패: $description (종료 코드 $LASTEXITCODE)" -ForegroundColor Red
-        if ($script:tarUploaded) {
-            ssh $remoteHost "rm -f $remoteDir/$tarFileName" 2>$null | Out-Null
-        }
+        Stop-RegistryTunnel
         exit 1
     }
 }
@@ -56,9 +65,10 @@ $repoDir      = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { "D:\
 $infraDir     = Join-Path $repoDir "infra"
 $remoteHost   = "thingx.grib-iot.com"
 $remoteDir    = "~/bidradar"
-$tarFileName  = "bidradar-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss').tar.gz"
-$localTarPath = Join-Path $env:TEMP $tarFileName
-$script:tarUploaded = $false
+# 2026-09-18 — 개발 PC에서 이미 다른 용도로 5000번을 쓰고 있을 수 있어(예: 로컬 개발 서버)
+# infra/.env로 바꿀 수 있게 환경변수화(DB_HOST_PORT 등 기존 패턴과 동일).
+$registryPort = if ($env:REGISTRY_PORT) { $env:REGISTRY_PORT } else { "5000" }
+$script:tunnelProcess = $null
 
 $canonicalEnvPath = "D:\Code-CLI\BidRadar\infra\.env"
 if ($repoDir -ne "D:\Code-CLI\BidRadar") {
@@ -115,30 +125,41 @@ if ($env:CI) {
 }
 
 Write-Host ""
-Write-Host "==> 3) 이미지에 버전 태그 추가 중... (:latest 외 :$gitSha 도 함께 보관 — 롤백용)"
-$imageNames = @()
+Write-Host "==> 3) 이미지에 버전 태그 추가 중... (:latest 외 :$gitSha·레지스트리 경로 태그도 함께)"
 foreach ($base in $imageBaseNames) {
     docker tag "${base}:latest" "${base}:$gitSha"
     Assert-Success "이미지 태그 지정 (${base}:$gitSha)"
-    $imageNames += "${base}:latest"
-    $imageNames += "${base}:$gitSha"
+    docker tag "${base}:latest" "localhost:${registryPort}/${base}:$gitSha"
+    Assert-Success "레지스트리 경로 태그 지정 (localhost:${registryPort}/${base}:$gitSha)"
 }
 
 Write-Host ""
-Write-Host "==> 4) 이미지를 파일로 저장 후 서버로 전송 중... ($tarFileName)"
-docker save $imageNames -o $localTarPath
-Assert-Success "이미지 파일 저장(docker save)"
-scp $localTarPath "${remoteHost}:${remoteDir}/$tarFileName"
-Assert-Success "서버로 이미지 전송(scp)"
-$script:tarUploaded = $true
-
-Write-Host ""
-Write-Host "==> 5) 서버 저장소를 최신 커밋으로 동기화 (docker-compose.yml 등 이미지에 안 담기는 설정 반영)"
+Write-Host "==> 4) 서버 저장소를 최신 커밋으로 동기화 (registry 서비스 정의 등을 push보다 먼저 반영)"
 ssh $remoteHost "cd $remoteDir && git fetch origin && git merge --ff-only origin/main"
 Assert-Success "서버 저장소 동기화(git fetch/merge --ff-only)"
 
 Write-Host ""
-Write-Host "==> 6) prod .env에 로컬에는 있는 변수가 빠졌는지 확인"
+Write-Host "==> 5) 서버의 자체 호스팅 레지스트리 기동 확인 (127.0.0.1:${registryPort}, 인터넷 비노출)"
+ssh $remoteHost "cd $remoteDir && docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d registry"
+Assert-Success "레지스트리 컨테이너 기동"
+
+Write-Host ""
+Write-Host "==> 6) SSH 터널로 레지스트리에 이미지 push 중... (tar+scp 대체, 의사결정_로그 169번)"
+# -N: 원격 명령 실행 안 함(터널 전용), -L: 로컬 포트를 서버의 127.0.0.1:$registryPort로 포워딩.
+# 이미 열려 있는 SSH 연결 위에 얹는 것이라 서버에 새 방화벽/NAT 포트가 필요 없다.
+$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "${registryPort}:localhost:${registryPort}", $remoteHost -PassThru -NoNewWindow
+Start-Sleep -Seconds 2  # 터널이 실제로 열릴 때까지 짧게 대기
+try {
+    foreach ($base in $imageBaseNames) {
+        docker push "localhost:${registryPort}/${base}:$gitSha"
+        Assert-Success "레지스트리로 이미지 전송(push, $base)"
+    }
+} finally {
+    Stop-RegistryTunnel
+}
+
+Write-Host ""
+Write-Host "==> 7) prod .env에 로컬에는 있는 변수가 빠졌는지 확인"
 function Get-EnvVarNames([string]$content) {
     $names = @()
     foreach ($line in ($content -split "`r?`n")) {
@@ -162,35 +183,31 @@ if ($missingEnvVars.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "==> 7) 서버에서 교체 대상 이미지를 임시 보관 후 새 이미지 적용 중..."
+Write-Host "==> 8) 서버에서 교체 대상 이미지를 임시 보관 후 레지스트리에서 새 이미지 적용 중..."
 foreach ($base in $imageBaseNames) {
     ssh $remoteHost "docker tag ${base}:latest ${base}:candidate-previous 2>/dev/null || true"
+    ssh $remoteHost "docker pull localhost:${registryPort}/${base}:$gitSha"
+    Assert-Success "서버에서 레지스트리 pull ($base)"
+    ssh $remoteHost "docker tag localhost:${registryPort}/${base}:$gitSha ${base}:latest && docker tag localhost:${registryPort}/${base}:$gitSha ${base}:$gitSha"
+    Assert-Success "pull한 이미지 재태깅 ($base)"
 }
 $servicesArg = $Services -join " "
 # prod는 TLS 종료 프록시 오버레이(docker-compose.prod.yml)를 추가로 얹어서 실행한다. --no-deps로
-# 지정된 서비스 외에는 건드리지 않는다(예: db·tls-proxy가 불필요하게 재생성되는 것 방지).
-try {
-    ssh $remoteHost "cd $remoteDir && docker load -i $tarFileName && docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d --no-deps $servicesArg"
-    Assert-Success "서버에 이미지 적용(docker load + compose up)"
-} finally {
-    ssh $remoteHost "rm -f $remoteDir/$tarFileName" 2>$null | Out-Null
-}
+# 지정된 서비스 외에는 건드리지 않는다(예: db·tls-proxy·registry가 불필요하게 재생성되는 것 방지).
+ssh $remoteHost "cd $remoteDir && docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d --no-deps $servicesArg"
+Assert-Success "서버에 이미지 적용(compose up)"
 ssh $remoteHost "cp $remoteDir/.last-deployed-sha $remoteDir/.last-deployed-sha.candidate-previous 2>/dev/null || true"
 ssh $remoteHost "echo '$gitSha' > $remoteDir/.last-deployed-sha"
 Assert-Success "배포 버전 기록"
 
 if ($Services -contains "backend") {
     Write-Host ""
-    Write-Host "==> 7-1) DB 마이그레이션 적용 중(alembic upgrade head)..."
+    Write-Host "==> 8-1) DB 마이그레이션 적용 중(alembic upgrade head)..."
     # 이미 적용된 마이그레이션은 건너뛰므로(idempotent) 변경사항이 없는 배포에서도 안전하게 매번
     # 실행한다 — 새 backend 이미지가 기대하는 스키마가 실제 DB에 반영돼 있는지 여기서 확정한다.
     ssh $remoteHost "docker exec bidradar-backend-1 python -m alembic upgrade head"
     Assert-Success "DB 마이그레이션(alembic upgrade head)"
 }
-
-Write-Host ""
-Write-Host "==> 8) 로컬 임시 파일 정리"
-Remove-Item $localTarPath -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "==> 9) 프로덕션 확인 (HTTP 응답 + 로그인 스모크 테스트)"

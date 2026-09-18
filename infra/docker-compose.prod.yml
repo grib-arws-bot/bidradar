@@ -13,6 +13,26 @@
 # 리버스 프록시하므로 노출할 포트는 이거 하나뿐 — ARWS처럼 두 개(admin/서비스)를 열 필요가 없다.
 
 services:
+  # 2026-09-18 — 배포 전송 방식을 tar+scp에서 push/pull로 바꾸기 위한 자체 호스팅 레지스트리
+  # (의사결정_로그 169번). "빌드/배포 시간을 획기적으로 줄이되 추가 외부 비용은 안 된다"는
+  # 요청에 GHCR·Docker Hub 등 외부 서비스 대신 이 서버 안에 직접 띄운다 — 완전 무료.
+  #
+  # 127.0.0.1에만 바인딩해 인터넷에 절대 노출하지 않는다 — push는 이미 열려 있는 SSH 연결
+  # 위에 터널(ssh -L)을 얹어서 하므로 서버 관리자에게 새 방화벽/NAT 포트를 요청할 필요가
+  # 없다(앱의 공개 HTTP 포트 9997→3300과 달리). Docker는 127.0.0.0/8(localhost) 레지스트리를
+  # 기본적으로 "insecure"로 허용하므로 TLS 인증서·daemon.json 설정도 필요 없다.
+  registry:
+    image: registry:2.8.3   # latest 태그 금지 원칙(CLAUDE.md) — 정확한 버전 고정
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REGISTRY_PORT:-5000}:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/v2/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
   db:
     # 로컬 개발 편의용 포트(psql 직접 접속)를 prod에서는 열지 않는다 — 방화벽에 기대지 않고
     # 컨테이너 자체가 호스트 포트를 아예 안 물게 한다(ARWS docker-compose.prod.yml과 동일 원칙).
@@ -55,3 +75,6 @@ services:
       - ./tls-proxy/internal-reports:/usr/share/nginx/internal-reports:ro
     depends_on:
       - frontend
+
+volumes:
+  registry_data:
