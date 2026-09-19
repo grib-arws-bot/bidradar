@@ -143,6 +143,23 @@ Write-Host "==> 5) 서버의 자체 호스팅 레지스트리 기동 확인 (127
 ssh $remoteHost "cd $remoteDir && docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d registry"
 Assert-Success "레지스트리 컨테이너 기동"
 
+# 2026-09-19 — 직전 배포가 실패해 컨테이너가 재생성(Recreate)된 채로 이 스크립트를 다시
+# 돌렸더니, "컨테이너가 시작됨"과 "앱이 실제로 요청을 받을 준비가 됨" 사이의 간극 때문에
+# 곧바로 push를 시도하다 "connection refused"로 또 실패했다(이미 떠 있던 컨테이너를 그냥
+# 재사용한 첫 시도 때는 이 문제가 안 드러났다). healthcheck가 healthy가 될 때까지 최대
+# 30초 폴링한다 — 고정 sleep이 아니라 실제 상태를 확인.
+$registryReady = $false
+for ($i = 0; $i -lt 15; $i++) {
+    $health = ssh $remoteHost "docker inspect --format='{{.State.Health.Status}}' bidradar-registry-1 2>/dev/null"
+    if ($health -eq "healthy") { $registryReady = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (-not $registryReady) {
+    Write-Host "  실패: 레지스트리 컨테이너가 30초 안에 healthy 상태가 되지 않았습니다." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  확인됨 — 레지스트리 healthy"
+
 Write-Host ""
 Write-Host "==> 6) SSH 터널로 레지스트리에 이미지 push 중... (tar+scp 대체, 의사결정_로그 169번)"
 # -N: 원격 명령 실행 안 함(터널 전용), -L: 로컬 포트를 서버의 127.0.0.1:$registryPort로 포워딩.
