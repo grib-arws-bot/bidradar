@@ -89,6 +89,16 @@ def test_allows_kogas_nonstandard_port_9443(monkeypatch):
     assert target.port == 9443
 
 
+def test_allows_sllm_port_28081(monkeypatch):
+    # 사내 sLLM 서버(thingx.grib-iot.com, 2026-09-20, 의사결정_로그 175번) — BidRadar 자체
+    # prod 서버와 같은 호스트(공인 IP)라 IP 차단과는 무관, 포트만 예외 처리.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"thingx.grib-iot.com": "1.220.120.74"}))
+
+    target = validate_url("http://thingx.grib-iot.com:28081/v1/classify-doc")
+
+    assert target.port == 28081
+
+
 def test_blocks_arbitrary_nonstandard_port():
     with pytest.raises(SSRFBlockedError):
         validate_url("https://example.com:9999/")

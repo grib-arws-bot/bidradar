@@ -22,7 +22,11 @@ ALLOWED_SCHEMES = {"http", "https"}
 # 실측 확인, robots.txt 개방·이용약관에 크롤링 금지 조항 없음). 임의 포트를 여는 게 아니라
 # "이미 검증한 실제 정부기관 사이트가 쓰는 포트"만 화이트리스트에 추가하는 것 — SSRF 방어
 # 원칙(허용목록 방식)과 배치되지 않는다.
-ALLOWED_PORTS = {80, 443, 8080, 8443, 9443}
+# 28081 — 사내 sLLM 서버(thingx.grib-iot.com, 의사결정_로그 175번)의 API 포트. IP 자체는
+# 공인 IP(1.220.120.74, 2026-09-20 확인)라 BLOCKED_NETWORKS와는 무관 — 표준 포트가 아니라서
+# 여기 추가가 필요할 뿐이다. thingx.grib-iot.com은 BidRadar 자체 prod 서버와 같은 호스트다
+# (기존 배포 대상, 신뢰된 대상).
+ALLOWED_PORTS = {80, 443, 8080, 8443, 9443, 28081}
 DEFAULT_PORT_BY_SCHEME = {"http": 80, "https": 443}
 
 MAX_REDIRECTS = 3
