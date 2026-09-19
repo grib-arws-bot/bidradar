@@ -15,7 +15,10 @@
 #      정의를 push보다 먼저 반영해야 함)
 #   5) 서버의 자체 호스팅 레지스트리(registry:2, 127.0.0.1:5000)가 떠 있는지 확인
 #   6) SSH 터널로 그 레지스트리에 이미지 push(2026-09-18, 의사결정_로그 169번 — tar+scp를
-#      대체. 레지스트리가 레이어 단위로 diff 전송하므로 안 바뀐 큰 레이어는 재전송 안 함)
+#      대체. 레지스트리가 레이어 단위로 diff 전송하므로 안 바뀐 큰 레이어는 재전송 안 함).
+#      터널은 Windows 프로세스가 아니라 `--network host` 컨테이너 안에서 띄운다 — Docker
+#      Desktop(WSL2)의 도커 데몬이 Windows 호스트 루프백과 다른 네트워크 네임스페이스를
+#      쓰기 때문(2026-09-19, 상세 이유는 6단계 코드 주석 참고).
 #   7) 로컬 .env에는 있는데 prod .env에는 없는 변수가 있는지 확인해서 경고
 #   8) 서버에서: 교체 직전 이미지를 :candidate-previous로 백업 → 레지스트리에서 pull 후
 #      원래 이름으로 재태깅 → 재기동(--build 없이 이미지만 교체 — 서버는 4코어/8GB로 ARWS와
@@ -44,11 +47,9 @@ $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 function Stop-RegistryTunnel {
-    # 2026-09-18 — push용 SSH 터널(-L)이 떠 있으면 실패 시에도 반드시 정리한다. 안 떠 있으면
-    # (아직 6단계 전이면) 조용히 넘어간다.
-    if ($script:tunnelProcess -and -not $script:tunnelProcess.HasExited) {
-        Stop-Process -Id $script:tunnelProcess.Id -Force -ErrorAction SilentlyContinue
-    }
+    # 2026-09-19 — 터널을 Windows 프로세스가 아니라 컨테이너 안에서 띄우므로(아래 6단계
+    # 주석 참고) 정리도 컨테이너 삭제로 한다. 안 떠 있어도(아직 6단계 전이면) 조용히 넘어간다.
+    docker rm -f bidradar-registry-tunnel 2>$null | Out-Null
 }
 
 function Assert-Success([string]$description) {
@@ -68,7 +69,6 @@ $remoteDir    = "~/bidradar"
 # 2026-09-18 — 개발 PC에서 이미 다른 용도로 5000번을 쓰고 있을 수 있어(예: 로컬 개발 서버)
 # infra/.env로 바꿀 수 있게 환경변수화(DB_HOST_PORT 등 기존 패턴과 동일).
 $registryPort = if ($env:REGISTRY_PORT) { $env:REGISTRY_PORT } else { "5000" }
-$script:tunnelProcess = $null
 
 $canonicalEnvPath = "D:\Code-CLI\BidRadar\infra\.env"
 if ($repoDir -ne "D:\Code-CLI\BidRadar") {
@@ -162,47 +162,53 @@ Write-Host "  확인됨 — 레지스트리 healthy"
 
 Write-Host ""
 Write-Host "==> 6) SSH 터널로 레지스트리에 이미지 push 중... (tar+scp 대체, 의사결정_로그 169번)"
-# -N: 원격 명령 실행 안 함(터널 전용), -L: 로컬 포트를 서버의 127.0.0.1:$registryPort로 포워딩.
-# 이미 열려 있는 SSH 연결 위에 얹는 것이라 서버에 새 방화벽/NAT 포트가 필요 없다.
 #
-# 2026-09-19 — 첫 실전 배포에서 "dial tcp [::1]:5000: i/o timeout"으로 실패했다: docker가
-# "localhost"를 IPv6(::1)로 먼저 해석했는데, ssh -L의 로컬 바인드 주소를 안 정해주면
-# Windows에서 IPv4(127.0.0.1)만 열릴 수 있어 IPv6 쪽엔 아무도 안 듣고 있었다. 로컬·원격
-# 양쪽 다 127.0.0.1을 명시해서 이 이중 스택 모호성을 없앤다(127.0.0.0/8은 Docker가 기본
-# insecure-registry로 허용하는 범위라 "localhost"든 "127.0.0.1"이든 동일하게 안전).
-$tunnelLog = Join-Path $env:TEMP "bidradar-registry-tunnel.log"
-$tunnelErrLog = Join-Path $env:TEMP "bidradar-registry-tunnel.err.log"
-$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "127.0.0.1:${registryPort}:127.0.0.1:${registryPort}", $remoteHost -PassThru -NoNewWindow -RedirectStandardOutput $tunnelLog -RedirectStandardError $tunnelErrLog
+# 2026-09-19 — 처음 세 번의 실전 배포가 전부 이 단계에서 실패했다("i/o timeout" →
+# "connection refused" 두 가지 다른 증상). Windows 호스트에서 ssh -L로 직접 터널을 띄우면
+# 로컬(127.0.0.1:$registryPort)은 PowerShell TcpClient로 확인해도 정상 응답하는데, docker
+# push는 매번 거부당했다 — 원인은 Docker Desktop이 WSL2 VM 안에서 데몬을 돌리기 때문이다.
+# docker push는 "클라이언트"가 아니라 그 데몬이 실제로 127.0.0.1에 접속을 시도하는데,
+# 데몬의 루프백은 WSL2 VM 자신의 네트워크 네임스페이스지 Windows 호스트의 루프백이
+# 아니다 — 기본(NAT) 네트워킹 모드에서 이 둘은 서로 안 보인다(실측: `docker run
+# --network host curlimages/curl ...`로 데몬과 같은 네임스페이스에서 접속해보면, Windows
+# 쪽에 띄운 터널은 000이고 컨테이너 안에서 띄운 터널은 200 — 반대로 컨테이너 기반 터널은
+# Windows 호스트 자체에서는 안 보임. 즉 두 방향이 대칭이 아니다). 그래서 터널을 아예
+# `--network host` 컨테이너 안에서 띄운다 — 도커 데몬과 완전히 같은 네트워크
+# 네임스페이스를 쓰게 되므로 push가 실제로 127.0.0.1:$registryPort에 닿는다.
+#
+# ~/.ssh 전체(config·known_hosts·키)를 읽기전용으로 마운트한 뒤 컨테이너의 쓰기 가능한
+# 레이어로 복사해 chmod한다 — OpenSSH가 마운트 그대로의(대개 너무 열린) 권한을 가진 개인키
+# 파일은 거부하기 때문. config를 그대로 쓰므로 포트·사용자·키 파일 이름을 이 스크립트에
+# 따로 하드코딩하지 않고 나머지 ssh 호출들과 동일한 out-of-band 설정을 그대로 재사용한다.
+Stop-RegistryTunnel  # 혹시 이전 실패로 남은 터널 컨테이너 정리
+$sshDir = Join-Path $HOME ".ssh"
+docker run -d --network host --name bidradar-registry-tunnel `
+    -v "${sshDir}:/root/.ssh-src:ro" `
+    --entrypoint sh alpine -c "apk add --no-cache openssh-client >/dev/null 2>&1 && cp -r /root/.ssh-src /root/.ssh && chmod -R 600 /root/.ssh && chmod 700 /root/.ssh && exec ssh -N -L 127.0.0.1:${registryPort}:127.0.0.1:${registryPort} $remoteHost" | Out-Null
+Assert-Success "레지스트리 터널 컨테이너 기동"
 
-# 2026-09-19 — 두 번째 실전 배포에서도 이 단계가 "connection refused"로 실패했다(레지스트리
-# 자체는 healthy 확인 후였다). 고정 2초 sleep으로는 터널이 실제로 열렸다는 보장이 없고,
-# Start-Process로 띄운 프로세스가 조용히 죽어도 스크립트는 알 방법이 없었다. 고정 sleep
-# 대신 로컬 포트가 실제로 연결을 받는지 최대 15초 폴링하고, 터널 프로세스가 그 사이 죽으면
-# 원인 파악용으로 stdout/stderr을 파일로 남겨 바로 출력한다.
+# 터널이 실제로 열렸는지는 Windows 호스트가 아니라 도커 데몬과 같은 네임스페이스
+# (--network host)에서 확인해야 한다 — 위 주석의 비대칭성 때문에 Windows 쪽 TcpClient로는
+# 이 컨테이너 기반 터널의 준비 여부를 판단할 수 없다.
 $tunnelReady = $false
 for ($i = 0; $i -lt 15; $i++) {
-    if ($script:tunnelProcess.HasExited) {
-        Write-Host "  실패: SSH 터널 프로세스가 예기치 않게 종료됨(exit code $($script:tunnelProcess.ExitCode))" -ForegroundColor Red
-        Get-Content $tunnelLog, $tunnelErrLog -ErrorAction SilentlyContinue | Write-Host
+    $running = docker inspect --format '{{.State.Running}}' bidradar-registry-tunnel 2>$null
+    if ($running -ne "true") {
+        Write-Host "  실패: 레지스트리 터널 컨테이너가 예기치 않게 종료됨" -ForegroundColor Red
+        docker logs bidradar-registry-tunnel 2>&1 | Write-Host
         exit 1
     }
-    try {
-        $tcpClient = New-Object System.Net.Sockets.TcpClient
-        $tcpClient.Connect("127.0.0.1", [int]$registryPort)
-        $tcpClient.Close()
-        $tunnelReady = $true
-        break
-    } catch {
-        Start-Sleep -Seconds 1
-    }
+    $probe = docker run --rm --network host curlimages/curl:latest -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${registryPort}/v2/" --max-time 2 2>$null
+    if ($probe -eq "200") { $tunnelReady = $true; break }
+    Start-Sleep -Seconds 1
 }
 if (-not $tunnelReady) {
-    Write-Host "  실패: SSH 터널이 15초 안에 127.0.0.1:${registryPort}에서 연결을 받지 않았습니다." -ForegroundColor Red
-    Get-Content $tunnelLog, $tunnelErrLog -ErrorAction SilentlyContinue | Write-Host
+    Write-Host "  실패: 터널이 15초 안에 127.0.0.1:${registryPort}에서 응답하지 않았습니다." -ForegroundColor Red
+    docker logs bidradar-registry-tunnel 2>&1 | Write-Host
     Stop-RegistryTunnel
     exit 1
 }
-Write-Host "  확인됨 — SSH 터널 연결 가능"
+Write-Host "  확인됨 — SSH 터널 연결 가능(컨테이너가 도커 데몬과 네트워크 네임스페이스 공유)"
 try {
     foreach ($base in $imageBaseNames) {
         docker push "127.0.0.1:${registryPort}/${base}:$gitSha"
