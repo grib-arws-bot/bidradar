@@ -62,6 +62,9 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-report@grib.co.kr}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:13200}
+      # 사내 sLLM 연동(2026-09-20, 의사결정_로그 175번) — url_guard.py의 허용 포트 예외와 짝.
+      - SLLM_BASE_URL=${SLLM_BASE_URL:-}
+      - SLLM_API_TOKEN=${SLLM_API_TOKEN:-}
     ports:
       # 브라우저는 이 포트를 직접 호출하지 않음(nginx가 /api를 리버스 프록시, U3에서 추가) —
       # 지금은 로컬 개발 편의를 위해서만 127.0.0.1로 제한 노출. 2026-09-15 — DB_HOST_PORT와
@@ -97,6 +100,11 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-report@grib.co.kr}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:13200}
+      # 사내 sLLM 연동(2026-09-20, 의사결정_로그 175/177번) — run_pending_backlog의 B(관심주제
+      # 시맨틱 매칭)가 이 프로세스 안에서 돈다. backend에만 넣고 여기 빠뜨리면 89번 줄의
+      # SMTP_HOST 누락과 같은 문제가 반복된다.
+      - SLLM_BASE_URL=${SLLM_BASE_URL:-}
+      - SLLM_API_TOKEN=${SLLM_API_TOKEN:-}
     volumes:
       - ./logs:/app/logs
     depends_on:
