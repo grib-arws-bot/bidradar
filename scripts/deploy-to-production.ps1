@@ -170,8 +170,39 @@ Write-Host "==> 6) SSH 터널로 레지스트리에 이미지 push 중... (tar+s
 # Windows에서 IPv4(127.0.0.1)만 열릴 수 있어 IPv6 쪽엔 아무도 안 듣고 있었다. 로컬·원격
 # 양쪽 다 127.0.0.1을 명시해서 이 이중 스택 모호성을 없앤다(127.0.0.0/8은 Docker가 기본
 # insecure-registry로 허용하는 범위라 "localhost"든 "127.0.0.1"이든 동일하게 안전).
-$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "127.0.0.1:${registryPort}:127.0.0.1:${registryPort}", $remoteHost -PassThru -NoNewWindow
-Start-Sleep -Seconds 2  # 터널이 실제로 열릴 때까지 짧게 대기
+$tunnelLog = Join-Path $env:TEMP "bidradar-registry-tunnel.log"
+$tunnelErrLog = Join-Path $env:TEMP "bidradar-registry-tunnel.err.log"
+$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "127.0.0.1:${registryPort}:127.0.0.1:${registryPort}", $remoteHost -PassThru -NoNewWindow -RedirectStandardOutput $tunnelLog -RedirectStandardError $tunnelErrLog
+
+# 2026-09-19 — 두 번째 실전 배포에서도 이 단계가 "connection refused"로 실패했다(레지스트리
+# 자체는 healthy 확인 후였다). 고정 2초 sleep으로는 터널이 실제로 열렸다는 보장이 없고,
+# Start-Process로 띄운 프로세스가 조용히 죽어도 스크립트는 알 방법이 없었다. 고정 sleep
+# 대신 로컬 포트가 실제로 연결을 받는지 최대 15초 폴링하고, 터널 프로세스가 그 사이 죽으면
+# 원인 파악용으로 stdout/stderr을 파일로 남겨 바로 출력한다.
+$tunnelReady = $false
+for ($i = 0; $i -lt 15; $i++) {
+    if ($script:tunnelProcess.HasExited) {
+        Write-Host "  실패: SSH 터널 프로세스가 예기치 않게 종료됨(exit code $($script:tunnelProcess.ExitCode))" -ForegroundColor Red
+        Get-Content $tunnelLog, $tunnelErrLog -ErrorAction SilentlyContinue | Write-Host
+        exit 1
+    }
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $tcpClient.Connect("127.0.0.1", [int]$registryPort)
+        $tcpClient.Close()
+        $tunnelReady = $true
+        break
+    } catch {
+        Start-Sleep -Seconds 1
+    }
+}
+if (-not $tunnelReady) {
+    Write-Host "  실패: SSH 터널이 15초 안에 127.0.0.1:${registryPort}에서 연결을 받지 않았습니다." -ForegroundColor Red
+    Get-Content $tunnelLog, $tunnelErrLog -ErrorAction SilentlyContinue | Write-Host
+    Stop-RegistryTunnel
+    exit 1
+}
+Write-Host "  확인됨 — SSH 터널 연결 가능"
 try {
     foreach ($base in $imageBaseNames) {
         docker push "127.0.0.1:${registryPort}/${base}:$gitSha"
