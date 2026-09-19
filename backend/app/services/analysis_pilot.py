@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import re
 import zipfile
 from datetime import datetime, timezone
@@ -44,6 +45,12 @@ from app.security.url_guard import fetch
 from app.services.document_extract import extract_document
 from app.services.g2b_attachments import _discover_g2b_attachments, _should_skip_by_name
 from app.services.notice_topic_scoring import rescan_notice_topics_from_documents
+from app.services.sllm_client import SllmError, SllmNotConfiguredError, classify_doc
+
+logger = logging.getLogger("bidradar.analysis_pilot")
+
+# classify-doc(C)에 넘기는 미리보기 길이 — sLLM팀 실측 권장 범위(500~1,000자)의 상한.
+_SLLM_CLASSIFY_PREVIEW_CHARS = 1000
 
 _IRIS_ATCH_RE = re.compile(
     r"f_bsnsAncm_downloadAtchFile\('([^']+)','([^']+)','([^']+)'\s*,'(\d+)'\)"
@@ -169,6 +176,38 @@ def _extract_one(name: str, content: bytes) -> dict:
         doc_row["error"] = result.error
     except Exception as exc:  # noqa: BLE001 — 폴백 사슬 마지막 보고 지점, 조용히 삼키지 않는다
         doc_row["error"] = str(exc)
+        return doc_row
+
+    if doc_row["extract_ok"] and doc_row["text"]:
+        doc_row = _reclassify_as_boilerplate_if_sllm_agrees(doc_row)
+    return doc_row
+
+
+def _reclassify_as_boilerplate_if_sllm_agrees(doc_row: dict) -> dict:
+    """파일명 필터(_should_skip_by_name)를 통과했지만 실제 내용은 공통 문서(제출서류·규정·
+    양식 등)일 수 있는 경우를 사내 sLLM(C, classify-doc)으로 한 번 더 확인한다(2026-09-20,
+    의사결정_로그 175번) — 파일명 규칙을 대체하지 않고 보조 신호로만 쓴다.
+
+    이 A1 추출은 모든 공고에서 상시 자동으로 도는 파이프라인이라(수동 트리거인 A2/A5/A6과
+    다르다), sLLM이 미설정이거나 일시적으로 응답 못 해도 추출 자체를 절대 실패시키지 않는다
+    — 분류만 건너뛰고 원래 추출 결과를 그대로 둔다(조용한 실패는 아님 — 로그는 남긴다)."""
+    preview = doc_row["text"][:_SLLM_CLASSIFY_PREVIEW_CHARS]
+    try:
+        result = classify_doc(preview, trace_id=f"a1_doc_{doc_row['sha256'][:16]}")
+    except (SllmNotConfiguredError, SllmError) as exc:
+        logger.info("sLLM 공통문서 분류 건너뜀(%s): %s", doc_row["name"], exc)
+        return doc_row
+
+    output = result.get("output", {})
+    if output.get("is_boilerplate"):
+        reason = output.get("reason", "")
+        logger.info("sLLM이 공통 문서로 판단해 제외: %s (%s)", doc_row["name"], reason)
+        doc_row = {
+            **doc_row,
+            "extract_ok": False,
+            "text": None,
+            "error": f"공통 문서로 판단되어 제외(sLLM: {reason})" if reason else "공통 문서로 판단되어 제외(sLLM)",
+        }
     return doc_row
 
 

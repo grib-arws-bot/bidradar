@@ -37,6 +37,7 @@ from app.services.analysis_pilot import (
     run_extraction_pilot,
 )
 from app.services.g2b_attachments import _should_skip_by_name
+from app.services.sllm_client import SllmError
 
 _SAMPLE_HTML = """
 <script>
@@ -527,6 +528,75 @@ def test_run_extraction_pilot_skips_common_document_revealed_after_download(g2b_
     assert result["docs"][0]["extract_ok"] is False
     assert result["docs"][0]["text"] is None
     assert "공통 문서" in result["docs"][0]["error"]
+
+
+def test_run_extraction_pilot_excludes_document_sllm_flags_as_boilerplate(g2b_prestandard_notice):
+    """2026-09-20 — 파일명 필터를 통과한 문서도 sLLM(C, classify-doc)이 내용상 공통 문서로
+    판단하면 제외한다(의사결정_로그 175번). 파일명만으로는 못 잡는 애매한 케이스를 보조
+    신호로 잡아내는 게 목적 — 규칙(파일명 필터)을 대체하지 않는다."""
+    fake_response = mock.Mock()
+    fake_response.content = b"%PDF-fake"
+    fake_response.headers = {"Content-Disposition": "attachment;filename=%EA%B7%9C%EA%B2%A9%EC%84%9C.pdf;"}
+    sllm_result = {"output": {"is_boilerplate": True, "reason": "제출 서식 안내문으로 판단됨"}}
+
+    with mock.patch("app.services.g2b_attachments.fetch_openapi_items", return_value=[_G2B_PRESTANDARD_NO_FILENAME_ITEM]):
+        with mock.patch("app.services.analysis_pilot.fetch", return_value=fake_response):
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "규격서 본문"
+                MockReader.return_value.pages = [fake_page]
+                with mock.patch("app.services.analysis_pilot.classify_doc", return_value=sllm_result) as mock_classify:
+                    with engine.begin() as conn:
+                        result = run_extraction_pilot(conn, g2b_prestandard_notice)
+
+    mock_classify.assert_called_once()
+    assert result["docs"][0]["extract_ok"] is False
+    assert result["docs"][0]["text"] is None
+    assert "제출 서식 안내문" in result["docs"][0]["error"]
+
+
+def test_run_extraction_pilot_keeps_document_sllm_says_is_not_boilerplate(g2b_prestandard_notice):
+    fake_response = mock.Mock()
+    fake_response.content = b"%PDF-fake"
+    fake_response.headers = {"Content-Disposition": "attachment;filename=%EA%B7%9C%EA%B2%A9%EC%84%9C.pdf;"}
+    sllm_result = {"output": {"is_boilerplate": False, "reason": "사업 개요 본문"}}
+
+    with mock.patch("app.services.g2b_attachments.fetch_openapi_items", return_value=[_G2B_PRESTANDARD_NO_FILENAME_ITEM]):
+        with mock.patch("app.services.analysis_pilot.fetch", return_value=fake_response):
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "규격서 본문"
+                MockReader.return_value.pages = [fake_page]
+                with mock.patch("app.services.analysis_pilot.classify_doc", return_value=sllm_result):
+                    with engine.begin() as conn:
+                        result = run_extraction_pilot(conn, g2b_prestandard_notice)
+
+    assert result["docs"][0]["extract_ok"] is True
+    assert result["docs"][0]["text"] == "규격서 본문"
+
+
+def test_run_extraction_pilot_keeps_extraction_when_sllm_call_fails(g2b_prestandard_notice):
+    """sLLM 호출 실패(추론 오류 등)가 A1 추출 자체를 실패시키면 안 된다 — 이 파이프라인은
+    모든 공고에서 상시 자동으로 도는데, sLLM 장애가 A1 전체를 막으면 안 된다."""
+    fake_response = mock.Mock()
+    fake_response.content = b"%PDF-fake"
+    fake_response.headers = {"Content-Disposition": "attachment;filename=%EA%B7%9C%EA%B2%A9%EC%84%9C.pdf;"}
+
+    with mock.patch("app.services.g2b_attachments.fetch_openapi_items", return_value=[_G2B_PRESTANDARD_NO_FILENAME_ITEM]):
+        with mock.patch("app.services.analysis_pilot.fetch", return_value=fake_response):
+            with mock.patch("app.services.document_extract.PdfReader") as MockReader:
+                fake_page = mock.Mock()
+                fake_page.extract_text.return_value = "규격서 본문"
+                MockReader.return_value.pages = [fake_page]
+                with mock.patch(
+                    "app.services.analysis_pilot.classify_doc",
+                    side_effect=SllmError("inference_failed", "모델 응답 없음"),
+                ):
+                    with engine.begin() as conn:
+                        result = run_extraction_pilot(conn, g2b_prestandard_notice)
+
+    assert result["docs"][0]["extract_ok"] is True
+    assert result["docs"][0]["text"] == "규격서 본문"
 
 
 def test_run_extraction_pilot_rejects_duplicate_in_progress(iris_notice):
