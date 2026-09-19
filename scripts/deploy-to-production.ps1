@@ -49,7 +49,11 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 function Stop-RegistryTunnel {
     # 2026-09-19 — 터널을 Windows 프로세스가 아니라 컨테이너 안에서 띄우므로(아래 6단계
     # 주석 참고) 정리도 컨테이너 삭제로 한다. 안 떠 있어도(아직 6단계 전이면) 조용히 넘어간다.
-    docker rm -f bidradar-registry-tunnel 2>$null | Out-Null
+    # try/catch 필수 — $ErrorActionPreference="Stop" 상태에서 네이티브 명령의 stderr를
+    # 리다이렉트하면(컨테이너가 없어 "No such container"를 stderr로 찍는 정상 상황조차)
+    # PowerShell이 이를 종료 오류로 승격시켜 스크립트 전체가 죽는다(실제로 6번째 실전
+    # 배포에서 이걸로 실패했다) — try/catch로 감싸 무해한 실패를 확실히 삼킨다.
+    try { docker rm -f bidradar-registry-tunnel 2>$null | Out-Null } catch {}
 }
 
 function Assert-Success([string]$description) {
@@ -190,21 +194,25 @@ Assert-Success "레지스트리 터널 컨테이너 기동"
 # 터널이 실제로 열렸는지는 Windows 호스트가 아니라 도커 데몬과 같은 네임스페이스
 # (--network host)에서 확인해야 한다 — 위 주석의 비대칭성 때문에 Windows 쪽 TcpClient로는
 # 이 컨테이너 기반 터널의 준비 여부를 판단할 수 없다.
+# 아래 네이티브 명령들은 전부 stderr를 리다이렉트하므로 try/catch로 감싼다 —
+# $ErrorActionPreference="Stop" 아래에서 리다이렉트된 stderr 한 줄만 있어도 PowerShell이
+# 종료 오류로 승격시켜 스크립트를 죽인다(Stop-RegistryTunnel과 같은 이유, 실제로 여기
+# curl probe가 터널 준비 전 정상적으로 실패하는 매 반복마다 이 문제가 터졌었다).
 $tunnelReady = $false
 for ($i = 0; $i -lt 15; $i++) {
-    $running = docker inspect --format '{{.State.Running}}' bidradar-registry-tunnel 2>$null
+    $running = try { docker inspect --format '{{.State.Running}}' bidradar-registry-tunnel 2>$null } catch { "" }
     if ($running -ne "true") {
         Write-Host "  실패: 레지스트리 터널 컨테이너가 예기치 않게 종료됨" -ForegroundColor Red
-        docker logs bidradar-registry-tunnel 2>&1 | Write-Host
+        try { docker logs bidradar-registry-tunnel 2>&1 | Write-Host } catch {}
         exit 1
     }
-    $probe = docker run --rm --network host curlimages/curl:latest -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${registryPort}/v2/" --max-time 2 2>$null
+    $probe = try { docker run --rm --network host curlimages/curl:latest -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${registryPort}/v2/" --max-time 2 2>$null } catch { "" }
     if ($probe -eq "200") { $tunnelReady = $true; break }
     Start-Sleep -Seconds 1
 }
 if (-not $tunnelReady) {
     Write-Host "  실패: 터널이 15초 안에 127.0.0.1:${registryPort}에서 응답하지 않았습니다." -ForegroundColor Red
-    docker logs bidradar-registry-tunnel 2>&1 | Write-Host
+    try { docker logs bidradar-registry-tunnel 2>&1 | Write-Host } catch {}
     Stop-RegistryTunnel
     exit 1
 }
