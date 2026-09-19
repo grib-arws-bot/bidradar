@@ -129,8 +129,8 @@ Write-Host "==> 3) 이미지에 버전 태그 추가 중... (:latest 외 :$gitSh
 foreach ($base in $imageBaseNames) {
     docker tag "${base}:latest" "${base}:$gitSha"
     Assert-Success "이미지 태그 지정 (${base}:$gitSha)"
-    docker tag "${base}:latest" "localhost:${registryPort}/${base}:$gitSha"
-    Assert-Success "레지스트리 경로 태그 지정 (localhost:${registryPort}/${base}:$gitSha)"
+    docker tag "${base}:latest" "127.0.0.1:${registryPort}/${base}:$gitSha"
+    Assert-Success "레지스트리 경로 태그 지정 (127.0.0.1:${registryPort}/${base}:$gitSha)"
 }
 
 Write-Host ""
@@ -147,11 +147,17 @@ Write-Host ""
 Write-Host "==> 6) SSH 터널로 레지스트리에 이미지 push 중... (tar+scp 대체, 의사결정_로그 169번)"
 # -N: 원격 명령 실행 안 함(터널 전용), -L: 로컬 포트를 서버의 127.0.0.1:$registryPort로 포워딩.
 # 이미 열려 있는 SSH 연결 위에 얹는 것이라 서버에 새 방화벽/NAT 포트가 필요 없다.
-$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "${registryPort}:localhost:${registryPort}", $remoteHost -PassThru -NoNewWindow
+#
+# 2026-09-19 — 첫 실전 배포에서 "dial tcp [::1]:5000: i/o timeout"으로 실패했다: docker가
+# "localhost"를 IPv6(::1)로 먼저 해석했는데, ssh -L의 로컬 바인드 주소를 안 정해주면
+# Windows에서 IPv4(127.0.0.1)만 열릴 수 있어 IPv6 쪽엔 아무도 안 듣고 있었다. 로컬·원격
+# 양쪽 다 127.0.0.1을 명시해서 이 이중 스택 모호성을 없앤다(127.0.0.0/8은 Docker가 기본
+# insecure-registry로 허용하는 범위라 "localhost"든 "127.0.0.1"이든 동일하게 안전).
+$script:tunnelProcess = Start-Process ssh -ArgumentList "-N", "-L", "127.0.0.1:${registryPort}:127.0.0.1:${registryPort}", $remoteHost -PassThru -NoNewWindow
 Start-Sleep -Seconds 2  # 터널이 실제로 열릴 때까지 짧게 대기
 try {
     foreach ($base in $imageBaseNames) {
-        docker push "localhost:${registryPort}/${base}:$gitSha"
+        docker push "127.0.0.1:${registryPort}/${base}:$gitSha"
         Assert-Success "레지스트리로 이미지 전송(push, $base)"
     }
 } finally {
@@ -186,9 +192,9 @@ Write-Host ""
 Write-Host "==> 8) 서버에서 교체 대상 이미지를 임시 보관 후 레지스트리에서 새 이미지 적용 중..."
 foreach ($base in $imageBaseNames) {
     ssh $remoteHost "docker tag ${base}:latest ${base}:candidate-previous 2>/dev/null || true"
-    ssh $remoteHost "docker pull localhost:${registryPort}/${base}:$gitSha"
+    ssh $remoteHost "docker pull 127.0.0.1:${registryPort}/${base}:$gitSha"
     Assert-Success "서버에서 레지스트리 pull ($base)"
-    ssh $remoteHost "docker tag localhost:${registryPort}/${base}:$gitSha ${base}:latest && docker tag localhost:${registryPort}/${base}:$gitSha ${base}:$gitSha"
+    ssh $remoteHost "docker tag 127.0.0.1:${registryPort}/${base}:$gitSha ${base}:latest && docker tag 127.0.0.1:${registryPort}/${base}:$gitSha ${base}:$gitSha"
     Assert-Success "pull한 이미지 재태깅 ($base)"
 }
 $servicesArg = $Services -join " "
