@@ -52,11 +52,19 @@ def _make_notice(conn, source_id: int, url: str) -> int:
 
 
 def _cleanup(source_id: int, notice_ids: list[int]) -> None:
+    """2026-09-19 — org을 이름("테스트발주기관_후속처리")으로 지우면, pytest-xdist
+    병렬 실행 중 같은 이름의 org를 만드는 다른 no_db_isolation 테스트가 동시에 떠 있을 때
+    그쪽 org까지 같이 지워버려 FK 위반이 났다(순차 실행에선 항상 이 이름의 org가 하나뿐이라
+    안 드러났던 경쟁 상태). 이 테스트가 실제로 만든 notice에 연결된 org만 id로 지운다."""
     with engine.begin() as conn:
         if notice_ids:
+            org_ids = conn.execute(
+                select(notice.c.org_id).where(notice.c.id.in_(notice_ids), notice.c.org_id.is_not(None))
+            ).scalars().all()
             conn.execute(delete(analysis).where(analysis.c.notice_id.in_(notice_ids)))
             conn.execute(delete(notice).where(notice.c.id.in_(notice_ids)))
-        conn.execute(delete(org).where(org.c.name == "테스트발주기관_후속처리"))
+            if org_ids:
+                conn.execute(delete(org).where(org.c.id.in_(org_ids)))
         conn.execute(delete(source).where(source.c.id == source_id))
 
 
