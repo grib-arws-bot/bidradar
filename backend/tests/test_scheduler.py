@@ -122,18 +122,47 @@ def test_run_pending_backlog_returns_counts_from_run_pending_analysis():
     병렬화 효과가 안 나온 원인 조사 중 발견). run_pending_analysis처럼 이것도 명시적으로
     막아야 이 테스트가 검증하려는 "오케스트레이션 결과 반환"만 순수하게 확인된다."""
     fake_result = {"extraction_candidates": 2, "auto_extracted": 2, "analyze_candidates": 8, "auto_analyzed": 8}
+    # 2026-09-19 -- run_pending_backlog이 candidates가 배치 상한(200)보다 적을 때까지
+    # variant별로 계속 이어서 부르도록 바뀌었다(밀린 대기열을 10분 주기 안에서 한 번에
+    # 처리) -- candidates=0을 반환해야 한 번만 부르고 멈춘다.
     with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result) as mock_run, \
-         mock.patch("app.scheduler.run_pending_embeddings") as mock_embed:
+         mock.patch("app.scheduler.run_pending_embeddings", return_value={"candidates": 0, "embedded": 0}) as mock_embed:
         result = run_pending_backlog()
     mock_run.assert_called_once_with()
-    assert mock_embed.call_count == 2  # variant="title" 1회 + variant="attachment" 1회
+    assert mock_embed.call_count == 2  # variant="title" 1회 + variant="attachment" 1회, 각각 대기열 소진되자마자 중단
     assert result == fake_result
+
+
+def test_run_pending_backlog_drains_embedding_backlog_within_one_tick():
+    """2026-09-19 -- 밀린 임베딩 대기열이 배치 상한(200)보다 많으면 10분 다음 틱을
+    기다리지 않고 같은 호출 안에서 이어서 처리해야 한다(전량 재계산 백필 요청 —
+    5시간+ 걸리던 걸 10분 주기 대기 없이 압축)."""
+    from app.services.embeddings import DEFAULT_BATCH_LIMIT
+
+    responses = {
+        "title": iter([{"candidates": 0, "embedded": 0}]),
+        "attachment": iter([
+            {"candidates": DEFAULT_BATCH_LIMIT, "embedded": DEFAULT_BATCH_LIMIT},
+            {"candidates": DEFAULT_BATCH_LIMIT, "embedded": DEFAULT_BATCH_LIMIT},
+            {"candidates": 50, "embedded": 50},
+        ]),
+    }
+
+    def fake_embed(*, variant):
+        return next(responses[variant])
+
+    fake_result = {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
+    with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result), \
+         mock.patch("app.scheduler.run_pending_embeddings", side_effect=fake_embed) as mock_embed:
+        run_pending_backlog()
+    # title: 대기열 없음(1회로 중단) + attachment: 200+200+50 세 번 만에 소진(50 < 상한에서 중단)
+    assert mock_embed.call_count == 1 + 3
 
 
 def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():
     # run_due_sources(매 분)와 별개 잡이라 이번 회차 실패가 스케줄러 자체를 죽이면 안 됨.
     with mock.patch("app.scheduler.run_pending_analysis", side_effect=RuntimeError("가짜 실패")), \
-         mock.patch("app.scheduler.run_pending_embeddings"):
+         mock.patch("app.scheduler.run_pending_embeddings", return_value={"candidates": 0, "embedded": 0}):
         result = run_pending_backlog()
     assert result == {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
 

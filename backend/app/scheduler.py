@@ -33,7 +33,7 @@ from app.collector.runner import CollectionInProgressError, run_source_and_proce
 from app.db import engine
 from app.logging_config import configure_logging
 from app.models import customer, source
-from app.services.embeddings import run_pending_embeddings
+from app.services.embeddings import DEFAULT_BATCH_LIMIT, run_pending_embeddings
 from app.services.interest_report import generate_report, send_report_email
 from app.services.mailer import SmtpNotConfiguredError
 from app.services.pending_analysis import run_pending_analysis
@@ -170,16 +170,31 @@ def run_pending_backlog() -> dict:
     # 두 번째 컬럼도 같은 주기로 채운다(매칭 방식 비교 화면의 3방향 비교용). title 쪽은 이미
     # 전량 처리돼 있으면 매 회차 후보 0건으로 사실상 no-op이라, attachment 쪽 배치 용량을
     # 뺏지 않는다.
+    #
+    # 2026-09-19 — 전량 재계산(의사결정_로그 167번, embedding_a1 신규 컬럼) 첫 백필이
+    # 10분에 200건씩이라 6,718건 기준 5시간 넘게 걸리는 걸 보고, "한 배치 끝나면 바로 다음
+    # 배치"로 바꿔달라는 요청. 배치 하나(200건)가 반환한 candidates가 배치 상한과 같으면
+    # 대기열이 더 남아있다는 뜻이므로 같은 호출 안에서 즉시 이어서 처리한다 — 10분 주기
+    # 자체를 없앤 게 아니라, 밀린 대기열이 있을 때만 그 주기 안에서 쉬지 않고 이어감.
+    # BlockingScheduler는 job마다 별도 스레드를 쓰므로(위 run_due_customer_emails 주석
+    # 참고) 이 호출이 길어져도 run_due_sources 등 다른 예약 작업은 막히지 않는다.
     for variant in ("title", "attachment"):
+        total_candidates = 0
+        total_embedded = 0
         try:
-            embed_result = run_pending_embeddings(variant=variant)
-            if embed_result["embedded"]:
-                logger.info(
-                    "임베딩 배치 완료(%s): 대상=%s 성공=%s",
-                    variant, embed_result["candidates"], embed_result["embedded"],
-                )
+            while True:
+                embed_result = run_pending_embeddings(variant=variant)
+                total_candidates += embed_result["candidates"]
+                total_embedded += embed_result["embedded"]
+                if embed_result["candidates"] < DEFAULT_BATCH_LIMIT:
+                    break
         except Exception:  # noqa: BLE001 — 임베딩 배치 실패가 다음 예정 실행을 막으면 안 됨
             logger.exception("임베딩 배치 실패(%s)", variant)
+        if total_embedded:
+            logger.info(
+                "임베딩 배치 완료(%s): 대상=%s 성공=%s",
+                variant, total_candidates, total_embedded,
+            )
 
     return result
 
