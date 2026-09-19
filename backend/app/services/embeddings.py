@@ -45,7 +45,15 @@ DEFAULT_BATCH_LIMIT = 200  # pending_analysis.py와 동일한 상한 원칙 — 
 # 나라장터가 하루 수백 건씩 올라오는 걸 감안하면 이 페이스로는 못 따라잡음). 여러 건을
 # 묶어 한 번의 모델 호출로 인코딩한다 — DEFAULT_BATCH_LIMIT(한 번의 run_pending_embeddings
 # 호출이 훑는 대기열 크기)과는 다른 값, 이건 그중 실제 모델 호출 한 번에 묶는 개수.
-EMBEDDING_ENCODE_BATCH_SIZE = 16
+#
+# variant별로 다르게 둔다 — 실전 배포 직후 실측해보니 title(제목·기관명 등 짧은 텍스트)은
+# 16건 배치로 6건이 8초 만에 끝나 확실히 빨라졌는데, attachment(첨부 전문, 최대 4000자)는
+# 16건 배치 하나가 6분 넘게 걸려(건당 24~32초) 오히려 기존보다 느려졌다. sentence-
+# transformers는 배치 안에서 제일 긴 시퀀스 길이에 맞춰 짧은 것도 패딩하므로, 텍스트
+# 길이가 들쭉날쭉한 attachment를 크게 묶으면 짧은 텍스트까지 긴 텍스트 길이만큼 연산이
+# 낭비된다 — 이 서버(4코어, 다른 서비스와 공유, 스왑 이미 사용 중)에서는 그 낭비가
+# 배치화 이득을 넘어섰다. attachment는 증거가 나올 때까지 배치화 이전(1건씩) 그대로 둔다.
+_ENCODE_BATCH_SIZE_BY_VARIANT: dict[str, int] = {"title": 16, "attachment": 1}
 # bge-m3 컨텍스트 한도(8192 토큰) 안에서 여유 있게 문서 앞부분 위주로만 담는다 — 전문을
 # 다 넣진 않는다.
 A1_TEXT_MAX_CHARS = 4000
@@ -249,8 +257,9 @@ def run_pending_embeddings(
     with engine.connect() as conn:
         candidates = _pending_embedding_notice_ids(conn, source_id, batch_limit, variant=variant)
 
+    encode_batch_size = _ENCODE_BATCH_SIZE_BY_VARIANT.get(variant, 1)
     embedded = 0
-    for i in range(0, len(candidates), EMBEDDING_ENCODE_BATCH_SIZE):
-        chunk = candidates[i : i + EMBEDDING_ENCODE_BATCH_SIZE]
+    for i in range(0, len(candidates), encode_batch_size):
+        chunk = candidates[i : i + encode_batch_size]
         embedded += _embed_notice_chunk(chunk, variant=variant)
     return {"candidates": len(candidates), "embedded": embedded}

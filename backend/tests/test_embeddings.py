@@ -166,10 +166,10 @@ def test_run_pending_embeddings_continues_past_one_failure():
 
 
 def test_run_pending_embeddings_encodes_multiple_notices_in_one_model_call():
-    """2026-09-19 — 공고를 하나씩 개별 인코딩하면 CPU에서 배치 연산 이점을 못 살려 건당
-    8~16초가 걸렸다(embedding_a1 전량 재계산 백필 중 실측). 여러 건을 한 번의
+    """2026-09-19 — title(제목 등 짧은 텍스트)을 공고 하나씩 개별 인코딩하면 CPU에서 배치
+    연산 이점을 못 살려 느렸다(embedding_a1 전량 재계산 백필 중 실측). 여러 건을 한 번의
     _compute_embeddings() 호출로 묶어 처리하는지(=모델 호출 횟수가 공고 수보다 훨씬
-    적은지) 검증한다 — 이게 이번 배치화 변경의 핵심."""
+    적은지) 검증한다 — title variant는 배치화가 확실히 도움됨을 실측으로 확인했다."""
     with mock.patch(
         "app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR] * 3
     ) as mock_compute:
@@ -179,7 +179,7 @@ def test_run_pending_embeddings_encodes_multiple_notices_in_one_model_call():
         try:
             result = run_pending_embeddings(source_id, batch_limit=200)
             assert result == {"candidates": 3, "embedded": 3}
-            # EMBEDDING_ENCODE_BATCH_SIZE(16)보다 적은 3건이므로 한 번의 호출로 다 묶여야 함
+            # title의 배치 크기(16)보다 적은 3건이므로 한 번의 호출로 다 묶여야 함
             assert mock_compute.call_count == 1
             assert len(mock_compute.call_args.args[0]) == 3
             with engine.connect() as conn:
@@ -187,6 +187,29 @@ def test_run_pending_embeddings_encodes_multiple_notices_in_one_model_call():
                     select(notice.c.embedding).where(notice.c.id.in_(notice_ids))
                 ).scalars().all()
             assert all(e is not None for e in embeddings)
+        finally:
+            _cleanup(source_id, notice_ids)
+
+
+def test_run_pending_embeddings_does_not_batch_attachment_variant():
+    """2026-09-19 — attachment(첨부 전문, 최대 4000자)를 title과 같은 배치 크기(16)로
+    묶었더니 실전 배포에서 오히려 느려졌다(건당 8~16초 -> 24~32초, 6.5분 넘게 걸림) —
+    sentence-transformers가 배치 안 최장 시퀀스에 맞춰 짧은 텍스트도 패딩해서, 길이가
+    들쭉날쭉한 attachment는 크게 묶을수록 연산 낭비가 커진 것으로 보인다. 그 실측 이후
+    attachment는 배치화 이전(공고당 모델 호출 1회)으로 되돌렸다 — 회귀 방지 테스트."""
+    with mock.patch(
+        "app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]
+    ) as mock_compute:
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_ids = [_make_notice(conn, source_id) for _ in range(3)]
+        try:
+            result = run_pending_embeddings(source_id, batch_limit=200, variant="attachment")
+            assert result == {"candidates": 3, "embedded": 3}
+            # title과 달리 attachment는 한 번에 묶지 않고 공고마다 별도 호출해야 함
+            assert mock_compute.call_count == 3
+            for call in mock_compute.call_args_list:
+                assert len(call.args[0]) == 1
         finally:
             _cleanup(source_id, notice_ids)
 

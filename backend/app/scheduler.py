@@ -186,6 +186,14 @@ def run_pending_backlog() -> dict:
                 embed_result = run_pending_embeddings(variant=variant)
                 total_candidates += embed_result["candidates"]
                 total_embedded += embed_result["embedded"]
+                # 2026-09-19 — 대기열이 커서(예: 전량 재계산 백필) 이 while이 몇 시간씩 도는
+                # 동안 완료 로그가 한 번도 안 찍히면 진행 중인지 멈췄는지 로그만으론 알 수
+                # 없다 — 매 라운드(최대 200건)마다 중간 로그를 남긴다.
+                if embed_result["embedded"]:
+                    logger.info(
+                        "임베딩 배치 진행 중(%s): 이번 라운드=%s (누적 %s)",
+                        variant, embed_result["embedded"], total_embedded,
+                    )
                 if embed_result["candidates"] < DEFAULT_BATCH_LIMIT:
                     break
         except Exception:  # noqa: BLE001 — 임베딩 배치 실패가 다음 예정 실행을 막으면 안 됨
