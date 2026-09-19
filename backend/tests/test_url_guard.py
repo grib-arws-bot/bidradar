@@ -90,13 +90,43 @@ def test_allows_kogas_nonstandard_port_9443(monkeypatch):
 
 
 def test_allows_sllm_port_28081(monkeypatch):
-    # 사내 sLLM 서버(thingx.grib-iot.com, 2026-09-20, 의사결정_로그 175번) — BidRadar 자체
-    # prod 서버와 같은 호스트(공인 IP)라 IP 차단과는 무관, 포트만 예외 처리.
+    # 사내 sLLM 서버의 공인 도메인·포트(thingx.grib-iot.com, 2026-09-20, 의사결정_로그 175번) —
+    # 로컬 개발 PC 등 외부망에서 호출할 때 쓰는 경로. IP 자체가 공인이라 IP 차단과 무관,
+    # 포트만 예외 처리.
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"thingx.grib-iot.com": "1.220.120.74"}))
 
     target = validate_url("http://thingx.grib-iot.com:28081/v1/classify-doc")
 
     assert target.port == 28081
+
+
+def test_allows_sllm_internal_ip_port_8081(monkeypatch):
+    # 같은 sLLM 서버를 BidRadar prod 서버 자신이 호출할 때 쓰는 사내망 경로(2026-09-20,
+    # 의사결정_로그 181번) — 공인 도메인으로는 NAT 헤어핀 미지원으로 자기 라우터를 못
+    # 왕복해서, 사내망 IP(192.168.0.99)로 직접 붙는다. ALLOWED_PRIVATE_TARGETS의 유일한
+    # 정확 매치 예외 — IP 대역이 아니라 이 호스트+포트 조합 하나만 허용된다.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"192.168.0.99": "192.168.0.99"}))
+
+    target = validate_url("http://192.168.0.99:8081/v1/classify-doc")
+
+    assert target.resolved_ip == "192.168.0.99"
+
+
+def test_blocks_same_private_ip_on_different_port(monkeypatch):
+    # ALLOWED_PRIVATE_TARGETS는 호스트+포트 정확 매치만 허용한다 — 같은 사내망 장비라도
+    # 다른 포트는 여전히 차단돼야 한다(대역 전체가 열린 게 아님을 검증).
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"192.168.0.99": "192.168.0.99"}))
+
+    with pytest.raises(SSRFBlockedError):
+        validate_url("http://192.168.0.99:8080/v1/classify-doc")
+
+
+def test_blocks_other_private_ip_on_allowed_sllm_port(monkeypatch):
+    # 8081이 ALLOWED_PORTS에 있어도, 사내망의 다른 장비까지 열리면 안 된다.
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo({"192.168.0.50": "192.168.0.50"}))
+
+    with pytest.raises(SSRFBlockedError):
+        validate_url("http://192.168.0.50:8081/v1/classify-doc")
 
 
 def test_blocks_arbitrary_nonstandard_port():

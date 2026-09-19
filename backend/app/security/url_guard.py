@@ -22,12 +22,22 @@ ALLOWED_SCHEMES = {"http", "https"}
 # 실측 확인, robots.txt 개방·이용약관에 크롤링 금지 조항 없음). 임의 포트를 여는 게 아니라
 # "이미 검증한 실제 정부기관 사이트가 쓰는 포트"만 화이트리스트에 추가하는 것 — SSRF 방어
 # 원칙(허용목록 방식)과 배치되지 않는다.
-# 28081 — 사내 sLLM 서버(thingx.grib-iot.com, 의사결정_로그 175번)의 API 포트. IP 자체는
-# 공인 IP(1.220.120.74, 2026-09-20 확인)라 BLOCKED_NETWORKS와는 무관 — 표준 포트가 아니라서
-# 여기 추가가 필요할 뿐이다. thingx.grib-iot.com은 BidRadar 자체 prod 서버와 같은 호스트다
-# (기존 배포 대상, 신뢰된 대상).
-ALLOWED_PORTS = {80, 443, 8080, 8443, 9443, 28081}
+# 28081 — 사내 sLLM 서버(의사결정_로그 175번)의 공인 도메인·포트(thingx.grib-iot.com, 공인
+# IP 1.220.120.74) — 라우터가 외부에서 들어오는 트래픽만 내부 8081로 포워딩하는 규칙이라,
+# BidRadar 자체가 아닌 외부(로컬 개발 PC 등)에서 호출할 때만 이 경로를 쓴다.
+# 8081 — 같은 sLLM 서버를 BidRadar prod 서버 자신이 호출할 때 쓰는 실제 내부 포트
+# (2026-09-20, 의사결정_로그 181번 — BidRadar와 sLLM은 같은 물리 호스트가 아니라 같은 사내망
+# 뒤 서로 다른 장비였고, 공인 도메인으로 자기 자신의 라우터에 왕복하는 요청이 NAT 헤어핀
+# 미지원으로 막혀 있었다). ALLOWED_PRIVATE_TARGETS 예외와 짝을 이룬다 — 아래 참고.
+ALLOWED_PORTS = {80, 443, 8080, 8443, 9443, 28081, 8081}
 DEFAULT_PORT_BY_SCHEME = {"http": 80, "https": 443}
+
+# BLOCKED_NETWORKS(사설 대역 전체 차단)의 유일한 예외 — "IP 대역 예외는 하지 않는다"(CLAUDE.md)
+# 원칙은 그대로 지키되, 이미 신원을 확인한 단일 호스트+포트 조합 하나만 정확히 허용한다(대역
+# 자체를 여는 게 아님). 여기 추가하는 건 실제로 실측 검증한 사내 신뢰 대상 하나뿐이어야 한다.
+# 192.168.0.99:8081 — grib-ai-server(사내 sLLM, 의사결정_로그 181번). BidRadar prod 서버와
+# 같은 사내망(192.168.0.0/24, 게이트웨이 192.168.0.1)의 다른 장비, sLLM팀이 직접 확인해준 값.
+ALLOWED_PRIVATE_TARGETS: frozenset[tuple[str, int]] = frozenset({("192.168.0.99", 8081)})
 
 MAX_REDIRECTS = 3
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -107,8 +117,8 @@ def validate_url(url: str) -> ValidatedTarget:
     """URL을 검증하고, 연결에 고정해서 쓸 IP를 포함한 대상을 반환한다.
 
     1. 스킴이 http/https인지 (file/gopher/ftp/data 등 거부)
-    2. 포트가 80/443/8080/8443/9443 중 하나인지
-    3. 호스트를 리졸브한 모든 IP가 차단 대역 밖인지 (하나라도 걸리면 전체 거부)
+    2. 포트가 ALLOWED_PORTS 안에 있는지
+    3. 호스트를 리졸브한 모든 IP가 차단 대역 밖인지 (하나라도 걸리면 전체 거부, ALLOWED_PRIVATE_TARGETS 예외 제외)
     """
     parsed = urlparse(url)
 
@@ -121,7 +131,8 @@ def validate_url(url: str) -> ValidatedTarget:
 
     port = parsed.port or DEFAULT_PORT_BY_SCHEME[parsed.scheme]
     if port not in ALLOWED_PORTS:
-        raise SSRFBlockedError(url, f"허용되지 않은 포트({port}) — 80/443/8080/8443/9443만 허용")
+        allowed = "/".join(str(p) for p in sorted(ALLOWED_PORTS))
+        raise SSRFBlockedError(url, f"허용되지 않은 포트({port}) — {allowed}만 허용")
 
     # 리터럴 IP(예: http://169.254.169.254/)도 getaddrinfo로 통일 처리된다.
     try:
@@ -133,7 +144,7 @@ def validate_url(url: str) -> ValidatedTarget:
         raise SSRFBlockedError(url, "DNS 조회 결과가 없음")
 
     for ip_str in resolved_ips:
-        if _is_blocked_ip(ip_str):
+        if _is_blocked_ip(ip_str) and (ip_str, port) not in ALLOWED_PRIVATE_TARGETS:
             raise SSRFBlockedError(url, f"차단된 IP 대역({ip_str})")
 
     resolved_ip = sorted(resolved_ips)[0]
