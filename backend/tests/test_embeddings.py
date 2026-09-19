@@ -191,25 +191,28 @@ def test_run_pending_embeddings_encodes_multiple_notices_in_one_model_call():
             _cleanup(source_id, notice_ids)
 
 
-def test_run_pending_embeddings_does_not_batch_attachment_variant():
+def test_run_pending_embeddings_uses_smaller_batch_for_attachment_variant():
     """2026-09-19 — attachment(첨부 전문, 최대 4000자)를 title과 같은 배치 크기(16)로
     묶었더니 실전 배포에서 오히려 느려졌다(건당 8~16초 -> 24~32초, 6.5분 넘게 걸림) —
     sentence-transformers가 배치 안 최장 시퀀스에 맞춰 짧은 텍스트도 패딩해서, 길이가
-    들쭉날쭉한 attachment는 크게 묶을수록 연산 낭비가 커진 것으로 보인다. 그 실측 이후
-    attachment는 배치화 이전(공고당 모델 호출 1회)으로 되돌렸다 — 회귀 방지 테스트."""
+    들쭉날쭉한 attachment는 크게 묶을수록 연산 낭비가 커진 것으로 보인다. 일단 1건씩으로
+    되돌려 baseline을 회복한 뒤, 패딩 낭비가 작은 더 작은 배치(4)로 재실험 중이다 —
+    title(16)보다는 확실히 작아야 한다는 것만 이 테스트가 고정한다(정확한 최적값은
+    prod 실측으로 계속 조정)."""
     with mock.patch(
-        "app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR]
+        "app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR] * 5
     ) as mock_compute:
         with engine.begin() as conn:
             source_id = _make_temp_source(conn)
-            notice_ids = [_make_notice(conn, source_id) for _ in range(3)]
+            notice_ids = [_make_notice(conn, source_id) for _ in range(5)]
         try:
             result = run_pending_embeddings(source_id, batch_limit=200, variant="attachment")
-            assert result == {"candidates": 3, "embedded": 3}
-            # title과 달리 attachment는 한 번에 묶지 않고 공고마다 별도 호출해야 함
-            assert mock_compute.call_count == 3
+            assert result == {"candidates": 5, "embedded": 5}
+            # attachment 배치 크기가 title(16)보다 작아서 5건이 한 번에 안 묶이고 최소 2번
+            # 이상 호출돼야 함(현재 값 4라면 4+1로 2번)
+            assert mock_compute.call_count >= 2
             for call in mock_compute.call_args_list:
-                assert len(call.args[0]) == 1
+                assert len(call.args[0]) < 16
         finally:
             _cleanup(source_id, notice_ids)
 

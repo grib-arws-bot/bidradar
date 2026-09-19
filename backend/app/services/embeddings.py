@@ -52,8 +52,10 @@ DEFAULT_BATCH_LIMIT = 200  # pending_analysis.py와 동일한 상한 원칙 — 
 # transformers는 배치 안에서 제일 긴 시퀀스 길이에 맞춰 짧은 것도 패딩하므로, 텍스트
 # 길이가 들쭉날쭉한 attachment를 크게 묶으면 짧은 텍스트까지 긴 텍스트 길이만큼 연산이
 # 낭비된다 — 이 서버(4코어, 다른 서비스와 공유, 스왑 이미 사용 중)에서는 그 낭비가
-# 배치화 이득을 넘어섰다. attachment는 증거가 나올 때까지 배치화 이전(1건씩) 그대로 둔다.
-_ENCODE_BATCH_SIZE_BY_VARIANT: dict[str, int] = {"title": 16, "attachment": 1}
+# 배치화 이득을 넘어섰다. 1건씩(사실상 무배치)으로 되돌려 baseline을 확인한 뒤,
+# 패딩 낭비가 작아지는 더 작은 배치(4)로 재실험 중 — 16만큼 나쁘지 않으면서도 배치
+# 오버헤드 분산 효과는 볼 수 있는지 실측으로 판단한다.
+_ENCODE_BATCH_SIZE_BY_VARIANT: dict[str, int] = {"title": 16, "attachment": 4}
 # bge-m3 컨텍스트 한도(8192 토큰) 안에서 여유 있게 문서 앞부분 위주로만 담는다 — 전문을
 # 다 넣진 않는다.
 A1_TEXT_MAX_CHARS = 4000
