@@ -34,6 +34,10 @@ from app.db import engine
 from app.logging_config import configure_logging
 from app.models import customer, source
 from app.services.embeddings import DEFAULT_BATCH_LIMIT, run_pending_embeddings
+from app.services.sllm_topic_match import (
+    DEFAULT_BATCH_LIMIT as SLLM_TOPIC_BATCH_LIMIT,
+    run_pending_sllm_topic_match,
+)
 from app.services.interest_report import generate_report, send_report_email
 from app.services.mailer import SmtpNotConfiguredError
 from app.services.pending_analysis import run_pending_analysis
@@ -203,6 +207,30 @@ def run_pending_backlog() -> dict:
                 "임베딩 배치 완료(%s): 대상=%s 성공=%s",
                 variant, total_candidates, total_embedded,
             )
+
+    # 관심주제 시맨틱 필터(사내 sLLM B, classify-topic, 2026-09-20 의사결정_로그 175/177번)
+    # — 키워드 규칙이 놓치는 표현 변형("자동화 설비"가 "로봇" 키워드를 안 담는 경우 등)을
+    # 보조로 잡는다. 임베딩과 같은 이유로 대기열이 크면 이어서 처리하되, sLLM 서버 장애로
+    # run_pending_sllm_topic_match가 중간에 멈췄으면(checked < candidates) 이번 회차는
+    # 여기서 같이 멈춘다 — 죽은 서버를 계속 두드리며 시간을 낭비하지 않는다.
+    total_topic_candidates = 0
+    total_topic_matched = 0
+    try:
+        while True:
+            topic_result = run_pending_sllm_topic_match()
+            total_topic_candidates += topic_result["candidates"]
+            total_topic_matched += topic_result["matched"]
+            if topic_result["matched"]:
+                logger.info(
+                    "sLLM 시맨틱 매칭 진행 중: 이번 라운드 신규=%s (누적 %s)",
+                    topic_result["matched"], total_topic_matched,
+                )
+            if topic_result["checked"] < topic_result["candidates"] or topic_result["candidates"] < SLLM_TOPIC_BATCH_LIMIT:
+                break
+    except Exception:  # noqa: BLE001 — 실패가 다음 예정 실행을 막으면 안 됨
+        logger.exception("sLLM 시맨틱 매칭 배치 실패")
+    if total_topic_matched:
+        logger.info("sLLM 시맨틱 매칭 완료: 대상=%s 신규=%s", total_topic_candidates, total_topic_matched)
 
     return result
 

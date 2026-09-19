@@ -105,6 +105,9 @@ notice = Table(
     # 자체가 불가능해진다.
     Column("embedding_a1", Vector(EMBEDDING_DIM)),
     Column("embedded_a1_at", DateTime(timezone=True)),
+    # 2026-09-20 — 관심주제 시맨틱 필터(sLLM B, 의사결정_로그 177번) 대기열 추적용
+    # (embedded_at과 동일 패턴) — 이 공고 제목을 sLLM으로 이미 확인했는지. NULL이면 미확인.
+    Column("sllm_topic_checked_at", DateTime(timezone=True)),
 )
 
 notice_version = Table(
@@ -124,10 +127,15 @@ notice_score = Table(
     Column("notice_id", Integer, ForeignKey("notice.id", ondelete="CASCADE"), nullable=False),
     Column("interest_topic_id", Integer, ForeignKey("interest_topic.id"), nullable=False),
     Column("l2_score", Integer, nullable=False),
-    Column("l3_conf", Numeric(4, 3)),  # 0.000~1.000
+    Column("l3_conf", Numeric(4, 3)),  # 0.000~1.000 — 설계안 05절 L3(LLM 도메인 판정) 확신도
+    # 용도로 이미 정해져 있음(아직 미구현). sLLM 시맨틱 매칭 확신도는 아래 sllm_confidence를
+    # 쓴다 — 같은 컬럼에 다른 의미를 섞지 않는다(2026-09-20, 의사결정_로그 177번).
     Column("priority", Numeric(8, 3)),  # 06절 우선순위 스코어링 결과
     Column("reason", Text),  # 판정 근거 — "왜 이게 떴는지" 담당자가 확인 가능해야 함(05절 원칙)
-    Column("rule_ver", Integer, nullable=False),  # 이 판정에 쓰인 키워드 사전 버전
+    Column("rule_ver", Integer, nullable=False),  # 이 판정에 쓰인 키워드 사전 버전. sLLM
+    # 시맨틱 매칭으로 생긴 행은 규칙 버전이 없으므로 0(사전 없음)을 쓴다 — l2_score도 0.
+    Column("sllm_confidence", Numeric(4, 3)),  # 0.000~1.000, sLLM(B, classify-topic)이 반환한
+    # confidence 원본값 그대로 — 자동 판정에 안 쓰고 사람 검토 후보 정렬용으로만 쓴다.
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
