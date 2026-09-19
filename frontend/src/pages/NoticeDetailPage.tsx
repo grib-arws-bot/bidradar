@@ -10,6 +10,7 @@ import { fetchFilterOptions, fetchNeighbors, fetchNoticeDetail } from "@/api/not
 import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
 import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDocumentsSection";
 import { NoticeTopSection } from "@/components/notice-detail/NoticeTopSection";
+import { SllmPreviewCard } from "@/components/notice-detail/SllmPreviewCard";
 import { useToast } from "@/components/ToastProvider";
 
 export function NoticeDetailPage() {
@@ -195,6 +196,8 @@ export function NoticeDetailPage() {
           </Stack>
         </Card>
       )}
+
+      <SllmPreviewCard noticeId={noticeId} enabled={extractionQuery.data?.status === "done" && (extractionQuery.data.docs?.length ?? 0) > 0} />
 
       <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} />
 

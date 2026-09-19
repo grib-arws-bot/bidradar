@@ -132,3 +132,26 @@ export async function runStructuring(noticeId: number, model: LlmModel): Promise
   const { data } = await apiClient.post(`/notices/${noticeId}/structure`, { model });
   return data;
 }
+
+// 사내 sLLM(A, extract-requirements) 요구사항 추출 미리보기(2026-09-20) — A2(Haiku) 실행 전
+// 무료로 먼저 훑어보는 용도. analysis_requirement(A2 확정 결과)와 별개이며 판정 근거로 쓰지
+// 않는다 — "확인 필요" 미리보기로만 노출한다.
+export interface SllmRequirementPreview {
+  status: "queued" | "running" | "done" | "failed";
+  chunks_processed: number | null;
+  chunks_total: number | null;
+  requirements: Requirement[] | null;
+  rejected_ungrounded_count: number | null;
+  duplicate_count: number | null;
+  error: string | null;
+}
+
+export async function startSllmRequirementPreview(noticeId: number): Promise<SllmRequirementPreview> {
+  const { data } = await apiClient.post<SllmRequirementPreview>(`/notices/${noticeId}/sllm-requirements`);
+  return data;
+}
+
+export async function fetchSllmRequirementPreview(noticeId: number): Promise<SllmRequirementPreview | null> {
+  const { data } = await apiClient.get<SllmRequirementPreview | null>(`/notices/${noticeId}/sllm-requirements`);
+  return data;
+}

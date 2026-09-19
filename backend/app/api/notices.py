@@ -14,6 +14,11 @@ from app.services.analysis.structure import (
     get_requirements,
     run_structuring_for_notice,
 )
+from app.services.analysis.sllm_preview import (
+    SllmPreviewInProgressError,
+    get_sllm_preview_for_notice,
+    start_sllm_preview_for_notice,
+)
 from app.services.analysis_pilot import (
     AnalysisInProgressError,
     UnsupportedSourceError,
@@ -27,6 +32,7 @@ from app.services.notice_detail import follow_org, get_neighbors, get_notice_det
 from app.services.notice_exclude_words import list_exclude_words
 from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
 from app.services.notice_topics import add_topic, remove_topic
+from app.services.sllm_client import SllmNotConfiguredError
 
 router = APIRouter(prefix="/api/notices", tags=["notices"])
 
@@ -203,6 +209,28 @@ def post_structure(notice_id: int, payload: StructureRequest, _email: str = Depe
 def get_requirements_route(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
     with engine.connect() as conn:
         return get_requirements(conn, notice_id)
+
+
+@router.post("/{notice_id}/sllm-requirements")
+def post_sllm_requirements(notice_id: int, _email: str = Depends(require_auth)) -> dict:
+    """A2(Haiku) 실행 전 무료 사내 sLLM 미리보기 시작 — app/services/analysis/sllm_preview.py 참고."""
+    with engine.begin() as conn:
+        try:
+            return start_sllm_preview_for_notice(conn, notice_id)
+        except SllmPreviewInProgressError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except SllmNotConfiguredError as exc:
+            raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{notice_id}/sllm-requirements")
+def get_sllm_requirements_route(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
+    """진행 중이면 그 자리에서 한 번 더 폴링해 상태를 갱신한 뒤 반환 — 프론트엔드가 이
+    엔드포인트를 주기적으로 호출하는 것 자체가 폴링이다(별도 스케줄러 잡 없음)."""
+    with engine.begin() as conn:
+        return get_sllm_preview_for_notice(conn, notice_id)
 
 
 class TopicRequest(BaseModel):

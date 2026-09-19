@@ -102,3 +102,25 @@ analysis_check = Table(
     Column("done_by", String(255)),
     Column("done_at", DateTime(timezone=True)),
 )
+
+# 사내 sLLM(B, extract-requirements) 요구사항 추출 미리보기(2026-09-20, 의사결정_로그 178번).
+# analysis_requirement(A2, Haiku)와 물리적으로 분리된 테이블이다 — match.py(A3)는 이 테이블을
+# 절대 읽지 않는다. sLLM 추출은 A2만큼 검증되지 않은 무료 미리보기일 뿐, 실제 제품 매칭
+# 판정의 근거가 되면 안 된다(두 계층 LLM 설계: sLLM=미리보기, Haiku=확정).
+analysis_sllm_preview = Table(
+    "analysis_sllm_preview",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("analysis_id", Integer, ForeignKey("analysis.id", ondelete="CASCADE"), nullable=False, unique=True),
+    Column("status", String(20), nullable=False),  # sLLM job 상태 값 그대로: queued/running/done/failed
+    Column("sllm_job_id", String(100)),
+    Column("chunks_processed", Integer),
+    Column("chunks_total", Integer),
+    # sllm_verification.sanitize_sllm_requirements()를 거친 결과만 저장(근거 검증+중복 제거 후)
+    Column("requirements", JSONB),
+    Column("rejected_ungrounded_count", Integer),
+    Column("duplicate_count", Integer),
+    Column("error", Text),
+    Column("started_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("finished_at", DateTime(timezone=True)),
+)

@@ -31,6 +31,7 @@ from app.models.analysis import (
     analysis_doc,
     analysis_flag,
     analysis_requirement,
+    analysis_sllm_preview,
 )
 from app.models.catalog import product, product_cert, product_reference, product_spec
 from app.models.reports import newsletter_report, notice_strategy, report_send_log
@@ -73,6 +74,7 @@ __all__ = [
     "analysis_requirement",
     "analysis_flag",
     "analysis_check",
+    "analysis_sllm_preview",
     # catalog
     "product",
     "product_spec",
