@@ -140,9 +140,14 @@ def test_run_pending_embeddings_skips_already_embedded_and_superseded():
 
 def test_run_pending_embeddings_continues_past_one_failure():
     """공고 하나의 임베딩 계산이 실패해도(모델 오류 등) 나머지 배치는 계속 처리돼야 한다 —
-    pending_analysis.py의 "공고 하나 실패가 전체를 막으면 안 된다" 원칙과 동일."""
+    pending_analysis.py의 "공고 하나 실패가 전체를 막으면 안 된다" 원칙과 동일.
+
+    2026-09-19 — 배치 인코딩 도입 후: 청크 전체를 한 번에 인코딩 시도하고(1번째 side_effect,
+    실패) 실패하면 embed_one_notice로 공고 하나씩 순차 재시도한다(2·3번째 side_effect) —
+    그중 failing_id만 계속 실패하게 해서 격리가 실제로 되는지 확인한다."""
     with mock.patch(
-        "app.services.embeddings._compute_embeddings", side_effect=[RuntimeError("모델 오류"), [FAKE_VECTOR]]
+        "app.services.embeddings._compute_embeddings",
+        side_effect=[RuntimeError("배치 실패"), RuntimeError("모델 오류"), [FAKE_VECTOR]],
     ):
         with engine.begin() as conn:
             source_id = _make_temp_source(conn)
@@ -158,6 +163,32 @@ def test_run_pending_embeddings_continues_past_one_failure():
             assert result == {"candidates": 2, "embedded": 1}
         finally:
             _cleanup(source_id, [failing_id, ok_id])
+
+
+def test_run_pending_embeddings_encodes_multiple_notices_in_one_model_call():
+    """2026-09-19 — 공고를 하나씩 개별 인코딩하면 CPU에서 배치 연산 이점을 못 살려 건당
+    8~16초가 걸렸다(embedding_a1 전량 재계산 백필 중 실측). 여러 건을 한 번의
+    _compute_embeddings() 호출로 묶어 처리하는지(=모델 호출 횟수가 공고 수보다 훨씬
+    적은지) 검증한다 — 이게 이번 배치화 변경의 핵심."""
+    with mock.patch(
+        "app.services.embeddings._compute_embeddings", return_value=[FAKE_VECTOR] * 3
+    ) as mock_compute:
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            notice_ids = [_make_notice(conn, source_id) for _ in range(3)]
+        try:
+            result = run_pending_embeddings(source_id, batch_limit=200)
+            assert result == {"candidates": 3, "embedded": 3}
+            # EMBEDDING_ENCODE_BATCH_SIZE(16)보다 적은 3건이므로 한 번의 호출로 다 묶여야 함
+            assert mock_compute.call_count == 1
+            assert len(mock_compute.call_args.args[0]) == 3
+            with engine.connect() as conn:
+                embeddings = conn.execute(
+                    select(notice.c.embedding).where(notice.c.id.in_(notice_ids))
+                ).scalars().all()
+            assert all(e is not None for e in embeddings)
+        finally:
+            _cleanup(source_id, notice_ids)
 
 
 def test_run_pending_embeddings_attachment_variant_is_independent_of_title_variant():

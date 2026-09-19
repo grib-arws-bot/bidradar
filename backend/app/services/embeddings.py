@@ -40,6 +40,12 @@ logger = logging.getLogger("bidradar.embeddings")
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 DEFAULT_BATCH_LIMIT = 200  # pending_analysis.py와 동일한 상한 원칙 — 무제한 배치 방지
+# 2026-09-19 — 공고를 하나씩 개별 인코딩하면(_compute_embeddings([text])) CPU에서 배치
+# 연산 이점을 전혀 못 살려 건당 8~16초가 걸렸다(embedding_a1 전량 재계산 백필 중 실측 —
+# 나라장터가 하루 수백 건씩 올라오는 걸 감안하면 이 페이스로는 못 따라잡음). 여러 건을
+# 묶어 한 번의 모델 호출로 인코딩한다 — DEFAULT_BATCH_LIMIT(한 번의 run_pending_embeddings
+# 호출이 훑는 대기열 크기)과는 다른 값, 이건 그중 실제 모델 호출 한 번에 묶는 개수.
+EMBEDDING_ENCODE_BATCH_SIZE = 16
 # bge-m3 컨텍스트 한도(8192 토큰) 안에서 여유 있게 문서 앞부분 위주로만 담는다 — 전문을
 # 다 넣진 않는다.
 A1_TEXT_MAX_CHARS = 4000
@@ -183,6 +189,57 @@ def embed_one_notice(notice_id: int, *, variant: Variant = "title") -> None:
         )
 
 
+def _embed_notice_chunk(notice_ids: list[int], *, variant: Variant) -> int:
+    """여러 공고를 한 번의 모델 호출로 인코딩한다(embed_one_notice를 반복 호출하는 대신) —
+    CPU에서 배치 크기가 클수록 벡터 연산 효율이 오른다. 메타데이터 조회는 읽기전용
+    커넥션으로, 실제 DB 갱신은 인코딩이 끝난 뒤 별도의 짧은 트랜잭션으로 한다 — 오래 열린
+    트랜잭션이 락을 잡는 문제(2026-09-05 사고, 위 모듈 docstring 참고)는 그대로 피한다
+    (느린 model.encode() 호출 동안 트랜잭션을 열어두지 않음).
+
+    배치 인코딩 자체가 실패하면(모델 오류 등) embed_one_notice로 하나씩 순차 재시도해
+    어떤 공고가 문제인지 격리한다 — "공고 하나의 실패가 나머지를 막으면 안 된다"는 기존
+    원칙은 그대로 유지."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(notice.c.id, notice.c.title, notice.c.region, notice.c.stage, org.c.name.label("org_name"))
+            .select_from(notice)
+            .join(org, org.c.id == notice.c.org_id, isouter=True)
+            .where(notice.c.id.in_(notice_ids))
+        ).mappings().all()
+        texts_by_id: dict[int, str] = {}
+        for row in rows:
+            attachment_text = _latest_attachment_text(conn, row["id"]) if variant == "attachment" else None
+            texts_by_id[row["id"]] = _notice_embedding_text(
+                row["title"], row["org_name"], row["region"], row["stage"], attachment_text
+            )
+
+    ids = [nid for nid in notice_ids if nid in texts_by_id]
+    if not ids:
+        return 0
+
+    try:
+        vectors = _compute_embeddings([texts_by_id[nid] for nid in ids])
+    except Exception:  # noqa: BLE001 — 배치 하나가 통째로 실패해도 개별 재시도로 복구를 시도
+        logger.exception("배치 임베딩 실패(variant=%s, %d건) — 개별 재시도로 전환", variant, len(ids))
+        embedded = 0
+        for notice_id in ids:
+            try:
+                embed_one_notice(notice_id, variant=variant)
+                embedded += 1
+            except Exception:  # noqa: BLE001 — 공고 하나의 실패가 나머지를 막으면 안 됨
+                logger.exception("공고 임베딩 실패: notice_id=%s variant=%s", notice_id, variant)
+        return embedded
+
+    with engine.begin() as conn:
+        for notice_id, vector in zip(ids, vectors):
+            conn.execute(
+                notice.update()
+                .where(notice.c.id == notice_id)
+                .values(**{_embedding_column(variant).name: vector, _embedded_at_column(variant).name: func.now()})
+            )
+    return len(ids)
+
+
 def run_pending_embeddings(
     source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT, variant: Variant = "title"
 ) -> dict:
@@ -193,10 +250,7 @@ def run_pending_embeddings(
         candidates = _pending_embedding_notice_ids(conn, source_id, batch_limit, variant=variant)
 
     embedded = 0
-    for notice_id in candidates:
-        try:
-            embed_one_notice(notice_id, variant=variant)
-            embedded += 1
-        except Exception:  # noqa: BLE001 — 공고 하나의 실패가 나머지 배치를 막으면 안 됨
-            logger.exception("공고 임베딩 실패: notice_id=%s variant=%s", notice_id, variant)
+    for i in range(0, len(candidates), EMBEDDING_ENCODE_BATCH_SIZE):
+        chunk = candidates[i : i + EMBEDDING_ENCODE_BATCH_SIZE]
+        embedded += _embed_notice_chunk(chunk, variant=variant)
     return {"candidates": len(candidates), "embedded": embedded}
