@@ -503,6 +503,32 @@ def test_run_extraction_pilot_recovers_filename_from_content_disposition(g2b_pre
     assert result["docs"][0]["extract_ok"] is True
 
 
+def test_run_extraction_pilot_skips_common_document_revealed_after_download(g2b_prestandard_notice):
+    """2026-09-20 회귀 테스트 — 공통문서 필터(_should_skip_by_name)는 다운로드 전 대체 이름
+    ("규격서1")으로 한 번 통과되는데, 사전규격처럼 URL에 파일명이 없는 경우 진짜 이름은
+    Content-Disposition 헤더에서야 드러난다. 그 진짜 이름이 "투찰내역서(양식).xlsm"처럼
+    스킵 키워드에 걸리는데도 재검사가 없어서, 엑셀 서식 파일 내부 XML이 통째로 텍스트로
+    추출돼 건당 450만자짜리 노이즈가 쌓인 실제 사고(notice 398/854/4831/6402)를 재현한다.
+    이제는 실제 이름 확인 후 다시 걸러서 추출 자체를 하지 않아야 한다."""
+    fake_response = mock.Mock()
+    fake_response.content = b"PK\x03\x04fake-xlsm-bytes"
+    fake_response.headers = {"Content-Disposition": "attachment;filename=2.%20%ED%88%AC%EC%B0%B0%EB%82%B4%EC%97%AD%EC%84%9C(%EC%96%91%EC%8B%9D).xlsm;"}
+
+    with mock.patch("app.services.g2b_attachments.fetch_openapi_items", return_value=[_G2B_PRESTANDARD_NO_FILENAME_ITEM]):
+        with mock.patch("app.services.analysis_pilot.fetch", return_value=fake_response):
+            with engine.begin() as conn:
+                result = run_extraction_pilot(conn, g2b_prestandard_notice)
+
+    # 유일한 첨부가 공통 문서로 걸러져 그 문서 자체는 실패 처리되지만(추출 안 함), 노이즈
+    # 텍스트가 analysis_doc에 안 남는 게 이번 수정의 핵심이다 — 전체 status는 기존 로직 그대로
+    # (다른 실제 추출 실패와 동일하게) "failed"가 된다.
+    assert result["status"] == "failed"
+    assert result["docs"][0]["name"] == "2. 투찰내역서(양식).xlsm"
+    assert result["docs"][0]["extract_ok"] is False
+    assert result["docs"][0]["text"] is None
+    assert "공통 문서" in result["docs"][0]["error"]
+
+
 def test_run_extraction_pilot_rejects_duplicate_in_progress(iris_notice):
     with engine.begin() as conn:
         conn.execute(insert(analysis).values(notice_id=iris_notice, source_kind="notice", input_ref="x", status="running", ver=1))

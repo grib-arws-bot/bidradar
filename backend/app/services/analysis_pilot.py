@@ -333,6 +333,22 @@ def run_extraction_pilot(conn: Connection, notice_id: int, *, prefetched_raw_ite
                     # URL에 파일명이 없어 확장자 없는 대체 이름(예: "규격서1")을 쓴 경우 —
                     # 실제 다운로드 응답의 Content-Disposition에서 진짜 파일명을 보완한다.
                     file_name = _filename_from_content_disposition(response.headers, file_name)
+                    # 2026-09-20 — 공통문서 필터(_should_skip_by_name)는 다운로드 *전에* 이
+                    # 대체 이름("규격서1")으로 이미 한 번 통과했다("양식" 등 키워드가 안 걸림).
+                    # 실제 파일명("2. 투찰내역서(양식).xlsm")은 다운로드 응답에서야 드러나서
+                    # 재검사 없이 그대로 추출로 넘어갔다 — 그 결과 엑셀 서식 파일의 내부 XML이
+                    # 통째로 텍스트로 뽑혀 건당 450만자짜리 노이즈가 쌓였다(실측 4건, A2 컨텍스트
+                    # 낭비의 실제 원인). 진짜 이름을 알게 된 지금 다시 한번 걸러낸다.
+                    if _should_skip_by_name(file_name):
+                        doc_row = {
+                            "name": file_name, "kind": _kind_from_filename(file_name), "bytes": len(content),
+                            "sha256": hashlib.sha256(content).hexdigest(), "extract_method": None,
+                            "extract_ok": False, "error": "공통 문서로 판단되어 제외(실제 파일명 확인 후)",
+                            "text": None,
+                        }
+                        conn.execute(analysis_doc.insert().values(analysis_id=analysis_id, **doc_row))
+                        docs_result.append(doc_row)
+                        continue
 
                 if _kind_from_filename(file_name) == "zip":
                     # "분석 대상 파일이 zip이면 안의 모든 파일을 분석"(2026-09-05) — 개별 파일마다
