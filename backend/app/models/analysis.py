@@ -57,6 +57,10 @@ analysis_doc = Table(
     # 원본 파일은 저장하지 않는다(2026-09-03 결정) — notice.url이 항상 있어 필요하면 재다운로드
     # 가능하고, 저장공간이 무한정 느는 것도 피한다. 추출된 텍스트만 여기 남긴다.
     Column("text", Text),
+    # 사내 sLLM(C, classify-doc) 과거 데이터 백필 진행 커서(2026-09-20, 의사결정_로그
+    # 182번) — B(notice.sllm_topic_checked_at)와 동일 패턴. 판정 결과와 무관하게(공통문서든
+    # 아니든) 확인 완료 시점에 찍는다.
+    Column("sllm_checked_at", DateTime(timezone=True)),
 )
 
 analysis_requirement = Table(

@@ -241,30 +241,6 @@ def check_compliance(source_id: int | None) -> None:
         print(f"[{r['source_id']}] {r['name']}: {status}")
 
 
-def backfill_sllm_doc_classify(after_id: int, limit: int) -> None:
-    """이미 추출 완료된 기존 analysis_doc을 사내 sLLM(C, classify-doc)으로 재검사해 공통문서면
-    재분류하는 1회성 백필(2026-09-20, 의사결정_로그 179번) — 176번에서 연결한 라이브 파이프라인은
-    이후 신규 문서에만 적용되므로, 과거분은 이 명령으로 따로 처리한다. 중간에 멈춰도
-    --after-id로 이어서 실행 가능."""
-    from app.services.analysis.sllm_doc_backfill import backfill_doc_boilerplate_classification
-    from app.services.sllm_client import SllmNotConfiguredError
-
-    total_checked = 0
-    total_reclassified = 0
-    try:
-        while True:
-            result = backfill_doc_boilerplate_classification(after_id=after_id, limit=limit)
-            total_checked += result["checked"]
-            total_reclassified += result["reclassified"]
-            after_id = result["last_id"]
-            if result["checked"]:
-                print(f"  진행: 누적 확인={total_checked} 재분류={total_reclassified} (마지막 id={after_id})")
-            if result["checked"] < limit:
-                break
-    except SllmNotConfiguredError as exc:
-        print(f"중단: {exc} (--after-id {after_id} 로 나중에 이어서 실행 가능)", file=sys.stderr)
-        raise SystemExit(1) from exc
-
     print(f"백필 완료: 총 확인={total_checked} 총 재분류(공통문서로 제외)={total_reclassified}")
 
 
@@ -322,10 +298,6 @@ def main() -> None:
     reprocess_parser = subparsers.add_parser("reprocess-attachments")
     reprocess_parser.add_argument("--source-id", type=int, required=True)
 
-    backfill_sllm_parser = subparsers.add_parser("backfill-sllm-doc-classify")
-    backfill_sllm_parser.add_argument("--after-id", type=int, default=0, help="이 analysis_doc.id보다 큰 것부터 처리(재개용)")
-    backfill_sllm_parser.add_argument("--limit", type=int, default=200, help="한 번에 조회할 최대 건수(기본 200)")
-
     args = parser.parse_args()
     if args.command == "create-admin":
         create_admin()
@@ -351,8 +323,6 @@ def main() -> None:
         process_pending(args.source_id)
     elif args.command == "reprocess-attachments":
         reprocess_attachments(args.source_id)
-    elif args.command == "backfill-sllm-doc-classify":
-        backfill_sllm_doc_classify(args.after_id, args.limit)
 
 
 if __name__ == "__main__":
