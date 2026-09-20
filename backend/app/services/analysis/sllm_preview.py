@@ -114,9 +114,24 @@ def get_sllm_preview_for_notice(conn: Connection, notice_id: int) -> dict | None
 
     try:
         polled = get_extract_requirements_status(row["sllm_job_id"])
-    except (SllmNotConfiguredError, SllmError) as exc:
-        # 폴링 자체가 일시적으로 실패해도 진행 중 상태를 그대로 둔다 — 다음 폴링에서 재시도.
-        # 근거 없이 "실패"로 단정하지 않되, 조용히 넘기지 않도록 로그는 남긴다.
+    except SllmError as exc:
+        # 2026-09-20 실측 발견 — sLLM이 GPU 서버로 옮겨가며 진행 중이던 job의 상태가
+        # 날아가서 "job_not_found"가 난 사례가 있었다. 이건 일시적 오류가 아니라 그 job이
+        # 영원히 다시 안 돌아온다는 뜻이라 "진행 중"으로 남겨두면 화면이 영원히 "처리
+        # 중..."에 멈춰 있게 된다(조용한 실패 금지 위반) — 즉시 실패로 확정해 사용자가
+        # "다시 시도"를 누를 수 있게 한다. 그 외 오류(모델 추론 실패 등)는 일시적일 수
+        # 있으니 기존대로 진행 중 상태를 유지하고 다음 폴링에서 재시도한다.
+        if exc.code == "job_not_found":
+            conn.execute(
+                analysis_sllm_preview.update()
+                .where(analysis_sllm_preview.c.analysis_id == analysis_id)
+                .values(status="failed", error="sLLM 작업을 찾을 수 없습니다(서버 재시작 등으로 만료됨) — 다시 시도해주세요.", finished_at=datetime.now(timezone.utc))
+            )
+            row = _get_preview_row(conn, analysis_id)
+            return _to_response(row)
+        logger.warning("sLLM 미리보기 폴링 실패(analysis_id=%s): %s", analysis_id, exc)
+        return _to_response(row)
+    except SllmNotConfiguredError as exc:
         logger.warning("sLLM 미리보기 폴링 실패(analysis_id=%s): %s", analysis_id, exc)
         return _to_response(row)
 

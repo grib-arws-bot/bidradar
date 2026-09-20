@@ -27,7 +27,7 @@ from app.services.analysis.sllm_preview import (
     get_sllm_preview_for_notice,
     start_sllm_preview_for_notice,
 )
-from app.services.sllm_client import SllmNotConfiguredError
+from app.services.sllm_client import SllmError, SllmNotConfiguredError
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -164,6 +164,30 @@ def test_get_keeps_running_state_when_poll_fails_transiently(done_analysis):
             result = get_sllm_preview_for_notice(conn, notice_id)
 
     assert result["status"] == "running"  # 실패로 단정하지 않고 그대로 유지
+
+
+def test_get_marks_failed_when_job_not_found(done_analysis):
+    """2026-09-20 실측 발견 — sLLM 서버가 재시작되며(GPU 전환) 진행 중이던 job의 상태가
+    사라져 job_not_found가 나는 사례가 실제로 있었다. 이건 일시적 오류와 달리 그 job이
+    다시는 안 돌아오므로, "진행 중" 상태를 그대로 두면(기존 버그) 화면이 영원히 "처리
+    중..."에 멈춘다 — 즉시 실패로 확정해야 한다."""
+    notice_id, analysis_id = done_analysis
+    with mock.patch(
+        "app.services.analysis.sllm_preview.start_extract_requirements",
+        return_value={"job_id": "job-abc", "status": "running"},
+    ):
+        with engine.begin() as conn:
+            start_sllm_preview_for_notice(conn, notice_id)
+
+    with mock.patch(
+        "app.services.analysis.sllm_preview.get_extract_requirements_status",
+        side_effect=SllmError("job_not_found", "존재하지 않거나 만료된 job_id입니다"),
+    ):
+        with engine.begin() as conn:
+            result = get_sllm_preview_for_notice(conn, notice_id)
+
+    assert result["status"] == "failed"
+    assert "다시 시도" in result["error"]
 
 
 def test_sllm_requirements_route_requires_prior_extraction(client: TestClient):
