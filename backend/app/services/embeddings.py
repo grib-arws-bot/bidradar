@@ -26,6 +26,7 @@ pending_analysis.py(대기건 배치 처리)와 같은 패턴을 그대로 따�
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from typing import Literal
 
@@ -57,6 +58,18 @@ DEFAULT_BATCH_LIMIT = 200  # pending_analysis.py와 동일한 상한 원칙 — 
 # attachment는 텍스트 길이가 들쭉날쭉한 한 배치화 자체가 안 맞는 것으로 결론짓고
 # 1건씩(무배치)으로 확정한다 — 추가 재실험은 하지 않는다.
 _ENCODE_BATCH_SIZE_BY_VARIANT: dict[str, int] = {"title": 16, "attachment": 1}
+# 2026-09-20 — attachment는 배치화(한 모델 호출에 여러 건 묶기)가 안 맞는다고 확정했지만,
+# 그것과 별개로 "동시에 여러 건을 병렬 처리"는 아직 안 해봤다. 이 서버는 4코어인데 torch가
+# 기본적으로 이미 1건 인코딩에도 4코어를 전부 쓰도록 설정돼 있어(intra-op 병렬화), 문서
+# 하나씩 순차 처리하면 코어 3개는 그 순간 놀고 있다. 워커 스레드 수만큼 코어를 나눠 쓰도록
+# torch 스레드를 1로 낮추고(_embed_notices_parallel 안에서만 임시로), 그 대신 여러 건을
+# 동시에(스레드) 처리한다 — sentence-transformers/torch 연산은 GIL을 놓아주므로 스레드로도
+# 실제 병렬 실행이 된다. 프로세스(멀티프로세싱)는 고려하지 않았다 — bge-m3가 2.2GB라
+# 워커마다 모델을 따로 로드하면 이 서버(메모리 7.7GB, 이미 스왑 사용 중) 메모리를 초과할
+# 위험이 큼. 코어 4개를 다 쓰지 않고 3개로 제한한 건 이 서버가 ARWS와 공유하는 물리
+# 호스트라(스크립트 주석 참고) 여유를 남겨두기 위함 — 실측해서 느려지면 되돌린다(임베딩
+# 배치화 실험 172/173번과 같은 원칙).
+_PARALLEL_WORKERS = 3
 # bge-m3 컨텍스트 한도(8192 토큰) 안에서 여유 있게 문서 앞부분 위주로만 담는다 — 전문을
 # 다 넣진 않는다.
 A1_TEXT_MAX_CHARS = 4000
@@ -251,14 +264,80 @@ def _embed_notice_chunk(notice_ids: list[int], *, variant: Variant) -> int:
     return len(ids)
 
 
+@lru_cache(maxsize=1)
+def _executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS)
+
+
+def _encode_one(text: str) -> list[float]:
+    return _compute_embeddings([text])[0]
+
+
+def _embed_notices_parallel(notice_ids: list[int], *, variant: Variant) -> int:
+    """attachment 전용 — 문서를 하나씩(배치화 안 함, 위 주석 참고) 동시에 여러 건 처리한다.
+    메타데이터 조회는 읽기전용 커넥션으로, DB 갱신은 건마다 별도의 짧은 트랜잭션으로(다른
+    함수들과 동일한 원칙). 한 건이 실패해도(모델 오류 등) 나머지는 계속 처리한다."""
+    if not notice_ids:
+        return 0
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(notice.c.id, notice.c.title, notice.c.region, notice.c.stage, org.c.name.label("org_name"))
+            .select_from(notice)
+            .join(org, org.c.id == notice.c.org_id, isouter=True)
+            .where(notice.c.id.in_(notice_ids))
+        ).mappings().all()
+        texts_by_id: dict[int, str] = {}
+        for row in rows:
+            attachment_text = _latest_attachment_text(conn, row["id"]) if variant == "attachment" else None
+            texts_by_id[row["id"]] = _notice_embedding_text(
+                row["title"], row["org_name"], row["region"], row["stage"], attachment_text
+            )
+
+    ids = [nid for nid in notice_ids if nid in texts_by_id]
+    if not ids:
+        return 0
+
+    import torch
+
+    previous_threads = torch.get_num_threads()
+    torch.set_num_threads(1)  # 워커 스레드 수(_PARALLEL_WORKERS)로 코어를 나눠 쓰기 위함
+    try:
+        executor = _executor()
+        futures = {executor.submit(_encode_one, texts_by_id[nid]): nid for nid in ids}
+        embedded = 0
+        for future in as_completed(futures):
+            notice_id = futures[future]
+            try:
+                vector = future.result()
+            except Exception:  # noqa: BLE001 — 공고 하나의 실패가 나머지를 막으면 안 됨
+                logger.exception("공고 임베딩 실패(병렬, variant=%s): notice_id=%s", variant, notice_id)
+                continue
+            with engine.begin() as conn:
+                conn.execute(
+                    notice.update()
+                    .where(notice.c.id == notice_id)
+                    .values(**{_embedding_column(variant).name: vector, _embedded_at_column(variant).name: func.now()})
+                )
+            embedded += 1
+        return embedded
+    finally:
+        torch.set_num_threads(previous_threads)  # title 등 다른 경로에 영향 안 남게 복원
+
+
 def run_pending_embeddings(
     source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT, variant: Variant = "title"
 ) -> dict:
     """10분마다 도는 run_pending_backlog(app/scheduler.py)에 A1/A2와 나란히 등록해, 아직
     임베딩이 없는 공고를 배치로 채운다. variant="title"과 "attachment" 둘 다 같은 주기로
-    따로 호출돼(app/scheduler.py) 두 컬럼이 독립적으로 채워진다."""
+    따로 호출돼(app/scheduler.py) 두 컬럼이 독립적으로 채워진다. attachment는 병렬 처리로,
+    title은 기존 배치 인코딩으로 처리한다(위 _PARALLEL_WORKERS 주석 참고)."""
     with engine.connect() as conn:
         candidates = _pending_embedding_notice_ids(conn, source_id, batch_limit, variant=variant)
+
+    if variant == "attachment":
+        embedded = _embed_notices_parallel(candidates, variant=variant)
+        return {"candidates": len(candidates), "embedded": embedded}
 
     encode_batch_size = _ENCODE_BATCH_SIZE_BY_VARIANT.get(variant, 1)
     embedded = 0

@@ -215,6 +215,37 @@ def test_run_pending_embeddings_does_not_batch_attachment_variant():
             _cleanup(source_id, notice_ids)
 
 
+def test_run_pending_embeddings_parallel_attachment_isolates_single_failure():
+    """2026-09-20 — attachment를 병렬(스레드) 처리로 바꾼 뒤에도 "공고 하나 실패가 전체를
+    막으면 안 된다" 원칙은 유지돼야 한다. 스레드 실행 순서는 보장되지 않으므로 side_effect를
+    호출 순서가 아니라 입력 텍스트 내용으로 판단하게 만들어 결정론적으로 검증한다."""
+
+    def _fake_compute(texts: list[str]) -> list[list[float]]:
+        if "실패유발" in texts[0]:
+            raise RuntimeError("모델 오류")
+        return [FAKE_VECTOR]
+
+    with mock.patch("app.services.embeddings._compute_embeddings", side_effect=_fake_compute):
+        with engine.begin() as conn:
+            source_id = _make_temp_source(conn)
+            failing_id = _make_notice(conn, source_id)
+            ok_id = _make_notice(conn, source_id)
+            _make_analysis_with_doc(conn, failing_id, text="실패유발 문서 내용")
+            _make_analysis_with_doc(conn, ok_id, text="정상 문서 내용")
+        try:
+            result = run_pending_embeddings(source_id, batch_limit=200, variant="attachment")
+            with engine.connect() as conn:
+                failing_embedding = conn.execute(
+                    select(notice.c.embedding_a1).where(notice.c.id == failing_id)
+                ).scalar_one()
+                ok_embedding = conn.execute(select(notice.c.embedding_a1).where(notice.c.id == ok_id)).scalar_one()
+            assert failing_embedding is None
+            assert ok_embedding is not None
+            assert result == {"candidates": 2, "embedded": 1}
+        finally:
+            _cleanup(source_id, [failing_id, ok_id])
+
+
 def test_run_pending_embeddings_attachment_variant_is_independent_of_title_variant():
     """title 컬럼이 이미 채워져 있어도 attachment 컬럼은 별도로 대기 후보에 잡혀야 한다 —
     두 variant가 서로 독립적으로 채워진다는 설계의 핵심 전제."""
