@@ -138,7 +138,7 @@ def test_run_pending_sllm_topic_match_ignores_unknown_topic_id():
         _cleanup(source_id, [notice_id], topic_id)
 
 
-def test_run_pending_sllm_topic_match_stops_batch_on_sllm_failure_without_marking_checked():
+def test_run_pending_sllm_topic_match_does_not_mark_checked_when_sllm_not_configured():
     with engine.begin() as conn:
         source_id = _make_temp_source(conn)
         topic_id = _make_topic(conn, "[테스트] sLLM 실패 격리")
@@ -158,6 +158,47 @@ def test_run_pending_sllm_topic_match_stops_batch_on_sllm_failure_without_markin
         assert checked_at is None  # 다음 회차에 재시도되도록 안 찍혀 있어야 함
     finally:
         _cleanup(source_id, [notice_id], topic_id)
+
+
+@pytest.mark.no_db_isolation
+def test_run_pending_sllm_topic_match_parallel_isolates_single_failure():
+    """2026-09-20 — sLLM팀이 최대 4건 동시 처리를 지원하게 되면서 배치를 스레드 병렬로
+    바꿨다. 공고 하나가 실패해도(SllmError) 나머지는 계속 처리돼야 한다(더 이상 배치 전체를
+    중단하지 않음) — 스레드 실행 순서가 보장 안 되므로 제목 내용 기반 결정론적 side_effect로
+    검증한다.
+
+    conftest.py의 기본 DB 격리(engine.begin()을 테스트 1건당 커넥션 1개로 묶음)는 진짜
+    동시 스레드가 각자 자기 커넥션을 쓰는 이 테스트와 안 맞아(PendingRollbackError) 격리를
+    끄고 실제 커밋으로 검증한다 — _cleanup()이 남은 행을 직접 지운다."""
+
+    def _fake_classify(title: str, _topics, *, trace_id: str):
+        if "실패유발" in title:
+            raise SllmError("inference_failed", "모델 응답 없음")
+        return {"output": {"matches": []}}
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn)
+        topic_id = _make_topic(conn, "[테스트] 병렬 격리")
+        failing_id = _make_notice(conn, source_id, "실패유발 공고")
+        ok_id = _make_notice(conn, source_id, "정상 처리 공고")
+
+    try:
+        with mock.patch("app.services.sllm_topic_match.classify_topic", side_effect=_fake_classify):
+            result = run_pending_sllm_topic_match(source_id, batch_limit=200)
+
+        assert result["candidates"] == 2
+        assert result["checked"] == 1  # 실패한 건 제외하고 정상 건만 확인 완료
+        with engine.connect() as conn:
+            failing_checked_at = conn.execute(
+                select(notice.c.sllm_topic_checked_at).where(notice.c.id == failing_id)
+            ).scalar_one()
+            ok_checked_at = conn.execute(
+                select(notice.c.sllm_topic_checked_at).where(notice.c.id == ok_id)
+            ).scalar_one()
+        assert failing_checked_at is None  # 다음 회차에 재시도
+        assert ok_checked_at is not None  # 실패한 건과 무관하게 정상 처리됨
+    finally:
+        _cleanup(source_id, [failing_id, ok_id], topic_id)
 
 
 def test_run_pending_sllm_topic_match_no_candidates_returns_zero_counts():

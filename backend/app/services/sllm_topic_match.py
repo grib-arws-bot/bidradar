@@ -12,11 +12,18 @@ sLLM confidence는 자동 판정에 쓰지 않는다 — notice_score.reason에 
 임계값은 신뢰할 수 없었다고 함).
 
 10분마다 도는 run_pending_backlog(app/scheduler.py)에서 title 임베딩과 나란히 호출된다.
+
+**2026-09-20 병렬화(의사결정_로그 186번)** — sLLM팀이 classify-topic 등 3개 엔드포인트를
+전용 GPU로 옮기면서 최대 4건까지 실제 동시 처리가 가능해졌고(요청당 지연도 7~8초→약
+1.7초로 개선), 이전엔 "서버가 순차 단일 인스턴스라 장애=서버 전체 다운"으로 보고 한 건만
+실패해도 배치 전체를 중단했는데, 이제는 그 전제가 약해졌다 — 공고마다 독립적으로
+처리하고 개별 실패는 그 건만 다음 회차로 미룬다(배치 전체를 막지 않음).
 """
 
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
@@ -29,6 +36,7 @@ logger = logging.getLogger("bidradar.sllm_topic_match")
 
 DEFAULT_BATCH_LIMIT = 200  # embeddings.py/pending_analysis.py와 동일한 상한 원칙 — 무제한 배치 방지
 _MAX_KEYWORDS_PER_TOPIC = 8  # 프롬프트가 너무 길어지지 않게 대표 키워드만(weight 높은 순)
+_PARALLEL_WORKERS = 4  # sLLM팀이 확인해준 동시 처리 상한(2026-09-20) — 그 이상은 이득 없이 대기만 늘어남
 
 
 def _pending_notice_ids(conn: Connection, source_id: int | None, batch_limit: int) -> list[int]:
@@ -72,8 +80,9 @@ def _active_topics_context(conn: Connection) -> list[dict]:
 def _match_one_notice(notice_id: int, topics: list[dict]) -> int:
     """공고 1건을 sLLM으로 확인하고 규칙이 못 잡은 신규 매칭만 추가한다. 새로 추가된 건수를
     반환한다. sLLM 호출 자체의 예외(SllmNotConfiguredError/SllmError)는 여기서 삼키지 않고
-    그대로 올린다 — 호출부(run_pending_sllm_topic_match)가 "서버 전체 장애"로 판단해 배치를
-    중단할지 결정한다(공고 하나의 내용 문제가 아니라 서버 자체가 안 되는 경우가 대부분이라)."""
+    그대로 올린다 — 호출부(run_pending_sllm_topic_match)가 이 건을 다음 회차로 미룬다.
+    여러 공고가 동시에(스레드) 이 함수를 부를 수 있다 — 각자 자기 DB 커넥션(engine.begin())을
+    쓰므로 서로 간섭하지 않는다."""
     with engine.begin() as conn:
         row = conn.execute(select(notice.c.title).where(notice.c.id == notice_id)).first()
         if row is None:
@@ -115,10 +124,11 @@ def _match_one_notice(notice_id: int, topics: list[dict]) -> int:
 
 
 def run_pending_sllm_topic_match(source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT) -> dict:
-    """대기 중인 공고를 배치로 처리한다. sLLM이 미설정이거나 응답 못 하면 그 시점에서
-    배치를 중단한다(checked_at을 안 찍은 공고는 다음 회차에 재시도) — 서버 장애로 200건을
-    전부 실패시키며 시간을 낭비하지 않는다. source_id는 테스트가 임시 소스로 범위를 좁힐
-    때만 쓰는 선택적 필터."""
+    """대기 중인 공고를 최대 _PARALLEL_WORKERS건까지 동시에 처리한다(2026-09-20, sLLM
+    서버가 전용 GPU로 옮겨가며 실제 동시 처리를 지원하게 됨 — 의사결정_로그 186번). 공고마다
+    독립적으로 처리되므로 한 건이 실패해도(SllmNotConfiguredError/SllmError) 그 건만
+    checked_at을 안 찍어 다음 회차로 미루고, 나머지는 계속 진행한다. source_id는 테스트가
+    임시 소스로 범위를 좁힐 때만 쓰는 선택적 필터."""
     with engine.connect() as conn:
         candidates = _pending_notice_ids(conn, source_id, batch_limit)
         topics = _active_topics_context(conn)
@@ -131,11 +141,15 @@ def run_pending_sllm_topic_match(source_id: int | None = None, *, batch_limit: i
 
     checked = 0
     matched = 0
-    for notice_id in candidates:
-        try:
-            matched += _match_one_notice(notice_id, topics)
-            checked += 1
-        except (SllmNotConfiguredError, SllmError) as exc:
-            logger.info("sLLM 시맨틱 매칭 중단(%s) — 나머지는 다음 회차에 재시도", exc)
-            break
+    logged_failure = False
+    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as executor:
+        futures = {executor.submit(_match_one_notice, notice_id, topics): notice_id for notice_id in candidates}
+        for future in as_completed(futures):
+            try:
+                matched += future.result()
+                checked += 1
+            except (SllmNotConfiguredError, SllmError) as exc:
+                if not logged_failure:
+                    logger.info("sLLM 시맨틱 매칭 중 일부 실패(%s) — 실패한 건만 다음 회차로 미룸", exc)
+                    logged_failure = True
     return {"candidates": len(candidates), "checked": checked, "matched": matched}
