@@ -10,7 +10,6 @@ import { fetchFilterOptions, fetchNeighbors, fetchNoticeDetail } from "@/api/not
 import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
 import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDocumentsSection";
 import { NoticeTopSection } from "@/components/notice-detail/NoticeTopSection";
-import { SllmPreviewCard } from "@/components/notice-detail/SllmPreviewCard";
 import { useToast } from "@/components/ToastProvider";
 
 export function NoticeDetailPage() {
@@ -197,9 +196,7 @@ export function NoticeDetailPage() {
         </Card>
       )}
 
-      <SllmPreviewCard noticeId={noticeId} enabled={extractionQuery.data?.status === "done" && (extractionQuery.data.docs?.length ?? 0) > 0} />
-
-      <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} />
+      <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} noticeId={noticeId} />
 
       {/* 분석대상 첨부파일 원문 — 페이지 최하단 별도 섹션(2026-09-08 요청). */}
       <AnalyzedDocumentsSection extraction={extractionQuery.data} />

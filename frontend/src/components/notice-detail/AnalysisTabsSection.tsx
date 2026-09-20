@@ -1,16 +1,21 @@
-import { useState } from "react";
 import { Box, Card, Chip, Stack, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, Typography } from "@mui/material";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
-import type {
-  AnalysisContentItem,
-  AnalysisEvaluationItem,
-  AnalysisSummary,
-  ExtractionResult,
-  Requirement,
-  RequirementsResult,
+import {
+  fetchSllmRequirementPreview,
+  startSllmRequirementPreview,
+  type AnalysisContentItem,
+  type AnalysisEvaluationItem,
+  type AnalysisSummary,
+  type ExtractionResult,
+  type Requirement,
+  type RequirementsResult,
 } from "@/api/analysis";
+import { useToast } from "@/components/ToastProvider";
 
-const OP_LABEL: Record<string, string> = { gte: "이상", lte: "이하", eq: "일치", contains: "포함", manual: "서술형" };
+import { requirementValueLabel } from "./requirementFormat";
+import { SllmPreviewInline } from "./SllmPreviewInline";
 
 const TAB_LABELS = ["사업목표(원문)", "사업내용(AI요약)", "사업비(중소기업)", "신청자격", "제안제출", "평가기준(원문)", "기타사항"];
 
@@ -18,14 +23,24 @@ const TAB_LABELS = ["사업목표(원문)", "사업내용(AI요약)", "사업비
 // (2026-09-12 — "공고탐색과 같은 내용이 리포트에도 보이게" 요청). react-query 객체가 아니라
 // 순수 데이터를 받아서 두 화면 다 재사용 가능하게 만들었다 — 인증된 관리자 쿼리든 공개
 // 토큰 쿼리든 이 컴포넌트 입장에선 같은 모양의 데이터일 뿐이다.
+//
+// sLLM 미리보기(noticeId, 2026-09-20)는 noticeId가 주어질 때만 동작한다 — 관리자 화면만
+// 넘겨주고 공개 리포트는 안 넘겨서 자동으로 숨겨진다(미검증 "확인 필요" 결과를 고객에게
+// 보이면 안 됨). AI분석(A2, Haiku)이 이미 끝난 공고는 sLLM을 돌릴 이유가 없다 — "이 공고를
+// Haiku로 분석할 가치가 있는지" 판단은 이미 A2 완료로 끝난 질문이므로, summary가 있으면
+// sLLM 미리보기를 아예 실행하지 않는다(의사결정_로그 184번).
 export function AnalysisTabsSection({
   requirements: requirementsData,
   extraction,
+  noticeId,
 }: {
   requirements: RequirementsResult | null | undefined;
   extraction?: ExtractionResult | null;
+  noticeId?: number;
 }) {
   const [tab, setTab] = useState(0);
+  const queryClient = useQueryClient();
+  const { notify } = useToast();
   const summary = requirementsData?.summary;
   const requirements = requirementsData?.requirements ?? [];
   // 채널(IRIS/나라장터)로 하드코딩하지 않는다 — A2가 실제로 끝났는지만 본다(2026-09-05 요청,
@@ -34,6 +49,39 @@ export function AnalysisTabsSection({
   const analysisDone = requirementsData?.step === "A2_structure";
   const summaryOutdated = !!summary && !!requirementsData?.summary_outdated;
   const extractionDone = !!extraction && (extraction.docs?.length ?? 0) > 0;
+
+  const sllmEnabled = !!noticeId && extractionDone && !summary;
+  const sllmQueryKey = ["notice-sllm-preview", noticeId];
+  const sllmPreviewQuery = useQuery({
+    queryKey: sllmQueryKey,
+    queryFn: () => fetchSllmRequirementPreview(noticeId!),
+    enabled: sllmEnabled,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "running" ? 3000 : false;
+    },
+  });
+  const sllmStartMutation = useMutation({
+    mutationFn: () => startSllmRequirementPreview(noticeId!),
+    onSuccess: (data) => queryClient.setQueryData(sllmQueryKey, data),
+    onError: (error) => {
+      notify(
+        "error",
+        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "sLLM 미리보기 시작에 실패했습니다."
+      );
+    },
+  });
+  const autoStartedNoticeId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!sllmEnabled) return;
+    if (sllmPreviewQuery.isLoading) return;
+    if (sllmPreviewQuery.data) return;
+    if (autoStartedNoticeId.current === noticeId) return;
+    autoStartedNoticeId.current = noticeId ?? null;
+    sllmStartMutation.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sllmEnabled, noticeId, sllmPreviewQuery.isLoading, sllmPreviewQuery.data]);
+  const sllmPreview = sllmEnabled ? sllmPreviewQuery.data : undefined;
 
   // 원문 첨부 목록("분석대상 파일")은 페이지 최하단 별도 섹션(AnalyzedDocumentsSection)으로
   // 옮겼다(2026-09-08 요청) — 여기서는 완료 여부 배지만 제목 옆에 보여준다. "AI분석"이라는
@@ -54,13 +102,29 @@ export function AnalysisTabsSection({
           color={summaryOutdated ? "warning" : analysisDone ? "success" : "default"}
           variant={analysisDone || summaryOutdated ? "filled" : "outlined"}
         />
+        {sllmEnabled && sllmPreview && (
+          <Chip
+            label={
+              sllmPreview.status === "done"
+                ? "sLLM 미리보기 완료"
+                : sllmPreview.status === "failed"
+                  ? "sLLM 미리보기 실패"
+                  : "sLLM 미리보기 진행 중"
+            }
+            size="small"
+            color={sllmPreview.status === "done" ? "info" : sllmPreview.status === "failed" ? "error" : "default"}
+            variant="outlined"
+          />
+        )}
       </Stack>
 
       <Box>
         {!summary && (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: "center" }}>
-            아직 분석되지 않았습니다 — 위 "AI분석 실행" 버튼을 눌러주세요.
-          </Typography>
+          <SllmPreviewInline
+            preview={sllmPreview}
+            onRetry={() => sllmStartMutation.mutate()}
+            retrying={sllmStartMutation.isPending}
+          />
         )}
         {summaryOutdated && (
           <Typography variant="body2" color="warning.main" sx={{ mb: 2 }}>
@@ -301,9 +365,6 @@ function EvaluationTab({ evaluation }: { evaluation: AnalysisEvaluationItem[] })
   );
 }
 
-function requirementValueLabel(req: Requirement): string {
-  return req.req_value ? `${req.req_value}${req.req_unit ?? ""} ${OP_LABEL[req.op]}` : OP_LABEL[req.op];
-}
 
 function OtherNotesTab({ notes, requirements }: { notes: string; requirements: Requirement[] }) {
   // 기타사항은 분류별로 나누지 않는다(2026-09-05 요청) — "어떤 내용이든 특이사항이 있으면
