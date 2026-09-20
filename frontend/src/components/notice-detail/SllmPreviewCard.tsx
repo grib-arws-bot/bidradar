@@ -1,5 +1,6 @@
 import { Alert, Card, Chip, Stack, Table, TableBody, TableCell, TableRow, Typography } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { fetchSllmRequirementPreview, startSllmRequirementPreview, type Requirement } from "@/api/analysis";
 import { LoadingButton } from "@/components/LoadingButton";
@@ -40,6 +41,21 @@ export function SllmPreviewCard({ noticeId, enabled }: { noticeId: number; enabl
       );
     },
   });
+
+  // 상세 페이지 진입 시 자동 시작(2026-09-20, 사용자 결정 — 수집 시점 자동 실행은 A/B/C가
+  // 공유하는 단일 sLLM 서버 자원을 낭비한다고 판단해 기각, 실제로 열어본 공고만 계산하는
+  // 이 방식으로 확정). 이미 시작됐거나 결과가 있으면 건드리지 않는다 — 공고를 이전/다음으로
+  // 넘나들 때마다 매번 새로 시작하지 않도록 noticeId별로 한 번만 시도한다.
+  const autoStartedNoticeId = useRef<number | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    if (previewQuery.isLoading) return;
+    if (previewQuery.data) return;
+    if (autoStartedNoticeId.current === noticeId) return;
+    autoStartedNoticeId.current = noticeId;
+    startMutation.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, noticeId, previewQuery.isLoading, previewQuery.data]);
 
   if (!enabled) return null;
 

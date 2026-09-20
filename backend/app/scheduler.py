@@ -33,10 +33,6 @@ from app.collector.runner import CollectionInProgressError, run_source_and_proce
 from app.db import engine
 from app.logging_config import configure_logging
 from app.models import customer, source
-from app.services.analysis.sllm_doc_backfill import (
-    DEFAULT_BATCH_LIMIT as SLLM_DOC_BACKFILL_BATCH_LIMIT,
-    run_pending_sllm_doc_backfill,
-)
 from app.services.embeddings import DEFAULT_BATCH_LIMIT, run_pending_embeddings
 from app.services.sllm_topic_match import (
     DEFAULT_BATCH_LIMIT as SLLM_TOPIC_BATCH_LIMIT,
@@ -235,30 +231,6 @@ def run_pending_backlog() -> dict:
         logger.exception("sLLM 시맨틱 매칭 배치 실패")
     if total_topic_matched:
         logger.info("sLLM 시맨틱 매칭 완료: 대상=%s 신규=%s", total_topic_candidates, total_topic_matched)
-
-    # 첨부 공통문서 분류 과거분 백필(사내 sLLM C, classify-doc, 2026-09-20 의사결정_로그
-    # 179/182번) — 위 임베딩·시맨틱 매칭 다음 순서에 둔다. 매 tick마다 대기 중인 임베딩이
-    # 있으면 그것부터 다 처리한 뒤에야 이 블록에 도달하므로, 27,000여 건짜리 이 백필이
-    # 임베딩 처리량을 뺏지 않는다(사용자 요청, 2026-09-20). sLLM 서버 장애 시 배치를
-    # 중단하는 원칙은 위 B와 동일.
-    total_doc_candidates = 0
-    total_doc_reclassified = 0
-    try:
-        while True:
-            doc_result = run_pending_sllm_doc_backfill()
-            total_doc_candidates += doc_result["candidates"]
-            total_doc_reclassified += doc_result["reclassified"]
-            if doc_result["reclassified"]:
-                logger.info(
-                    "sLLM 문서 백필 진행 중: 이번 라운드 재분류=%s (누적 %s)",
-                    doc_result["reclassified"], total_doc_reclassified,
-                )
-            if doc_result["checked"] < doc_result["candidates"] or doc_result["candidates"] < SLLM_DOC_BACKFILL_BATCH_LIMIT:
-                break
-    except Exception:  # noqa: BLE001 — 실패가 다음 예정 실행을 막으면 안 됨
-        logger.exception("sLLM 문서 백필 배치 실패")
-    if total_doc_reclassified:
-        logger.info("sLLM 문서 백필 완료: 대상=%s 재분류=%s", total_doc_candidates, total_doc_reclassified)
 
     return result
 
