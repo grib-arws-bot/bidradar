@@ -173,17 +173,28 @@ def _pinned_dns(hostname: str, resolved_ip: str) -> Iterator[None]:
     복원 대상은 모듈 임포트 시점의 원본이 아니라 **진입 직전의 현재 값**이다 — 그래야 테스트에서
     monkeypatch로 DNS를 흉내 낸 상태에서 fetch()를 호출해도(리다이렉트로 재귀 호출될 때도) 그
     monkeypatch가 그대로 유지된다.
+
+    2026-09-21 치명적 버그 수정(의사결정_로그 189번) — `previous = socket.getaddrinfo`를
+    **락을 잡기 전에** 캡처하던 게 스레드 안전성 버그였다. 스레드 A가 아직 자기 패치를
+    복원하기 전에(락 보유 중) 스레드 B가 이 줄에 먼저 도달하면, B는 "진짜 원본"이 아니라
+    "A의 패치 함수"를 previous로 캡처한다. B가 끝나 `socket.getaddrinfo = previous`로
+    복원해도 그건 A의 패치일 뿐이라 진짜 원본으로 절대 안 돌아간다 — 이게 반복될 때마다
+    래핑 계층이 하나씩 영구히 쌓여, 결국 파이썬 재귀 한도를 넘어 `socket.getaddrinfo`를
+    쓰는 프로세스 전체(자체 HTTP 호출은 물론 psycopg의 새 DB 커넥션 생성까지)가 마비됐다.
+    반드시 락을 잡은 뒤에 캡처해야 매번 "완전히 복원된 진짜 값"만 보게 되어 계층이
+    쌓일 수 없다.
     """
     family = socket.AF_INET6 if ":" in resolved_ip else socket.AF_INET
-    previous = socket.getaddrinfo
-
-    def _pinned_getaddrinfo(host, port, *args, **kwargs):
-        if host == hostname:
-            sockaddr = (resolved_ip, port, 0, 0) if family == socket.AF_INET6 else (resolved_ip, port)
-            return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
-        return previous(host, port, *args, **kwargs)
 
     with _dns_pin_lock:
+        previous = socket.getaddrinfo
+
+        def _pinned_getaddrinfo(host, port, *args, **kwargs):
+            if host == hostname:
+                sockaddr = (resolved_ip, port, 0, 0) if family == socket.AF_INET6 else (resolved_ip, port)
+                return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
+            return previous(host, port, *args, **kwargs)
+
         socket.getaddrinfo = _pinned_getaddrinfo
         try:
             yield

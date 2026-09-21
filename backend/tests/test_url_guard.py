@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import socket
+import threading
+import time
 from unittest import mock
 
 import pytest
 import requests
 
-from app.security.url_guard import SSRFBlockedError, fetch, validate_url
+from app.security.url_guard import SSRFBlockedError, _pinned_dns, fetch, validate_url
 
 
 def _fake_getaddrinfo(mapping: dict[str, str]):
@@ -164,3 +166,26 @@ def test_dns_permanent_failure_still_raises_after_retries(monkeypatch):
 
     with pytest.raises(SSRFBlockedError, match="DNS 조회 실패"):
         validate_url("https://does-not-exist.example.invalid/")
+
+
+def test_pinned_dns_thread_safe_under_concurrency():
+    # 2026-09-21 실측 장애(의사결정_로그 189번) 회귀 테스트 — `previous = socket.getaddrinfo`를
+    # 락을 잡기 전에 캡처하면, 동시 스레드가 서로 아직 복원 안 된 상대방의 패치 함수를
+    # previous로 캡처해서 래핑이 계속 쌓인다(스레드마다 한 겹씩 영구히 누적). 이게 몇 시간
+    # 쌓이면 RecursionError로 프로세스 전체의 소켓 연결(DB 커넥션 포함)이 마비됐다. 여러
+    # 스레드가 동시에 반복 호출한 뒤에도 socket.getaddrinfo가 원본 객체 그대로여야 한다.
+    original = socket.getaddrinfo
+
+    def _worker(hostname: str) -> None:
+        for _ in range(30):
+            with _pinned_dns(hostname, "1.2.3.4"):
+                time.sleep(0)
+                socket.getaddrinfo(hostname, 80)
+
+    threads = [threading.Thread(target=_worker, args=(f"host-{i}.example.com",)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert socket.getaddrinfo is original
