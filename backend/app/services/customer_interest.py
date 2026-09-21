@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, insert, select
 from sqlalchemy.engine import Connection
 
+from app.collector.work_type import WORK_TYPES
 from app.models import (
     customer,
     customer_followed_org,
@@ -75,6 +76,10 @@ class InterestDraft:
     # 관심 공고 추천 시 적용할 금액 하한(2026-09-07 사용자 지시) — 이 값 이상인 est_price를
     # 가진 공고만 추천 대상. None이면 필터 없음(기존 동작과 동일).
     price_min: int | None = None
+    # 관심 사업유형(2026-09-21, 의사결정_로그 192번) — app/collector/work_type.WORK_TYPES
+    # 중 고객이 실제로 하는 일. 지금은 매칭 방식 비교(recommendation_signals.py)에서만
+    # 쓰이고 top_matches(실제 리포트)에는 반영되지 않는다.
+    work_type_ids: list[str] = field(default_factory=list)
 
 
 def list_customers(conn: Connection) -> list[dict]:
@@ -95,7 +100,9 @@ def get_topic_catalog(conn: Connection) -> list[dict]:
 
 def get_interest_profile(conn: Connection, customer_id: int) -> dict | None:
     cust = conn.execute(
-        select(customer.c.id, customer.c.name, customer.c.interest_price_min).where(customer.c.id == customer_id)
+        select(
+            customer.c.id, customer.c.name, customer.c.interest_price_min, customer.c.interest_work_types
+        ).where(customer.c.id == customer_id)
     ).mappings().first()
     if cust is None:
         return None
@@ -122,6 +129,8 @@ def get_interest_profile(conn: Connection, customer_id: int) -> dict | None:
         "followed_org_ids": followed_org_ids,
         "price_min": int(cust["interest_price_min"]) if cust["interest_price_min"] is not None else None,
         "topics": get_topic_catalog(conn),
+        "work_type_ids": cust["interest_work_types"],
+        "work_types": list(WORK_TYPES),
     }
 
 
@@ -132,9 +141,13 @@ def save_interest_profile(conn: Connection, customer_id: int, draft: InterestDra
             raise ValueError(f"허용되지 않은 우선순위: {priority} (허용: {', '.join(TOPIC_PRIORITIES)})")
     if draft.price_min is not None and draft.price_min < 0:
         raise ValueError(f"금액 하한은 0 이상이어야 합니다: {draft.price_min}")
+    for work_type in draft.work_type_ids:
+        if work_type not in WORK_TYPES:
+            raise ValueError(f"허용되지 않은 사업유형: {work_type} (허용: {', '.join(WORK_TYPES)})")
 
     conn.execute(
-        customer.update().where(customer.c.id == customer_id).values(interest_price_min=draft.price_min)
+        customer.update().where(customer.c.id == customer_id)
+        .values(interest_price_min=draft.price_min, interest_work_types=draft.work_type_ids)
     )
 
     conn.execute(delete(customer_interest).where(customer_interest.c.customer_id == customer_id))
@@ -162,6 +175,7 @@ def _candidate_notices(conn: Connection) -> list[dict]:
             notice.c.title,
             notice.c.stage,
             notice.c.biz_type,
+            notice.c.work_type,
             notice.c.org_id,
             notice.c.source_id,
             notice.c.est_price,
@@ -358,4 +372,5 @@ def draft_from_profile(profile: dict) -> InterestDraft:
         terms=profile["terms"],
         followed_org_ids=profile["followed_org_ids"],
         price_min=profile["price_min"],
+        work_type_ids=profile["work_type_ids"],
     )

@@ -440,6 +440,18 @@ def test_guess_work_type_matches_common_titles():
     assert guess_work_type("지능형 CCTV 통합관제시스템 구축") == "구축"
 
 
+def test_guess_work_type_separates_고도화_from_개발():
+    # 2026-09-21 — 추천 알고리즘 신호로 쓰기 위해 "고도화"를 "개발"에서 분리(의사결정_로그
+    # 192번). 기존엔 둘 다 "개발"로 뭉뚱그려졌었다.
+    assert guess_work_type("스마트 안전관리시스템 고도화") == "고도화"
+    assert guess_work_type("신규 플랫폼 개발") == "개발"
+
+
+def test_guess_work_type_matches_연구():
+    assert guess_work_type("AI 기반 재난안전 연구") == "연구"
+    assert guess_work_type("차세대 센서 연구개발") == "연구"
+
+
 def test_guess_work_type_returns_none_when_no_keyword_matches():
     assert guess_work_type("아무 키워드도 없는 제목") is None
 

@@ -11,15 +11,14 @@ from pydantic import BaseModel
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
-from app.services.cosine_matching import top_matches_cosine
 from app.services.customer_interest import (
     InterestDraft,
     draft_from_profile,
     get_interest_profile,
     list_customers,
     save_interest_profile,
-    top_matches,
 )
+from app.services.recommendation_signals import PROFILE_PRESETS, score_with_profile
 from app.services.customer_management import (
     CustomerDraft,
     EmailScheduleError,
@@ -211,6 +210,7 @@ class InterestPayload(BaseModel):
     terms: list[str] = []
     followed_org_ids: list[int] = []
     price_min: int | None = None  # 관심 공고 추천 금액 하한(2026-09-07), 없으면 필터 없음
+    work_type_ids: list[str] = []  # 관심 사업유형(2026-09-21, 의사결정_로그 192번)
 
     def to_draft(self) -> InterestDraft:
         return InterestDraft(
@@ -219,6 +219,7 @@ class InterestPayload(BaseModel):
             terms=self.terms,
             followed_org_ids=self.followed_org_ids,
             price_min=self.price_min,
+            work_type_ids=self.work_type_ids,
         )
 
 
@@ -244,25 +245,27 @@ def put_interests(customer_id: int, payload: InterestPayload, _email: str = Depe
 
 @router.get("/{customer_id}/interest-matches/compare")
 def get_interest_matches_compare(customer_id: int, _email: str = Depends(require_auth)) -> dict:
-    """규칙 매칭(top_matches)·코사인(제목만)·코사인(A1 첨부 포함) 3방향을 나란히 반환한다
-    (2026-09-16 신설, 2026-09-17 3방향으로 확장 — MatchingComparisonPage.tsx 전용). 규칙
-    매칭을 대체하는 게 아니라 비교 확인용. 두 코사인 variant는 서로 다른 컬럼(embedding·
-    embedding_a1)이 독립적으로 배치 채워지므로 pending_embeddings도 각자 따로 반환한다."""
+    """추천 다중 신호 비교 샌드박스(2026-09-16 신설, 2026-09-21 신호 여러 개를 껐다 켰다
+    하며 비교하는 구조로 재설계 — 의사결정_로그 192번, MatchingComparisonPage.tsx 전용).
+    PROFILE_PRESETS에 등록된 이름별 신호 조합마다 규칙 매칭을 기준 축으로 삼아 재정렬한
+    결과를 나란히 반환한다. **실제 고객 리포트 발송(top_matches)에는 전혀 영향 없음** —
+    여기서 비교해보고 결정한 뒤에야 반영을 검토한다."""
     with engine.connect() as conn:
         profile = get_interest_profile(conn, customer_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
         draft = draft_from_profile(profile)
-        rule_based = top_matches(conn, draft, limit=20)
-        cosine_title = top_matches_cosine(conn, draft, profile, limit=20, variant="title")
-        cosine_attachment = top_matches_cosine(conn, draft, profile, limit=20, variant="attachment")
-    return {
-        "rule_based": rule_based,
-        "cosine": cosine_title["matches"],
-        "pending_embeddings": cosine_title["pending_embeddings"],
-        "cosine_attachment": cosine_attachment["matches"],
-        "pending_embeddings_attachment": cosine_attachment["pending_embeddings"],
-    }
+        profiles = [
+            {
+                "key": key,
+                "label": preset["label"],
+                "matches": score_with_profile(
+                    conn, draft, profile, customer_id=customer_id, enabled_signals=preset["signals"], limit=20
+                ),
+            }
+            for key, preset in PROFILE_PRESETS.items()
+        ]
+    return {"profiles": profiles}
 
 
 @router.post("/{customer_id}/reports", status_code=status.HTTP_201_CREATED)

@@ -197,6 +197,26 @@ def test_save_rejects_negative_price_min(client: TestClient, customer_a_id: int)
     assert response.status_code == 400
 
 
+def test_save_and_load_work_type_ids(client: TestClient, customer_a_id: int):
+    # 2026-09-21 — 관심 사업유형(의사결정_로그 192번) 저장·조회 왕복 확인.
+    response = client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_ids": ["연구", "고도화"]},
+    )
+    assert response.status_code == 204
+    profile = client.get(f"/api/customers/{customer_a_id}/interests").json()
+    assert profile["work_type_ids"] == ["연구", "고도화"]
+    assert "구매" in profile["work_types"]  # 전체 카탈로그도 같이 내려옴
+
+
+def test_save_rejects_unknown_work_type(client: TestClient, customer_a_id: int):
+    response = client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_ids": ["존재하지않는유형"]},
+    )
+    assert response.status_code == 400
+
+
 @pytest.fixture
 def two_topic_notices():
     """서로 다른 관심주제에 매칭된 공고 두 건 — 우선순위에 따라 점수가 달라지는지 보려면

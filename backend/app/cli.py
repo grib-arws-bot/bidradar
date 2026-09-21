@@ -133,6 +133,25 @@ def backfill_org_categories_cmd() -> None:
         print(f"  {category}: {count}건")
 
 
+def recompute_work_type_cmd() -> None:
+    """work_type.py의 추정 규칙이 바뀌었을 때(2026-09-21 "고도화"를 "개발"에서 분리, "연구"
+    추가 — 의사결정_로그 192번) 이미 수집된 공고의 work_type을 제목으로 다시 계산해 채운다.
+    guess_work_type()이 순수 함수(제목만 봄)라 몇 번을 다시 돌려도 결과가 같아 안전하다."""
+    from sqlalchemy import select
+
+    from app.collector.work_type import guess_work_type
+    from app.models import notice
+
+    with engine.begin() as conn:
+        rows = conn.execute(select(notice.c.id, notice.c.title)).all()
+        updated = 0
+        for row in rows:
+            new_value = guess_work_type(row.title)
+            conn.execute(notice.update().where(notice.c.id == row.id).values(work_type=new_value))
+            updated += 1
+    print(f"사업유형 재계산 완료: {updated}건")
+
+
 def collect(source_id: int, service_key: str | None, max_lookback_days: int | None) -> None:
     """수동 1회 수집(U11). 공공데이터포털 인증키가 아직 없으면 --service-key 없이 호출해도
     되지만, 실제 나라장터 호출은 서비스키 없이는 거의 항상 실패한다(정상 — 발급 후 재시도).
@@ -264,6 +283,7 @@ def main() -> None:
     subparsers.add_parser("seed-if-empty")
     subparsers.add_parser("seed-prod")
     subparsers.add_parser("backfill-org-categories")
+    subparsers.add_parser("recompute-work-type")
 
     add_source_parser = subparsers.add_parser("add-source")
     add_source_parser.add_argument("--name", required=True, help="app/seed_constants.py SOURCE_SEED의 소스명과 정확히 일치해야 함")
@@ -309,6 +329,8 @@ def main() -> None:
         seed_prod()
     elif args.command == "backfill-org-categories":
         backfill_org_categories_cmd()
+    elif args.command == "recompute-work-type":
+        recompute_work_type_cmd()
     elif args.command == "add-source":
         add_source_cmd(args.name)
     elif args.command == "collect":

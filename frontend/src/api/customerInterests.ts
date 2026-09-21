@@ -20,12 +20,17 @@ export interface InterestDraft {
   // 관심 공고 추천 금액 하한(2026-09-07) — 이 값 이상인 est_price를 가진 공고만 추천 대상.
   // null이면 필터 없음(미공개 est_price 공고는 하한이 걸려 있으면 항상 제외됨).
   price_min: number | null;
+  // 관심 사업유형(2026-09-21, 의사결정_로그 192번) — work_types 카탈로그(고정값) 중 선택.
+  work_type_ids: string[];
 }
 
 export interface InterestProfile extends InterestDraft {
   customer_id: number;
   customer_name: string;
   topics: { id: number; name: string }[];
+  // 사업유형 고정 카탈로그(개발/연구/구매/구축/물품/용역/유지보수/운영/고도화) — 화면
+  // 체크리스트용. interest_topic처럼 관리자가 편집하는 카탈로그가 아니라 코드에 고정된 값.
+  work_types: string[];
 }
 
 export async function fetchCustomers(): Promise<CustomerSummary[]> {
@@ -42,8 +47,9 @@ export async function saveInterestProfile(customerId: number, draft: InterestDra
   await apiClient.put(`/customers/${customerId}/interests`, draft);
 }
 
-// 규칙 매칭·코사인 유사도 매칭 비교(2026-09-16, MatchingComparisonPage.tsx 전용) — 규칙
-// 매칭을 대체하는 게 아니라 두 방식이 실제로 얼마나 다르게 추천하는지 비교 확인용.
+// 추천 다중 신호 비교 샌드박스(2026-09-16 신설, 2026-09-21 신호를 이름별로 껐다 켰다
+// 하는 구조로 재설계 — 의사결정_로그 192번, MatchingComparisonPage.tsx 전용). 규칙 매칭을
+// 대체하는 게 아니라 여러 신호 조합이 실제로 얼마나 다르게 추천하는지 비교 확인용.
 export interface MatchItem {
   id: number;
   notice_no: string | null;
@@ -59,21 +65,17 @@ export interface MatchItem {
   notice_status_label: string;
   work_type_label: string;
   topics: string[];
-  score?: number; // 규칙 매칭(rule_based)에만 있음
-  cosine_score?: number; // 코사인 매칭(cosine)에만 있음 — 규칙 점수와 척도가 다름
+  score: number;
+}
+
+export interface MatchProfile {
+  key: string;
+  label: string;
+  matches: MatchItem[];
 }
 
 export interface InterestMatchesCompare {
-  rule_based: MatchItem[];
-  cosine: MatchItem[];
-  // 후보 공고 중 아직 임베딩이 없는 건수(배치가 10분마다 채워나감) — 0이 아니면 코사인
-  // 결과가 아직 불완전할 수 있다는 안내에 쓴다.
-  pending_embeddings: number;
-  // 2026-09-17 — A1 첨부 전체 추출 텍스트까지 반영한 두 번째 코사인 결과(규칙 매칭과의
-  // 일치율이 "제목만"보다 훨씬 높을 것으로 기대 — 규칙 매칭도 이미 첨부 텍스트를 봄).
-  // embedding과 별도 컬럼(embedding_a1)이라 pending 건수도 따로 온다.
-  cosine_attachment: MatchItem[];
-  pending_embeddings_attachment: number;
+  profiles: MatchProfile[];
 }
 
 export async function fetchInterestMatchesCompare(customerId: number): Promise<InterestMatchesCompare> {

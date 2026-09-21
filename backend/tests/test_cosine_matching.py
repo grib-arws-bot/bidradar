@@ -23,7 +23,7 @@ from sqlalchemy import delete, insert, select
 from app.db import engine
 from app.main import app
 from app.models import customer, interest_topic, notice, notice_score, source
-from app.services.cosine_matching import top_matches_cosine
+from app.services.cosine_matching import top_matches_cosine, weighted_cosine_scores
 from app.services.customer_interest import InterestDraft, get_interest_profile
 
 EMAIL = "report@grib.co.kr"
@@ -156,18 +156,51 @@ def test_top_matches_cosine_attachment_variant_uses_embedding_a1_column():
         _cleanup([with_a1_id, title_only_id])
 
 
-def test_compare_endpoint_returns_three_way_result_shapes(client: TestClient):
-    """API 계층 배선 확인 — 규칙 매칭·코사인(제목)·코사인(첨부) 3방향 결과를 한 응답에 같이
-    담아 돌려주는지만 본다(각 알고리즘의 세부 동작은 위 서비스 계층 테스트가 이미 검증)."""
+def test_weighted_cosine_scores_combines_title_and_attachment():
+    # 2026-09-21 — 제목 임베딩(가까움)과 첨부 임베딩(멂)을 가중 결합하면 제목 가중치만큼
+    # 결과가 1.0(완전 가까움)에 더 가까워야 한다(의사결정_로그 192번).
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        both_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, embedding_a1=FAR_VECTOR)
+    try:
+        with engine.connect() as conn:
+            scores = weighted_cosine_scores(conn, [both_id], QUERY_VECTOR, w_title=0.6, w_attach=0.4)
+        # CLOSE_VECTOR·QUERY_VECTOR가 동일하므로 title 유사도=1.0, FAR_VECTOR는 반대라 0.0 근처.
+        assert scores[both_id] == pytest.approx(0.6, abs=0.05)
+    finally:
+        _cleanup([both_id])
+
+
+def test_weighted_cosine_scores_falls_back_to_available_embedding():
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        title_only_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, embedding_a1=None)
+        neither_id = _make_notice(conn, source_id, embedding=None, embedding_a1=None)
+    try:
+        with engine.connect() as conn:
+            scores = weighted_cosine_scores(conn, [title_only_id, neither_id], QUERY_VECTOR)
+        assert scores[title_only_id] == pytest.approx(1.0, abs=0.05)  # attach 없어도 title만으로 계산
+        assert scores[neither_id] is None  # 둘 다 없으면 신호 자체가 없음
+    finally:
+        _cleanup([title_only_id, neither_id])
+
+
+def test_compare_endpoint_returns_named_profiles(client: TestClient):
+    """API 계층 배선 확인 — 2026-09-21 신호 비교 샌드박스로 재설계(의사결정_로그 192번),
+    PROFILE_PRESETS에 등록된 이름별 결과가 전부 나오는지만 본다(각 신호의 세부 동작은
+    test_recommendation_signals.py가 이미 검증)."""
+    from app.services.recommendation_signals import PROFILE_PRESETS
+
     customer_id = client.post("/api/customers", json={"name": "[테스트] 비교 페이지", "plan_tier": "standard"}).json()["id"]
     try:
         with mock.patch("app.services.cosine_matching.embed_texts", return_value=[QUERY_VECTOR]):
             response = client.get(f"/api/customers/{customer_id}/interest-matches/compare")
         assert response.status_code == 200
         body = response.json()
-        assert {
-            "rule_based", "cosine", "pending_embeddings", "cosine_attachment", "pending_embeddings_attachment",
-        } <= body.keys()
+        returned_keys = {p["key"] for p in body["profiles"]}
+        assert returned_keys == set(PROFILE_PRESETS.keys())
+        for p in body["profiles"]:
+            assert "matches" in p and "label" in p
     finally:
         with engine.begin() as conn:
             from app.models import customer

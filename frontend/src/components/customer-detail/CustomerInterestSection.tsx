@@ -24,6 +24,7 @@ const EMPTY_DRAFT: InterestDraft = {
   terms: [],
   followed_org_ids: [],
   price_min: null,
+  work_type_ids: [],
 };
 
 const PRIORITY_OPTIONS: { value: TopicPriority; label: string }[] = [
@@ -70,6 +71,7 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
       terms: profileQuery.data.terms,
       followed_org_ids: profileQuery.data.followed_org_ids,
       price_min: profileQuery.data.price_min,
+      work_type_ids: profileQuery.data.work_type_ids,
     };
     const last = lastSyncedRef.current;
     const isCustomerSwitch = last?.customerId !== customerId;
@@ -139,6 +141,36 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
                   onClick={() =>
                     update({
                       topic_ids: active ? draft.topic_ids.filter((id) => id !== t.id) : [...draft.topic_ids, t.id],
+                    })
+                  }
+                />
+              );
+            })}
+          </Stack>
+        </Box>
+
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            사업유형
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+            지금은 매칭 방식 비교 화면에서만 참고용으로 쓰입니다 — 리포트 추천에는 아직
+            반영되지 않습니다.
+          </Typography>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {(profileQuery.data?.work_types ?? []).map((wt) => {
+              const active = draft.work_type_ids.includes(wt);
+              return (
+                <Chip
+                  key={wt}
+                  label={wt}
+                  color={active ? "primary" : "default"}
+                  variant={active ? "filled" : "outlined"}
+                  onClick={() =>
+                    update({
+                      work_type_ids: active
+                        ? draft.work_type_ids.filter((w) => w !== wt)
+                        : [...draft.work_type_ids, wt],
                     })
                   }
                 />
