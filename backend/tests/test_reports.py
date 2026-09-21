@@ -465,11 +465,42 @@ def test_send_report_email_body_includes_notice_list(client: TestClient, grib_cu
     assert response.status_code == 200
 
     sent_msg = mock_smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
-    html_part = next(part for part in sent_msg.iter_parts() if part.get_content_type() == "text/html")
+    # 2026-09-21 — 로고를 CID 인라인 첨부로 붙이면서 html 파트가 multipart/related 안으로
+    # 한 단계 더 들어간다(iter_parts()는 비재귀라 못 찾음) — get_body()는 이 중첩을 알고
+    # 올바른 html 파트를 찾아준다(email 표준 라이브러리의 의도된 용법).
+    html_part = sent_msg.get_body(preferencelist=("html",))
     html_body = html_part.get_content()
     for n in notices[:5]:  # 전부 확인하면 느리고, 목록 로직 자체는 위에서 이미 검증됨
         assert n["title"] in html_body
         assert f"/r/{created['token']}/notices/{n['id']}" in html_body
+
+
+def test_send_report_email_embeds_logo_as_cid_attachment(client: TestClient, grib_customer_id: int):
+    """2026-09-21 실측 제보 — data URI 로고가 Outlook 등에서 계속 깨졌다. CID 인라인
+    첨부로 바꿨으니 실제 발송 메시지에 Content-ID 이미지 파트가 있고, html 본문이
+    cid:로 그 파트를 참조하는지 확인한다."""
+    from app.models import customer
+    from app.services.email_assets import logo_bytes
+
+    with engine.begin() as conn:
+        conn.execute(
+            customer.update().where(customer.c.id == grib_customer_id).values(report_recipient_emails=["a@example.com"])
+        )
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+
+    with mock.patch("app.services.mailer.smtplib.SMTP_SSL") as mock_smtp, mock.patch(
+        "app.config.settings.smtp_host", "smtp.example.com"
+    ), mock.patch("app.config.settings.smtp_user", "u"), mock.patch("app.config.settings.smtp_password", "p"):
+        response = client.post(f"/api/customers/{grib_customer_id}/reports/{created['id']}/send")
+    assert response.status_code == 200
+
+    sent_msg = mock_smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    image_part = next(part for part in sent_msg.walk() if part.get_content_type() == "image/png")
+    assert image_part["Content-ID"] == "<logo>"
+    assert image_part.get_content() == logo_bytes()
+
+    html_body = sent_msg.get_body(preferencelist=("html",)).get_content()
+    assert 'src="cid:logo"' in html_body
 
 
 def test_send_report_422_without_recipients(client: TestClient, grib_customer_id: int):

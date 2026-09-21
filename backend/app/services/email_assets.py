@@ -1,26 +1,24 @@
-"""이메일 본문에 넣을 정적 이미지를 data URI로 제공한다(2026-09-16).
+"""이메일 본문에 넣을 정적 이미지를 제공한다.
 
-로고를 `<img src="{public_base_url}/...">`로 외부 URL 참조했더니 실제 수신 메일함(Gmail)에서
-깨졌다 — prod가 자체서명 TLS 인증서(scripts/deploy-to-production.ps1 참고)를 쓰는데, Gmail의
-이미지 프록시가 자체서명 인증서를 신뢰하지 않아 이미지를 못 가져온다. 실제 인증서 교체는
-인프라 작업이라 범위 밖 — 대신 이미지 자체를 이메일 본문에 base64로 그대로 담아 외부 요청
-자체가 없게 한다(신뢰 체인 문제가 원천적으로 발생할 수 없음).
+2026-09-16 — 로고를 `<img src="{public_base_url}/...">`로 외부 URL 참조했더니 실제 수신
+메일함(Gmail)에서 깨졌다(prod 자체서명 TLS 인증서를 Gmail 이미지 프록시가 신뢰 안 함) —
+base64 data URI(`<img src="data:image/png;base64,...">`)로 바꿔 외부 요청 자체를 없앴다.
+
+2026-09-21 — 그런데도 계속 깨진다는 제보 확인. data URI는 Outlook(데스크톱·Office 365)이
+`<img>` src에서 아예 렌더링하지 않고, Gmail도 클라이언트·상황에 따라 일관되게 지원하지
+않는다 — 이메일 인라인 이미지의 사실상 표준은 CID(Content-ID) 첨부다(RFC 2392, 모든 주요
+클라이언트가 지원). 그래서 data URI 대신 원본 바이트를 반환하고, mailer.py가
+`multipart/related`로 첨부해 `<img src="cid:logo">`로 참조하게 바꾼다.
 """
 
 from __future__ import annotations
 
-import base64
 from functools import lru_cache
 from pathlib import Path
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
-@lru_cache(maxsize=None)
-def _data_uri(filename: str, mime: str) -> str:
-    data = (_ASSETS_DIR / filename).read_bytes()
-    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
-
-
-def logo_data_uri() -> str:
-    return _data_uri("email-logo.png", "image/png")
+@lru_cache(maxsize=1)
+def logo_bytes() -> bytes:
+    return (_ASSETS_DIR / "email-logo.png").read_bytes()

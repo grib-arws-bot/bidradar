@@ -24,7 +24,7 @@ from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSour
 from app.services.analysis_worker import submit as submit_background
 from app.services.app_settings import get_report_retention_days
 from app.services.customer_interest import draft_from_profile, get_interest_profile, top_matches
-from app.services.email_assets import logo_data_uri
+from app.services.email_assets import logo_bytes
 from app.services.report_commentary import ReportNotFoundError
 
 REPORT_LIMIT = 30  # 2026-09-12 사용자 지시로 20→50, 2026-09-16 발주계획 제외 후 사용자 지시로 50→30
@@ -382,10 +382,9 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
     generated_label = _email_format_date(row["generated_at"].astimezone(_KST).isoformat())
     closing_soon = summary.get("closing_soon", 0)
     closing_line = f" · 7일 내 마감 {closing_soon}건" if closing_soon > 0 else ""
-    # 2026-09-16 — 외부 URL(`{public_base_url}/email-logo.png`)로 참조했다가 실제 수신함에서
-    # 깨짐(Gmail이 prod의 자체서명 TLS 인증서를 신뢰 안 해 이미지 프록시가 못 가져옴) —
-    # base64 data URI로 본문에 직접 담아 외부 요청 자체를 없앤다(email_assets.py).
-    logo_url = logo_data_uri()
+    # 2026-09-16 외부 URL 참조가 Gmail에서 깨져 data URI로 교체했으나, 2026-09-21 계속
+    # 깨진다는 제보로 재확인 — data URI는 Outlook 등에서 렌더링 자체가 안 된다. CID(Content-ID)
+    # 인라인 첨부로 교체(email_assets.py·mailer.py 참고, 모든 주요 클라이언트가 지원하는 방식).
     cta_button = (
         '<table role="presentation" cellpadding="0" cellspacing="0"><tr><td '
         'style="background:#DE5B21;border-radius:6px;">'
@@ -399,7 +398,7 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
     html_body = (
         f'<div style="font-family:sans-serif;max-width:680px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>'
-        f'<td><img src="{logo_url}" alt="BidRadar" width="145" height="36" style="display:block;border:0;"></td>'
+        f'<td><img src="cid:logo" alt="BidRadar" width="145" height="36" style="display:block;border:0;"></td>'
         f'<td style="text-align:right;"><span style="display:inline-block;padding:2px 10px;border:1px solid #ccc;'
         f'border-radius:12px;font-size:12px;color:#555;">{html.escape(row["name"])}</span></td>'
         "</tr></table>"
@@ -420,6 +419,7 @@ def send_report_email(conn: Connection, customer_id: int, report_id: int) -> dic
     send_email(
         to=recipients, subject=subject, html_body=html_body, text_body=text_body,
         list_unsubscribe=f"<mailto:{settings.smtp_from}?subject=수신거부>",
+        inline_images={"logo": (logo_bytes(), "png")},
     )
     conn.execute(
         insert(report_send_log).values(report_id=report_id, customer_id=customer_id, recipients=recipients)

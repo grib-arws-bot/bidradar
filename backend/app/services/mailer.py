@@ -28,8 +28,17 @@ class SmtpNotConfiguredError(Exception):
 
 
 def send_email(
-    *, to: list[str], subject: str, html_body: str, text_body: str, list_unsubscribe: str | None = None
+    *,
+    to: list[str],
+    subject: str,
+    html_body: str,
+    text_body: str,
+    list_unsubscribe: str | None = None,
+    inline_images: dict[str, tuple[bytes, str]] | None = None,
 ) -> None:
+    """inline_images는 {cid이름: (원본 바이트, 서브타입("png" 등))} — html_body에서
+    `<img src="cid:이름">`로 참조한 이미지를 CID 첨부로 붙인다(2026-09-21, email_assets.py
+    참고 — data URI가 Outlook 등에서 안 뜨는 문제로 CID 방식으로 교체)."""
     if not settings.smtp_host or not settings.smtp_user or not settings.smtp_password:
         raise SmtpNotConfiguredError("SMTP가 설정되지 않았습니다 — infra/.env에 SMTP_HOST·SMTP_USER·SMTP_PASSWORD를 추가한 뒤 재기동하세요.")
     if not to:
@@ -47,6 +56,10 @@ def send_email(
         msg["List-Unsubscribe"] = list_unsubscribe
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
+    if inline_images:
+        html_part = msg.get_payload()[-1]
+        for cid, (data, subtype) in inline_images.items():
+            html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
 
     # 하이웍스는 465포트 암시적 SSL(smtps.hiworks.com)만 지원 — STARTTLS(587)가 아니다
     # (2026-09-12 실제 안내 화면 확인). SMTP_SSL로 연결 시작부터 TLS를 건다.
