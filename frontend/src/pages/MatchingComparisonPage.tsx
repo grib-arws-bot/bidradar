@@ -109,9 +109,13 @@ function MatchColumn({
   otherIds: Set<number>;
   emptyHint: string;
 }) {
+  // 2026-09-21 사용자 지적 — 카드가 많으면 컬럼이 페이지 전체 높이만큼 늘어나서, 가로
+  // 스크롤바가 페이지 맨 아래로 밀려나 손이 안 닿는 문제가 있었다. 컬럼 자체를 세로로
+  // 고정 높이+내부 스크롤로 바꾸고(제목·설명은 위에 고정), 바깥(가로) 스크롤 영역도
+  // 고정 높이를 줘서 상하좌우 스크롤이 항상 같은 화면 안에서 끝나게 한다.
   return (
-    <Stack spacing={1.5} sx={{ minWidth: 320, maxWidth: 320, flexShrink: 0 }}>
-      <Box>
+    <Stack sx={{ minWidth: 320, maxWidth: 320, flexShrink: 0, height: "100%" }}>
+      <Box sx={{ pb: 1, flexShrink: 0 }}>
         <Typography variant="subtitle1" fontWeight={700}>
           {title} ({items.length}건)
         </Typography>
@@ -119,13 +123,15 @@ function MatchColumn({
           {description}
         </Typography>
       </Box>
-      {items.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          {emptyHint}
-        </Typography>
-      ) : (
-        items.map((item) => <MatchCard key={item.id} item={item} bothMatched={otherIds.has(item.id)} />)
-      )}
+      <Stack spacing={1.5} sx={{ overflowY: "auto", flex: 1, pr: 0.5 }}>
+        {items.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {emptyHint}
+          </Typography>
+        ) : (
+          items.map((item) => <MatchCard key={item.id} item={item} bothMatched={otherIds.has(item.id)} />)
+        )}
+      </Stack>
     </Stack>
   );
 }
@@ -237,6 +243,12 @@ export function MatchingComparisonPage() {
               display: "flex",
               gap: 3,
               overflowX: "auto",
+              // 2026-09-21 사용자 지적 — 카드가 많은 컬럼 때문에 이 영역이 페이지 전체
+              // 높이만큼 늘어나면 가로 스크롤바가 화면 맨 아래로 밀려 손이 안 닿는다.
+              // 높이를 화면 안으로 고정하고(컬럼마다 세로 스크롤은 MatchColumn 내부에서
+              // 처리), 상하좌우 스크롤이 전부 이 박스 안에서 끝나게 한다.
+              height: "calc(100vh - 320px)",
+              minHeight: 400,
               pb: 1,
               px: 5,
               scrollbarWidth: "auto", // 파이어폭스 — 얇게 숨기지 않고 항상 보이게
