@@ -208,3 +208,25 @@ def test_compare_endpoint_returns_named_profiles(client: TestClient):
         with engine.begin() as conn:
             from app.models import customer
             conn.execute(delete(customer).where(customer.c.id == customer_id))
+
+
+def test_compare_all_signal_variants_endpoint_returns_four_variants(client: TestClient):
+    """2026-09-21 후속(의사결정_로그 198번) — "전체 신호" 결합 방식만 따로 실험하는 팝업
+    전용 엔드포인트. ALL_SIGNAL_VARIANTS에 등록된 4가지가 전부 나오는지만 본다(각 결합
+    방식의 계산 자체는 test_recommendation_signals.py가 이미 검증)."""
+    from app.services.recommendation_signals import ALL_SIGNAL_VARIANTS
+
+    customer_id = client.post("/api/customers", json={"name": "[테스트] 전체 신호 비교", "plan_tier": "standard"}).json()["id"]
+    try:
+        with mock.patch("app.services.cosine_matching.embed_texts", return_value=[QUERY_VECTOR]):
+            response = client.get(f"/api/customers/{customer_id}/interest-matches/compare-all-signal-variants")
+        assert response.status_code == 200
+        body = response.json()
+        returned_keys = {p["key"] for p in body["profiles"]}
+        assert returned_keys == set(ALL_SIGNAL_VARIANTS.keys())
+        for p in body["profiles"]:
+            assert "matches" in p and "label" in p and p["description"]
+    finally:
+        with engine.begin() as conn:
+            from app.models import customer
+            conn.execute(delete(customer).where(customer.c.id == customer_id))

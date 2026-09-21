@@ -31,6 +31,7 @@ from app.services.customer_interest import InterestDraft
 from app.services.recommendation_signals import (
     a3_match_signal,
     combine_noisy_or,
+    combine_weighted_average,
     sllm_confidence_signal,
     strategy_viewed_signal,
     work_type_signal,
@@ -253,6 +254,37 @@ def test_combine_noisy_or_negative_signal_alone_cannot_create_relevance():
     assert combine_noisy_or({"work_type": -0.6}, {"work_type": 1.0}) == 0
 
 
+# ---- combine_weighted_average(2026-09-21, 의사결정_로그 198번) -----------------------
+
+
+def test_combine_weighted_average_does_not_saturate_like_noisy_or():
+    """신호 두 개가 각각 중간 강도(0.5)일 때, 노이즈-OR은 0.75로 훌쩍 뛰지만 가중평균은
+    그대로 0.5 — "전체 신호"가 노이즈-OR 때문에 다른 프로필과 너무 달라진다는 지적에
+    나온 대안이 실제로 포화되지 않는지 확인."""
+    scores = {"rule": 0.5, "cosine_weighted": 0.5}
+    weights = {"rule": 1.0, "cosine_weighted": 1.0}
+    assert combine_noisy_or(scores, weights) == 75
+    assert combine_weighted_average(scores, weights) == 50
+
+
+def test_combine_weighted_average_ignores_none_signals():
+    scores = {"rule": 0.4, "cosine_weighted": None}
+    weights = {"rule": 1.0, "cosine_weighted": 1.0}
+    assert combine_weighted_average(scores, weights) == 40
+
+
+def test_combine_weighted_average_zero_when_all_none():
+    assert combine_weighted_average({"rule": None}, {"rule": 1.0}) == 0
+
+
+def test_combine_weighted_average_respects_relative_weights():
+    # cosine 가중치가 rule의 절반이면, 평균이 rule 쪽으로 더 치우쳐야 한다.
+    scores = {"rule": 0.8, "cosine_weighted": 0.2}
+    weights = {"rule": 1.0, "cosine_weighted": 0.5}
+    # (1.0*0.8 + 0.5*0.2) / 1.5 = 0.9/1.5 = 0.6
+    assert combine_weighted_average(scores, weights) == 60
+
+
 # ---- score_with_profile 통합 -----------------------------------------------------------
 
 
@@ -348,5 +380,58 @@ def test_score_with_profile_includes_signal_breakdown():
         boosted_match = next(m for m in with_worktype if m["id"] == notice_id)
         assert boosted_match["signals"]["work_type"] == pytest.approx(0.6)  # 실제 값이 그대로 노출됨
         assert boosted_match["signals"]["a3_match"] is None  # A2/A3 분석이 없으니 None(0점 아님)
+    finally:
+        _cleanup([notice_id])
+
+
+# ---- score_with_profile의 weights/combine_fn/signal_floor 오버라이드(198번) ------------
+
+
+def test_score_with_profile_signal_floor_treats_weak_value_as_none():
+    """2026-09-21 — 코사인처럼 항상 어떤 값이든 나오는 신호가 약한 값으로도 점수를
+    만들어내지 못하게, signal_floor 미만이면 None 취급되는지 확인."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id, work_type="고도화")
+    try:
+        draft = InterestDraft(topic_ids=[topic_id], work_type_prefs={"고도화": "positive"})
+        profile = {"customer_id": 1, "topics": [], "topic_ids": [topic_id], "topic_priorities": {}, "terms": []}
+        with engine.connect() as conn:
+            # 공유 개발 DB에 이미 점수 있는 실제 공고가 많을 수 있어(다른 테스트 파일의
+            # 선례와 같은 이유) 이 공고(점수 0)가 반드시 포함되도록 limit을 크게 준다.
+            floored = score_with_profile(
+                conn, draft, profile, customer_id=1, enabled_signals=frozenset({"work_type"}), limit=50_000,
+                signal_floor={"work_type": 0.7},  # WORK_TYPE_MATCH_STRENGTH(0.6) < 0.7 → None 처리돼야 함
+            )
+        match = next(m for m in floored if m["id"] == notice_id)
+        assert match["signals"]["work_type"] is None
+        assert match["score"] == 0  # 규칙 매칭도 안 걸려 있으니(l2_score 없음) 0점이어야 함
+    finally:
+        _cleanup([notice_id])
+
+
+def test_score_with_profile_accepts_custom_combine_fn_and_weights():
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id, work_type="고도화")
+        conn.execute(
+            insert(notice_score).values(notice_id=notice_id, interest_topic_id=topic_id, l2_score=10, rule_ver=1, reason="x")
+        )
+    try:
+        draft = InterestDraft(topic_ids=[topic_id], work_type_prefs={"고도화": "positive"})
+        profile = {"customer_id": 1, "topics": [], "topic_ids": [topic_id], "topic_priorities": {}, "terms": []}
+        with engine.connect() as conn:
+            via_noisy_or = score_with_profile(
+                conn, draft, profile, customer_id=1, enabled_signals=frozenset({"work_type"}), limit=50,
+            )
+            via_avg = score_with_profile(
+                conn, draft, profile, customer_id=1, enabled_signals=frozenset({"work_type"}), limit=50,
+                combine_fn=combine_weighted_average,
+            )
+        noisy_or_score = next(m for m in via_noisy_or if m["id"] == notice_id)["score"]
+        avg_score = next(m for m in via_avg if m["id"] == notice_id)["score"]
+        assert noisy_or_score != avg_score  # 결합 방식을 실제로 갈아끼울 수 있어야 함
     finally:
         _cleanup([notice_id])

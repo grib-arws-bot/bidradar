@@ -16,6 +16,7 @@ noisy-OR 결합에서 자동 제외한다, CLAUDE.md "확인 필요는 사람에
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Callable
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Connection
@@ -154,11 +155,21 @@ def score_with_profile(
     customer_id: int,
     enabled_signals: frozenset[str],
     limit: int = 20,
+    weights: dict[str, float] | None = None,
+    combine_fn: Callable[[dict[str, float | None], dict[str, float]], int] | None = None,
+    signal_floor: dict[str, float] | None = None,
 ) -> list[dict]:
     """`customer_interest.top_matches`와 같은 후보 풀·하드 필터·규칙(키워드) 점수를 기준
     축으로 삼고(min_score=0으로 걸러내지 않은 전체), enabled_signals에 있는 추가 신호를
-    noisy-OR로 얹어 재정렬한다. min_score=0을 쓰는 이유 — 규칙 점수가 0이라도(키워드가
-    전혀 안 맞아도) 다른 신호(코사인·sLLM 등)만으로 새로 떠오를 후보를 배제하면 안 됨."""
+    결합해 재정렬한다. min_score=0을 쓰는 이유 — 규칙 점수가 0이라도(키워드가 전혀 안
+    맞아도) 다른 신호(코사인·sLLM 등)만으로 새로 떠오를 후보를 배제하면 안 됨.
+
+    2026-09-21 후속 — "전체 신호"(다섯 개를 한꺼번에 노이즈-OR로 결합)가 다른 프로필과
+    너무 다르게 나온다는 실측 지적에, 결합 방식 자체를 실험해볼 수 있게 `weights`(기본
+    전부 1.0 대신 신호별로 낮출 수 있음)·`combine_fn`(noisy-OR 대신 가중평균 등으로
+    교체 가능)·`signal_floor`(예: 코사인이 0.5 미만이면 아예 None 취급 — 항상 어떤
+    값이든 나오는 신호가 약한 값으로도 점수를 만들어내는 걸 막음)를 열어뒀다
+    (의사결정_로그 198번, 신호 비교 팝업 전용)."""
     scored = _score_all(conn, draft, min_score=0)
     if not scored:
         return []
@@ -178,7 +189,8 @@ def score_with_profile(
     if "strategy_viewed" in enabled_signals:
         signal_values["strategy_viewed"] = strategy_viewed_signal(conn, customer_id, notice_ids)
 
-    weights = _signal_weights(enabled_signals)
+    resolved_weights = weights if weights is not None else _signal_weights(enabled_signals)
+    resolved_combine_fn = combine_fn if combine_fn is not None else combine_noisy_or
     combined: list[tuple[dict, int, dict[int, float], dict[str, float | None]]] = []
     for n, rule_score, matched_strengths in scored:
         # 2026-09-21 — 화면에서 "왜 이 점수인지" 신호별로 확인할 수 있어야 한다는 요청
@@ -186,8 +198,11 @@ def score_with_profile(
         # breakdown으로 응답에 실어 보낸다. None은 "이 신호로는 평가 못 함"이지 0점이 아니다.
         per_notice: dict[str, float | None] = {"rule": rule_score / 100}
         for name, values in signal_values.items():
-            per_notice[name] = values.get(n["id"])
-        combined_score = combine_noisy_or(per_notice, weights)
+            value = values.get(n["id"])
+            if signal_floor and name in signal_floor and value is not None and abs(value) < signal_floor[name]:
+                value = None
+            per_notice[name] = value
+        combined_score = resolved_combine_fn(per_notice, resolved_weights)
         combined.append((n, combined_score, matched_strengths, per_notice))
 
     far_future = datetime.max.replace(tzinfo=timezone.utc)
@@ -241,11 +256,6 @@ PROFILE_PRESETS: dict[str, dict] = {
         "signals": frozenset({"strategy_viewed"}),
         "description": "규칙 매칭에 그 고객이 그 공고의 \"AI 사업 추진 전략\"을 실제로 열람했는지를 더합니다. 열람 자체를 관심의 긍정 신호로만 쓰고 감점·제외에는 안 씁니다. 같은 고객의 다른 공고에는 영향이 없습니다(공고별 1:1).",
     },
-    "all": {
-        "label": "전체 신호",
-        "signals": frozenset({"work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed"}),
-        "description": "위 다섯 신호(사업유형·코사인·sLLM·A3·전략열람)를 규칙 매칭과 함께 전부 결합합니다. 신호가 없는(None) 공고는 자동으로 그 신호가 빠진 채 계산됩니다.",
-    },
 }
 
 
@@ -274,3 +284,58 @@ def combine_noisy_or(scores: dict[str, float | None], weights: dict[str, float])
             negative_complement *= 1 - suppression
     base = (1 - positive_complement) if any_positive else 0.0
     return round(base * negative_complement * 100)
+
+
+def combine_weighted_average(scores: dict[str, float | None], weights: dict[str, float]) -> int:
+    """noisy-OR의 대안(2026-09-21, 의사결정_로그 198번) — 활성화된(None 아닌) 신호들의
+    가중평균만 낸다. 곱셈이 아니라 평균이라 여러 신호가 동시에 켜져도 noisy-OR처럼
+    빠르게 100점 근처로 포화되지 않는다. 음의 신호(비선호 사업유형 등)도 그냥 평균에
+    끌어내리는 값으로 섞는다 — noisy-OR처럼 양/음을 분리하지 않는다(가중평균 자체가
+    이미 "여러 근거를 뭉뚱그려 본다"는 성격이라 분리할 이유가 약함)."""
+    active = [(weights.get(name, 1.0), score) for name, score in scores.items() if score is not None]
+    if not active:
+        return 0
+    total_weight = sum(w for w, _ in active)
+    if total_weight <= 0:
+        return 0
+    average = sum(w * s for w, s in active) / total_weight
+    return round(max(0.0, min(1.0, average)) * 100)
+
+
+# 2026-09-21 후속 — "전체 신호"(다섯 개를 한꺼번에 노이즈-OR로 결합)를 메인 비교 화면에서
+# 빼고, 결합 방식 자체를 실험하는 별도 팝업으로 옮겼다(의사결정_로그 198번) — 실측해보니
+# 신호 하나만 강해도 노이즈-OR이 100점 근처로 빠르게 포화되는데, 다섯 개를 한꺼번에
+# 켜면 서로 다른 공고가 서로 다른 신호로 각자 포화돼 결과가 예측하기 어렵게 달라짐.
+ALL_SIGNALS = frozenset({"work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed"})
+_ALL_SIGNALS_LOW_WEIGHTS = {"rule": 1.0, **dict.fromkeys(ALL_SIGNALS, 0.5)}
+
+ALL_SIGNAL_VARIANTS: dict[str, dict] = {
+    "all_current": {
+        "label": "현재 방식(노이즈-OR, 가중치 1.0)",
+        "description": "다섯 신호(사업유형·코사인·sLLM·A3·전략열람)를 전부 가중치 1.0으로 노이즈-OR 결합합니다. 신호 하나만 강해도 빠르게 100점 근처로 포화될 수 있습니다.",
+        "weights": None,
+        "combine_fn": combine_noisy_or,
+        "signal_floor": None,
+    },
+    "all_low_weight": {
+        "label": "가중치 완화(추가 신호 0.5)",
+        "description": "규칙은 그대로 1.0, 나머지 다섯 신호는 가중치를 0.5로 낮춰 노이즈-OR로 결합합니다. 포화 속도를 늦춥니다.",
+        "weights": _ALL_SIGNALS_LOW_WEIGHTS,
+        "combine_fn": combine_noisy_or,
+        "signal_floor": None,
+    },
+    "all_cosine_floor": {
+        "label": "코사인 최소값 적용(0.5 미만은 미평가 취급)",
+        "description": "코사인 유사도가 0.5 미만이면 신호가 아예 없는(None) 것으로 취급합니다 — 코사인은 완전히 무관한 공고에도 항상 어떤 값이든 나오는 경향이 있어, 약한 유사도로 점수를 만들어내는 걸 막습니다. 나머지는 현재 방식과 동일.",
+        "weights": None,
+        "combine_fn": combine_noisy_or,
+        "signal_floor": {"cosine_weighted": 0.5},
+    },
+    "all_weighted_avg": {
+        "label": "가중평균 결합",
+        "description": "노이즈-OR 대신 활성화된 신호들의 가중평균을 씁니다. 곱셈 방식이 아니라서 여러 신호가 동시에 켜져도 빠르게 포화되지 않습니다.",
+        "weights": None,
+        "combine_fn": combine_weighted_average,
+        "signal_floor": None,
+    },
+}

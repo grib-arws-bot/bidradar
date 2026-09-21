@@ -19,7 +19,7 @@ from app.services.customer_interest import (
     save_interest_profile,
     top_matches,
 )
-from app.services.recommendation_signals import PROFILE_PRESETS, score_with_profile
+from app.services.recommendation_signals import ALL_SIGNALS, ALL_SIGNAL_VARIANTS, PROFILE_PRESETS, score_with_profile
 from app.services.customer_management import (
     CustomerDraft,
     EmailScheduleError,
@@ -287,6 +287,32 @@ def get_interest_matches_compare(customer_id: int, _email: str = Depends(require
                 }
                 for key, preset in PROFILE_PRESETS.items()
             ],
+        ]
+    return {"profiles": profiles}
+
+
+@router.get("/{customer_id}/interest-matches/compare-all-signal-variants")
+def get_interest_matches_compare_all_signal_variants(customer_id: int, _email: str = Depends(require_auth)) -> dict:
+    """"전체 신호"(다섯 신호를 한꺼번에 결합) 결합 방식만 따로 실험하는 팝업 전용
+    엔드포인트(2026-09-21, 의사결정_로그 198번) — 노이즈-OR이 신호 하나만 강해도 빠르게
+    포화돼 다른 프로필과 결과가 너무 달라진다는 실측 지적에, 결합 방식 자체를 4가지로
+    비교해본다(ALL_SIGNAL_VARIANTS 참고). 메인 비교 화면(compare)에서는 뺐다."""
+    with engine.connect() as conn:
+        profile = get_interest_profile(conn, customer_id)
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+        draft = draft_from_profile(profile)
+        profiles = [
+            {
+                "key": key,
+                "label": variant["label"],
+                "description": variant["description"],
+                "matches": score_with_profile(
+                    conn, draft, profile, customer_id=customer_id, enabled_signals=ALL_SIGNALS, limit=20,
+                    weights=variant["weights"], combine_fn=variant["combine_fn"], signal_floor=variant["signal_floor"],
+                ),
+            }
+            for key, variant in ALL_SIGNAL_VARIANTS.items()
         ]
     return {"profiles": profiles}
 

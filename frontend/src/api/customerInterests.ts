@@ -91,3 +91,13 @@ export async function fetchInterestMatchesCompare(customerId: number): Promise<I
   const { data } = await apiClient.get<InterestMatchesCompare>(`/customers/${customerId}/interest-matches/compare`);
   return data;
 }
+
+// "전체 신호"(다섯 신호를 한꺼번에 결합) 결합 방식만 따로 실험하는 팝업 전용(2026-09-21,
+// 의사결정_로그 198번) — 노이즈-OR이 신호 하나만 강해도 빠르게 포화돼 다른 프로필과 결과가
+// 너무 달라진다는 실측 지적에, 결합 방식 자체(현재/가중치완화/코사인최소값/가중평균)를 비교.
+export async function fetchAllSignalVariantsCompare(customerId: number): Promise<InterestMatchesCompare> {
+  const { data } = await apiClient.get<InterestMatchesCompare>(
+    `/customers/${customerId}/interest-matches/compare-all-signal-variants`
+  );
+  return data;
+}
