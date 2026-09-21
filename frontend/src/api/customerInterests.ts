@@ -20,8 +20,11 @@ export interface InterestDraft {
   // 관심 공고 추천 금액 하한(2026-09-07) — 이 값 이상인 est_price를 가진 공고만 추천 대상.
   // null이면 필터 없음(미공개 est_price 공고는 하한이 걸려 있으면 항상 제외됨).
   price_min: number | null;
-  // 관심 사업유형(2026-09-21, 의사결정_로그 192번) — work_types 카탈로그(고정값) 중 선택.
-  work_type_ids: string[];
+  // 관심 사업유형 선호(2026-09-21, 의사결정_로그 192번, 같은 날 +/중립/- 3단계로 확장) —
+  // {사업유형: "positive"/"negative"}. 지정 안 한 사업유형(work_types 카탈로그에는 있지만
+  // 이 맵에 키가 없는 것)은 중립 — 감리·구매처럼 "들어가면 오히려 감점해야 할" 유형을
+  // negative로 지정할 수 있다.
+  work_type_prefs: Record<string, "positive" | "negative">;
 }
 
 export interface InterestProfile extends InterestDraft {
@@ -66,11 +69,17 @@ export interface MatchItem {
   work_type_label: string;
   topics: string[];
   score: number;
+  // 2026-09-21 — 신호별 breakdown(의사결정_로그 192번 후속). 이 프로필에서 켠 신호 이름만
+  // 키로 들어있고("rule"은 항상 포함), 값은 0~1 강도 또는 null(그 신호로는 평가 불가 —
+  // 0점과 다름, 화면에서 구분해서 보여줘야 함).
+  signals: Record<string, number | null>;
 }
 
 export interface MatchProfile {
   key: string;
   label: string;
+  // 이 프로필이 어떤 입력을 보고 어떻게 계산하는지 — 컬럼 제목 바로 아래 그대로 노출한다.
+  description: string;
   matches: MatchItem[];
 }
 

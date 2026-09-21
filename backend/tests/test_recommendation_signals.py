@@ -70,15 +70,23 @@ def test_work_type_signal_matches_work_type_or_biz_type():
         {"id": 2, "work_type": "구매", "biz_type": "물품"},
         {"id": 3, "work_type": None, "biz_type": "용역"},
     ]
-    scores = work_type_signal(candidates, ["고도화", "물품"])
-    assert scores[1] > 0  # work_type 매칭
-    assert scores[2] > 0  # biz_type 매칭
-    assert scores[3] is None  # 둘 다 불일치 — 0점이 아니라 None
+    scores = work_type_signal(candidates, {"고도화": "positive", "물품": "positive"})
+    assert scores[1] > 0  # work_type 매칭(선호)
+    assert scores[2] > 0  # biz_type 매칭(선호)
+    assert scores[3] is None  # 둘 다 지정 안 함(중립) — 0점이 아니라 None
+
+
+def test_work_type_signal_negative_preference_returns_negative_value():
+    """2026-09-21 사용자 지시 — 감리·구매처럼 "들어가면 오히려 감점해야 할" 사업유형은
+    음수로 반환돼야 한다(combine_noisy_or가 이걸 억제 강도로 해석)."""
+    candidates = [{"id": 1, "work_type": "감리", "biz_type": None}]
+    scores = work_type_signal(candidates, {"감리": "negative"})
+    assert scores[1] < 0
 
 
 def test_work_type_signal_all_none_when_customer_has_no_preference():
     candidates = [{"id": 1, "work_type": "개발", "biz_type": "용역"}]
-    scores = work_type_signal(candidates, [])
+    scores = work_type_signal(candidates, {})
     assert scores[1] is None
 
 
@@ -230,6 +238,21 @@ def test_combine_noisy_or_zero_when_all_none():
     assert combine_noisy_or({"rule": None, "cosine_weighted": None}, {"rule": 1.0, "cosine_weighted": 1.0}) == 0
 
 
+def test_combine_noisy_or_negative_signal_suppresses_positive_base():
+    """2026-09-21 사용자 지시 — 감리·구매처럼 비선호 사업유형은 점수를 깎아야 한다.
+    양의 신호로 만든 기본 점수에 음의 신호(억제 강도)를 곱해서 깎이는지 확인."""
+    without_penalty = combine_noisy_or({"rule": 0.6}, {"rule": 1.0, "work_type": 1.0})
+    with_penalty = combine_noisy_or({"rule": 0.6, "work_type": -0.6}, {"rule": 1.0, "work_type": 1.0})
+    assert with_penalty < without_penalty
+    assert with_penalty == round(without_penalty * (1 - 0.6))
+
+
+def test_combine_noisy_or_negative_signal_alone_cannot_create_relevance():
+    """양의 근거가 하나도 없으면 음의 신호가 있어도 여전히 0점이어야 한다 — 음의 신호는
+    "있던 관련성을 깎는" 것이지 "없던 관련성을 만드는" 게 아니다."""
+    assert combine_noisy_or({"work_type": -0.6}, {"work_type": 1.0}) == 0
+
+
 # ---- score_with_profile 통합 -----------------------------------------------------------
 
 
@@ -261,7 +284,7 @@ def test_score_with_profile_boosts_when_work_type_signal_enabled():
             insert(notice_score).values(notice_id=notice_id, interest_topic_id=topic_id, l2_score=10, rule_ver=1, reason="x")
         )
     try:
-        draft = InterestDraft(topic_ids=[topic_id], work_type_ids=["고도화"])
+        draft = InterestDraft(topic_ids=[topic_id], work_type_prefs={"고도화": "positive"})
         profile = {"customer_id": 1, "topics": [], "topic_ids": [topic_id], "topic_priorities": {}, "terms": []}
         with engine.connect() as conn:
             baseline = score_with_profile(conn, draft, profile, customer_id=1, enabled_signals=frozenset(), limit=50)
@@ -271,5 +294,59 @@ def test_score_with_profile_boosts_when_work_type_signal_enabled():
         baseline_score = next(m for m in baseline if m["id"] == notice_id)["score"]
         boosted_score = next(m for m in boosted if m["id"] == notice_id)["score"]
         assert boosted_score > baseline_score
+    finally:
+        _cleanup([notice_id])
+
+
+def test_score_with_profile_lowers_score_when_work_type_is_disliked():
+    """2026-09-21 사용자 지시 — 감리·구매처럼 비선호로 지정한 사업유형은 규칙 매칭
+    점수보다 낮아져야 한다(끝까지 통합 테스트로 확인)."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id, work_type="감리")
+        conn.execute(
+            insert(notice_score).values(notice_id=notice_id, interest_topic_id=topic_id, l2_score=10, rule_ver=1, reason="x")
+        )
+    try:
+        draft = InterestDraft(topic_ids=[topic_id], work_type_prefs={"감리": "negative"})
+        profile = {"customer_id": 1, "topics": [], "topic_ids": [topic_id], "topic_priorities": {}, "terms": []}
+        with engine.connect() as conn:
+            baseline = score_with_profile(conn, draft, profile, customer_id=1, enabled_signals=frozenset(), limit=50)
+            penalized = score_with_profile(
+                conn, draft, profile, customer_id=1, enabled_signals=frozenset({"work_type"}), limit=50
+            )
+        baseline_score = next(m for m in baseline if m["id"] == notice_id)["score"]
+        penalized_score = next(m for m in penalized if m["id"] == notice_id)["score"]
+        assert penalized_score < baseline_score
+    finally:
+        _cleanup([notice_id])
+
+
+def test_score_with_profile_includes_signal_breakdown():
+    """2026-09-21 — 화면에서 신호별로 왜 이 점수인지 확인할 수 있어야 한다는 요청. 활성화
+    안 한 신호는 breakdown에 아예 안 들어가야 하고(계산도 안 했으므로), 활성화했는데 값이
+    없는 신호는 None으로 남아야 한다(0점과 구분)."""
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id, work_type="고도화")
+        conn.execute(
+            insert(notice_score).values(notice_id=notice_id, interest_topic_id=topic_id, l2_score=10, rule_ver=1, reason="x")
+        )
+    try:
+        draft = InterestDraft(topic_ids=[topic_id], work_type_prefs={"고도화": "positive"})
+        profile = {"customer_id": 1, "topics": [], "topic_ids": [topic_id], "topic_priorities": {}, "terms": []}
+        with engine.connect() as conn:
+            rule_only = score_with_profile(conn, draft, profile, customer_id=1, enabled_signals=frozenset(), limit=50)
+            with_worktype = score_with_profile(
+                conn, draft, profile, customer_id=1, enabled_signals=frozenset({"work_type", "a3_match"}), limit=50
+            )
+        rule_match = next(m for m in rule_only if m["id"] == notice_id)
+        assert set(rule_match["signals"].keys()) == {"rule"}  # 끈 신호는 아예 안 들어있음
+
+        boosted_match = next(m for m in with_worktype if m["id"] == notice_id)
+        assert boosted_match["signals"]["work_type"] == pytest.approx(0.6)  # 실제 값이 그대로 노출됨
+        assert boosted_match["signals"]["a3_match"] is None  # A2/A3 분석이 없으니 None(0점 아님)
     finally:
         _cleanup([notice_id])

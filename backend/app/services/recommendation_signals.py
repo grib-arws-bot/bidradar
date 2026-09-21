@@ -40,7 +40,9 @@ A3_MATCH_STRENGTH = 0.9
 STRATEGY_VIEWED_STRENGTH = 0.7
 # 사업유형 신호 — notice.work_type/notice.biz_type이 전부 제목 기반 추정이거나(연구 등)
 # API가 주는 값(물품/용역 등)이라도 "고객이 실제로 관심 있다고 밝힌 유형과 일치"라는
-# 사실 자체의 신뢰도는 규칙(키워드 L2) 매칭보다는 약하게 잡는다.
+# 사실 자체의 신뢰도는 규칙(키워드 L2) 매칭보다는 약하게 잡는다. 2026-09-21 — 사용자 지시로
+# "선호(+)/중립(0)/비선호(-)" 3단계로 확장(감리·구매처럼 오히려 감점해야 할 유형이 있다는
+# 지적) — 음수는 combine_noisy_or()가 "억제 강도"로 해석해 기존 점수를 깎는다.
 WORK_TYPE_MATCH_STRENGTH = 0.6
 
 
@@ -50,17 +52,22 @@ def topic_strength(l2_score: int) -> float:
     return max(TOPIC_STRENGTH_FLOOR, min(1.0, l2_score / TOPIC_STRENGTH_REFERENCE))
 
 
-def work_type_signal(candidates: list[dict], work_type_ids: list[str]) -> dict[int, float | None]:
-    """notice.work_type 또는 notice.biz_type이 고객이 선택한 사업유형 목록에 있으면
-    WORK_TYPE_MATCH_STRENGTH, 없으면 None(둘 다 값이 없거나 안 겹치면 "이 신호로는 판단
-    불가"로 취급 — 0점을 줘서 다른 신호를 깎으면 안 됨)."""
-    wanted = set(work_type_ids)
-    if not wanted:
+def work_type_signal(candidates: list[dict], work_type_prefs: dict[str, str]) -> dict[int, float | None]:
+    """notice.work_type 또는 notice.biz_type이 고객이 지정한 사업유형 선호(work_type_prefs:
+    값 -> "positive"/"negative")에 있으면 그 부호의 WORK_TYPE_MATCH_STRENGTH, 지정 안 한
+    사업유형(중립)이거나 애초에 선호를 하나도 안 정했으면 None — 0점을 줘서 다른 신호를
+    깎으면 안 됨(중립은 "관련 없다"가 아니라 "이 축으로는 판단 안 함")."""
+    if not work_type_prefs:
         return {n["id"]: None for n in candidates}
     scores: dict[int, float | None] = {}
     for n in candidates:
-        matched = n.get("work_type") in wanted or n.get("biz_type") in wanted
-        scores[n["id"]] = WORK_TYPE_MATCH_STRENGTH if matched else None
+        pref = work_type_prefs.get(n.get("work_type")) or work_type_prefs.get(n.get("biz_type"))
+        if pref == "positive":
+            scores[n["id"]] = WORK_TYPE_MATCH_STRENGTH
+        elif pref == "negative":
+            scores[n["id"]] = -WORK_TYPE_MATCH_STRENGTH
+        else:
+            scores[n["id"]] = None
     return scores
 
 
@@ -160,7 +167,7 @@ def score_with_profile(
 
     signal_values: dict[str, dict[int, float | None]] = {}
     if "work_type" in enabled_signals:
-        signal_values["work_type"] = work_type_signal(candidates, draft.work_type_ids)
+        signal_values["work_type"] = work_type_signal(candidates, draft.work_type_prefs)
     if "cosine_weighted" in enabled_signals:
         query_embedding = _query_embedding_for_profile(conn, profile)
         signal_values["cosine_weighted"] = weighted_cosine_scores(conn, notice_ids, query_embedding)
@@ -172,53 +179,98 @@ def score_with_profile(
         signal_values["strategy_viewed"] = strategy_viewed_signal(conn, customer_id, notice_ids)
 
     weights = _signal_weights(enabled_signals)
-    combined: list[tuple[dict, int, dict[int, float]]] = []
+    combined: list[tuple[dict, int, dict[int, float], dict[str, float | None]]] = []
     for n, rule_score, matched_strengths in scored:
+        # 2026-09-21 — 화면에서 "왜 이 점수인지" 신호별로 확인할 수 있어야 한다는 요청
+        # (CLAUDE.md S8 원칙 2 "판정 근거를 붙인다"와 같은 취지) — per_notice를 그대로
+        # breakdown으로 응답에 실어 보낸다. None은 "이 신호로는 평가 못 함"이지 0점이 아니다.
         per_notice: dict[str, float | None] = {"rule": rule_score / 100}
         for name, values in signal_values.items():
             per_notice[name] = values.get(n["id"])
         combined_score = combine_noisy_or(per_notice, weights)
-        combined.append((n, combined_score, matched_strengths))
+        combined.append((n, combined_score, matched_strengths, per_notice))
 
     far_future = datetime.max.replace(tzinfo=timezone.utc)
-    combined.sort(key=lambda triple: (-triple[1], triple[0]["close_dt"] is None, triple[0]["close_dt"] or far_future))
+    combined.sort(key=lambda item: (-item[1], item[0]["close_dt"] is None, item[0]["close_dt"] or far_future))
     picked = combined[:limit]
 
     topic_rows = conn.execute(select(interest_topic.c.id, interest_topic.c.name).order_by(interest_topic.c.sort_order)).all()
     topic_order = [r.id for r in topic_rows]
     topic_names = {r.id: r.name for r in topic_rows}
     return [
-        _serialize(n, score, [f"{topic_names[t]}({_strength_label(matched[t])})" for t in topic_order if t in matched])
-        for n, score, matched in picked
+        {
+            **_serialize(n, score, [f"{topic_names[t]}({_strength_label(matched[t])})" for t in topic_order if t in matched]),
+            "signals": breakdown,
+        }
+        for n, score, matched, breakdown in picked
     ]
 
 
 # 사용자 지시(2026-09-21) — 신호를 한꺼번에 다 넣지 않고 몇 개 조합을 만들어 비교한다.
-# 자격요건은 여기 없다(별도 필터로만 쓸 예정, 점수에 안 섞음).
+# 자격요건은 여기 없다(별도 필터로만 쓸 예정, 점수에 안 섞음). description은 화면(매칭 방식
+# 비교 페이지)에 컬럼 제목 아래 그대로 노출된다 — 입력 데이터와 계산 방식을 사람이 읽고
+# 바로 이해할 수 있게 쓴다.
 PROFILE_PRESETS: dict[str, dict] = {
-    "rule": {"label": "규칙 매칭", "signals": frozenset()},
-    "rule_worktype": {"label": "규칙+사업유형", "signals": frozenset({"work_type"})},
-    "rule_cosine": {"label": "규칙+코사인(제목가중)", "signals": frozenset({"cosine_weighted"})},
-    "rule_sllm": {"label": "규칙+sLLM confidence", "signals": frozenset({"sllm_confidence"})},
-    "rule_a3": {"label": "규칙+A3 판정", "signals": frozenset({"a3_match"})},
-    "rule_strategy": {"label": "규칙+전략열람", "signals": frozenset({"strategy_viewed"})},
+    "rule": {
+        "label": "규칙 매칭",
+        "signals": frozenset(),
+        "description": "키워드 사전(notice_score.l2_score)과 고객이 선택한 관심주제 우선순위만으로 계산합니다. LLM·임베딩 관여 없음 — 다른 모든 방식의 기준 축입니다.",
+    },
+    "rule_worktype": {
+        "label": "규칙+사업유형",
+        "signals": frozenset({"work_type"}),
+        "description": "규칙 매칭에 사업유형(notice.work_type/biz_type) 선호를 더합니다. 고객이 사업유형마다 선호(+)/중립/비선호(-) 3단계로 지정할 수 있고, 선호는 점수를 올리고 비선호(예: 감리·구매)는 오히려 점수를 깎습니다. 중립이거나 아직 설정 안 한 사업유형은 이 신호가 아예 빠집니다.",
+    },
+    "rule_cosine": {
+        "label": "규칙+코사인(제목가중)",
+        "signals": frozenset({"cosine_weighted"}),
+        "description": "규칙 매칭에 코사인 유사도를 더합니다. 고객 프로필(관심주제+키워드+AI 소개서 요약)과 공고(제목만 임베딩·제목+첨부 임베딩)를 bge-m3로 비교해 제목 60%·첨부 40%로 가중 평균합니다. 키워드가 정확히 안 맞아도 의미가 비슷하면 잡아낼 수 있습니다.",
+    },
+    "rule_sllm": {
+        "label": "규칙+sLLM confidence",
+        "signals": frozenset({"sllm_confidence"}),
+        "description": "규칙 매칭에 사내 sLLM(Qwen3-4B)이 공고 제목만 보고 판단한 관심주제 일치 확신도(notice_score.sllm_confidence)를 더합니다. sLLM이 아직 그 공고를 안 봤으면 이 신호는 빠집니다.",
+    },
+    "rule_a3": {
+        "label": "규칙+A3 판정",
+        "signals": frozenset({"a3_match"}),
+        "description": "규칙 매칭에 A3(제품 스펙 대조, 규칙 기반 — LLM 아님) 판정에서 'ok'가 하나라도 있는지를 더합니다. \"관심이 있는가\"가 아니라 \"우리가 실제로 충족할 제품이 있는가\"를 보는 성격이 다른 신호입니다. A2/A3 분석이 아직 안 된 공고는 빠집니다.",
+    },
+    "rule_strategy": {
+        "label": "규칙+전략열람",
+        "signals": frozenset({"strategy_viewed"}),
+        "description": "규칙 매칭에 그 고객이 그 공고의 \"AI 사업 추진 전략\"을 실제로 열람했는지를 더합니다. 열람 자체를 관심의 긍정 신호로만 쓰고 감점·제외에는 안 씁니다. 같은 고객의 다른 공고에는 영향이 없습니다(공고별 1:1).",
+    },
     "all": {
         "label": "전체 신호",
         "signals": frozenset({"work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed"}),
+        "description": "위 다섯 신호(사업유형·코사인·sLLM·A3·전략열람)를 규칙 매칭과 함께 전부 결합합니다. 신호가 없는(None) 공고는 자동으로 그 신호가 빠진 채 계산됩니다.",
     },
 }
 
 
-def combine_noisy_or(scores: dict[str, float | None], weights: dict[str, float]) -> float:
-    """1 - Π(1 - weight_i * score_i) — customer_interest.py의 관심주제 noisy-OR 결합과
-    같은 철학. None인 신호는 결합에서 제외한다(그 신호가 "이 공고를 못 봤다/평가 못 했다"는
-    뜻이지 "관련 없다"는 뜻이 아니므로 0으로 넣으면 안 됨). 활성 신호가 하나도 없으면 0.0."""
-    complement = 1.0
-    any_active = False
+def combine_noisy_or(scores: dict[str, float | None], weights: dict[str, float]) -> int:
+    """양의 신호(0~1)는 `1 - Π(1 - weight_i * score_i)`로 결합해 "기본 점수"를 만든다
+    (customer_interest.py의 관심주제 noisy-OR 결합과 같은 철학). 2026-09-21 — 음의 신호
+    (감리·구매처럼 "들어가면 감점해야 할" 사업유형 등, work_type_signal() 참고)는 이
+    기본 점수에 별도로 곱해서 깎는 억제형(inhibitory) 노이즈-OR로 확장했다 — 음의 신호가
+    있다고 없던 관련성을 만들어내면 안 되므로(양의 근거가 하나도 없으면 기본 점수 자체가
+    0이라 음의 신호를 곱해도 여전히 0), 양쪽을 같은 곱에 섞지 않고 분리한다.
+
+    None인 신호는 어느 쪽 계산에서도 제외한다(그 신호가 "평가 못 했다"는 뜻이지 "관련
+    없다"·"감점 대상 아님"이라는 뜻이 아니므로 0으로 넣으면 안 됨)."""
+    positive_complement = 1.0
+    negative_complement = 1.0
+    any_positive = False
     for name, score in scores.items():
         if score is None:
             continue
         weight = weights.get(name, 1.0)
-        complement *= 1 - max(0.0, min(1.0, weight * score))
-        any_active = True
-    return round((1 - complement) * 100) if any_active else 0
+        if score >= 0:
+            positive_complement *= 1 - max(0.0, min(1.0, weight * score))
+            any_positive = True
+        else:
+            suppression = max(0.0, min(1.0, weight * -score))
+            negative_complement *= 1 - suppression
+    base = (1 - positive_complement) if any_positive else 0.0
+    return round(base * negative_complement * 100)

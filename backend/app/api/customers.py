@@ -210,7 +210,9 @@ class InterestPayload(BaseModel):
     terms: list[str] = []
     followed_org_ids: list[int] = []
     price_min: int | None = None  # 관심 공고 추천 금액 하한(2026-09-07), 없으면 필터 없음
-    work_type_ids: list[str] = []  # 관심 사업유형(2026-09-21, 의사결정_로그 192번)
+    # 관심 사업유형 선호(2026-09-21, 의사결정_로그 192번) — {사업유형: "positive"/"negative"},
+    # 지정 안 한 사업유형은 중립.
+    work_type_prefs: dict[str, str] = {}
 
     def to_draft(self) -> InterestDraft:
         return InterestDraft(
@@ -219,7 +221,7 @@ class InterestPayload(BaseModel):
             terms=self.terms,
             followed_org_ids=self.followed_org_ids,
             price_min=self.price_min,
-            work_type_ids=self.work_type_ids,
+            work_type_prefs=self.work_type_prefs,
         )
 
 
@@ -259,6 +261,7 @@ def get_interest_matches_compare(customer_id: int, _email: str = Depends(require
             {
                 "key": key,
                 "label": preset["label"],
+                "description": preset["description"],
                 "matches": score_with_profile(
                     conn, draft, profile, customer_id=customer_id, enabled_signals=preset["signals"], limit=20
                 ),

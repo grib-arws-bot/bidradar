@@ -201,6 +201,7 @@ def test_compare_endpoint_returns_named_profiles(client: TestClient):
         assert returned_keys == set(PROFILE_PRESETS.keys())
         for p in body["profiles"]:
             assert "matches" in p and "label" in p
+            assert p["description"]  # 화면에 컬럼 제목 아래 그대로 노출되는 설명 — 비어있으면 안 됨
     finally:
         with engine.begin() as conn:
             from app.models import customer

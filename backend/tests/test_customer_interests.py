@@ -197,22 +197,35 @@ def test_save_rejects_negative_price_min(client: TestClient, customer_a_id: int)
     assert response.status_code == 400
 
 
-def test_save_and_load_work_type_ids(client: TestClient, customer_a_id: int):
-    # 2026-09-21 — 관심 사업유형(의사결정_로그 192번) 저장·조회 왕복 확인.
+def test_save_and_load_work_type_prefs(client: TestClient, customer_a_id: int):
+    # 2026-09-21 — 관심 사업유형 선호(의사결정_로그 192번, 같은 날 +/중립/- 3단계로 확장)
+    # 저장·조회 왕복 확인.
     response = client.put(
         f"/api/customers/{customer_a_id}/interests",
-        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_ids": ["연구", "고도화"]},
+        json={
+            "topic_ids": [], "terms": [], "followed_org_ids": [],
+            "work_type_prefs": {"연구": "positive", "감리": "negative"},
+        },
     )
     assert response.status_code == 204
     profile = client.get(f"/api/customers/{customer_a_id}/interests").json()
-    assert profile["work_type_ids"] == ["연구", "고도화"]
-    assert "구매" in profile["work_types"]  # 전체 카탈로그도 같이 내려옴
+    assert profile["work_type_prefs"] == {"연구": "positive", "감리": "negative"}
+    assert "구매" in profile["work_types"]  # 전체 카탈로그도 같이 내려옴(물품/용역/외자 포함)
+    assert "물품" in profile["work_types"]
 
 
 def test_save_rejects_unknown_work_type(client: TestClient, customer_a_id: int):
     response = client.put(
         f"/api/customers/{customer_a_id}/interests",
-        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_ids": ["존재하지않는유형"]},
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_prefs": {"존재하지않는유형": "positive"}},
+    )
+    assert response.status_code == 400
+
+
+def test_save_rejects_unknown_work_type_preference(client: TestClient, customer_a_id: int):
+    response = client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "work_type_prefs": {"연구": "매우좋음"}},
     )
     assert response.status_code == 400
 

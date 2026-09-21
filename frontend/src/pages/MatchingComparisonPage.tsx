@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
@@ -17,9 +17,45 @@ function formatPrice(value: number | null): string {
   return eok >= 1 ? `${eok.toFixed(1)}억원` : `${(value / 10_000).toFixed(0)}만원`;
 }
 
-// 요약 카드 하나 — 상세 카드(NoticeCard 등)보다 훨씬 압축해서 2열 비교가 한 화면에 들어오게
-// 한다. bothMatched면 두 방식이 동의한 공고라 강조 표시(2026-09-16 사용자 지시 — "양쪽에 다
-// 나오는 공고는 강조 표시").
+// 신호 코드명 -> 화면 표시 라벨(app/services/recommendation_signals.py의 신호 이름과 맞춤).
+// "rule"은 모든 프로필에 항상 있어 breakdown 맨 앞에 고정으로 보여준다.
+const SIGNAL_LABELS: Record<string, string> = {
+  rule: "규칙",
+  work_type: "사업유형",
+  cosine_weighted: "코사인",
+  sllm_confidence: "sLLM",
+  a3_match: "A3",
+  strategy_viewed: "전략열람",
+};
+
+// 2026-09-21 — "왜 이 점수인지 신호별로 확인할 수 있어야 한다"는 요청(CLAUDE.md S8 원칙
+// "판정 근거를 붙인다"와 같은 취지). None은 "이 신호로는 평가 못 함"이지 0점이 아니므로
+// 화면에서도 회색 "—"로 구분하고, 값이 있으면 0~1을 퍼센트로 보여준다.
+function SignalBreakdown({ signals }: { signals: Record<string, number | null> }) {
+  const order = ["rule", "work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed"];
+  const entries = order.filter((k) => k in signals);
+  return (
+    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.75 }}>
+      {entries.map((key) => {
+        const value = signals[key];
+        return (
+          <Tooltip key={key} title={value === null ? "이 신호로는 평가할 수 없는 공고(0점이 아니라 미평가)" : `${SIGNAL_LABELS[key]} 신호 값`}>
+            <Chip
+              label={`${SIGNAL_LABELS[key] ?? key} ${value === null ? "—" : `${Math.round(value * 100)}%`}`}
+              size="small"
+              variant="outlined"
+              sx={{ opacity: value === null ? 0.5 : 1, fontSize: "0.7rem" }}
+            />
+          </Tooltip>
+        );
+      })}
+    </Stack>
+  );
+}
+
+// 요약 카드 하나 — 상세 카드(NoticeCard 등)보다 훨씬 압축해서 여러 열 비교가 한 화면에
+// 들어오게 한다. bothMatched면 다른 방식에서도 나온 공고라 강조 표시(2026-09-16 사용자
+// 지시 — "다른 방식에도 나오는 공고는 강조 표시").
 function MatchCard({ item, bothMatched }: { item: MatchItem; bothMatched: boolean }) {
   return (
     <Card
@@ -53,26 +89,34 @@ function MatchCard({ item, bothMatched }: { item: MatchItem; bothMatched: boolea
           <Chip key={t} label={t} size="small" color="primary" variant="outlined" />
         ))}
       </Stack>
+      <SignalBreakdown signals={item.signals} />
     </Card>
   );
 }
 
 function MatchColumn({
   title,
+  description,
   items,
   otherIds,
   emptyHint,
 }: {
   title: string;
+  description: string;
   items: MatchItem[];
   otherIds: Set<number>;
   emptyHint: string;
 }) {
   return (
-    <Stack spacing={1.5}>
-      <Typography variant="subtitle1" fontWeight={700}>
-        {title} ({items.length}건)
-      </Typography>
+    <Stack spacing={1.5} sx={{ minWidth: 320, maxWidth: 320, flexShrink: 0 }}>
+      <Box>
+        <Typography variant="subtitle1" fontWeight={700}>
+          {title} ({items.length}건)
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+          {description}
+        </Typography>
+      </Box>
       {items.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           {emptyHint}
@@ -164,13 +208,9 @@ export function MatchingComparisonPage() {
       )}
 
       {profiles.length > 0 && (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: `repeat(${Math.min(profiles.length, 3)}, 1fr)` },
-            gap: 3,
-          }}
-        >
+        // 2026-09-21 사용자 지시 — 7개 프로필을 가로로 나열(그리드로 줄바꿈하지 않음). 컬럼
+        // 폭을 고정하고 가로 스크롤로 전부 훑어볼 수 있게 한다.
+        <Box sx={{ display: "flex", gap: 3, overflowX: "auto", pb: 1 }}>
           {profiles.map((p) => {
             const otherIds = new Set(
               profiles.filter((other) => other.key !== p.key).flatMap((other) => [...(idsByProfile.get(other.key) ?? [])])
@@ -179,6 +219,7 @@ export function MatchingComparisonPage() {
               <MatchColumn
                 key={p.key}
                 title={p.label}
+                description={p.description}
                 items={p.matches}
                 otherIds={otherIds}
                 emptyHint="결과가 없습니다."

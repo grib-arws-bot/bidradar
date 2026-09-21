@@ -55,13 +55,15 @@ customer = Table(
     # 의사결정_로그 참고), est_price가 아예 없는(미공개) 공고는 하한을 만족하는지 확인할 수
     # 없어 필터가 걸려 있을 때는 함께 제외된다.
     Column("interest_price_min", Numeric(16, 0)),
-    # 관심 사업유형(2026-09-21, 추천 알고리즘 다중 신호 비교 — 의사결정_로그 192번) —
-    # notice.work_type/notice.biz_type 값 중 고객이 실제로 하는 일(개발/연구/구매/구축/
-    # 물품/용역/유지보수/운영/고도화)과 겹치는 것들. 9개 안팎 고정값이라 interest_topic처럼
-    # 별도 카탈로그 테이블을 두지 않고 report_recipient_emails와 같은 패턴(JSONB 문자열
-    # 배열)으로 둔다. 아직 비교 샌드박스(MatchingComparisonPage)에서만 쓰이고 실제 리포트
-    # 발송(top_matches)에는 반영되지 않는다 — 비교해본 뒤 결정.
-    Column("interest_work_types", JSONB, nullable=False, server_default="[]"),
+    # 관심 사업유형 선호(2026-09-21, 추천 알고리즘 다중 신호 비교 — 의사결정_로그 192번) —
+    # {사업유형: "positive"|"negative"} 매핑. 지정 안 한 사업유형은 중립(키 자체가 없음).
+    # 처음엔 단순 선택 목록(배열)이었으나 같은 날 후속 지시로 3단계로 확장 — 감리·구매처럼
+    # "들어가면 오히려 감점해야 할" 사업유형이 있다는 지적 때문(work_type.WORK_TYPE_CATALOG,
+    # recommendation_signals.work_type_signal 참고). 12개 안팎 고정값이라 interest_topic처럼
+    # 별도 카탈로그 테이블을 두지 않고 JSONB 객체로 둔다. 아직 비교 샌드박스
+    # (MatchingComparisonPage)에서만 쓰이고 실제 리포트 발송(top_matches)에는 반영되지
+    # 않는다 — 비교해본 뒤 결정.
+    Column("interest_work_types", JSONB, nullable=False, server_default="{}"),
     # 보고서 메일 자동발송 (요일,시각) 쌍의 배열(2026-09-14 도입, 2026-09-15 두 차례 수정).
     # 처음엔 days(요일 여러 개)·times(시각 여러 개)를 따로 둬서 "요일 아무거나 × 시각
     # 아무거나"(카르테시안 곱)로 실행됐는데, 사용자가 실제로 원한 건 "월 13시, 목 14시"처럼

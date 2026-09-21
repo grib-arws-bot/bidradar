@@ -24,13 +24,21 @@ const EMPTY_DRAFT: InterestDraft = {
   terms: [],
   followed_org_ids: [],
   price_min: null,
-  work_type_ids: [],
+  work_type_prefs: {},
 };
 
 const PRIORITY_OPTIONS: { value: TopicPriority; label: string }[] = [
   { value: "high", label: "높음" },
   { value: "normal", label: "보통" },
   { value: "low", label: "낮음" },
+];
+
+// 사업유형 선호 3단계(2026-09-21) — "중립"은 서버에 저장하는 값이 아니라 화면 표시용
+// 상태다(해당 사업유형의 키를 draft.work_type_prefs에서 아예 지우는 것으로 표현).
+const WORK_TYPE_PREF_OPTIONS: { value: "positive" | "neutral" | "negative"; label: string }[] = [
+  { value: "negative", label: "비선호" },
+  { value: "neutral", label: "중립" },
+  { value: "positive", label: "선호" },
 ];
 
 // 관심주제 설정(S7) — 2026-09-05 사용자 지시로 대폭 축소: 팔로우 기관·미리보기·저장한 검색·
@@ -71,7 +79,7 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
       terms: profileQuery.data.terms,
       followed_org_ids: profileQuery.data.followed_org_ids,
       price_min: profileQuery.data.price_min,
-      work_type_ids: profileQuery.data.work_type_ids,
+      work_type_prefs: profileQuery.data.work_type_prefs,
     };
     const last = lastSyncedRef.current;
     const isCustomerSwitch = last?.customerId !== customerId;
@@ -108,6 +116,17 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
   function setPriority(topicId: number, priority: TopicPriority | null) {
     if (!priority) return; // ToggleButtonGroup(exclusive)는 이미 선택된 값을 다시 누르면 null을 준다 — 무시
     update({ topic_priorities: { ...draft.topic_priorities, [String(topicId)]: priority } });
+  }
+
+  function setWorkTypePref(workType: string, pref: "positive" | "neutral" | "negative" | null) {
+    if (!pref) return;
+    const next = { ...draft.work_type_prefs };
+    if (pref === "neutral") {
+      delete next[workType]; // 중립은 저장 안 함 — 키가 없으면 중립(recommendation_signals.py와 동일한 규칙)
+    } else {
+      next[workType] = pref;
+    }
+    update({ work_type_prefs: next });
   }
 
   const topics = profileQuery.data?.topics ?? [];
@@ -154,28 +173,28 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
             사업유형
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-            지금은 매칭 방식 비교 화면에서만 참고용으로 쓰입니다 — 리포트 추천에는 아직
-            반영되지 않습니다.
+            선호로 표시하면 점수가 올라가고, 비선호로 표시하면 오히려 점수가 낮아집니다(예:
+            감리·구매는 보통 비선호가 맞습니다). 지정 안 하면 중립 — 지금은 매칭 방식 비교
+            화면에서만 쓰이고 리포트 추천에는 아직 반영되지 않습니다.
           </Typography>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {(profileQuery.data?.work_types ?? []).map((wt) => {
-              const active = draft.work_type_ids.includes(wt);
-              return (
-                <Chip
-                  key={wt}
-                  label={wt}
-                  color={active ? "primary" : "default"}
-                  variant={active ? "filled" : "outlined"}
-                  onClick={() =>
-                    update({
-                      work_type_ids: active
-                        ? draft.work_type_ids.filter((w) => w !== wt)
-                        : [...draft.work_type_ids, wt],
-                    })
-                  }
-                />
-              );
-            })}
+          <Stack spacing={0.5}>
+            {(profileQuery.data?.work_types ?? []).map((wt) => (
+              <Stack key={wt} direction="row" justifyContent="space-between" alignItems="center">
+                <Typography variant="body2">{wt}</Typography>
+                <ToggleButtonGroup
+                  size="small"
+                  exclusive
+                  value={draft.work_type_prefs[wt] ?? "neutral"}
+                  onChange={(_, value) => setWorkTypePref(wt, value)}
+                >
+                  {WORK_TYPE_PREF_OPTIONS.map((o) => (
+                    <ToggleButton key={o.value} value={o.value}>
+                      {o.label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+              </Stack>
+            ))}
           </Stack>
         </Box>
 
