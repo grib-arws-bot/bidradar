@@ -12,6 +12,12 @@ HWPX도 동일 — LibreOffice가 이 배포판에서 두 형식 모두 못 읾�
 레코드를 파싱하는 `pyhwp`(hwp5txt CLI)로 교체 — 나라장터 실제 첨부문서로 전문 추출 성공을
 확인함. pyhwp가 없거나 실패하는 환경에서는 PrvText 미리보기(~1000자)로 폴백한다 — 어느
 단계에서 성공했는지 extract_method에 항상 남긴다(S8 원칙: 조용한 빈 결과 금지).
+
+2026-09-21 — 문서 안에 박힌 이미지(도표·화면 캡처)는 텍스트 레이어에 안 잡혀 지금까지
+통째로 유실되고 있었다(의사결정_로그 193번). PDF·hwpx·docx·pptx·xlsx에 대해 본문 추출과
+별도로 이미지를 찾아 OCR한 뒤 덧붙인다. HWP(OLE 바이너리)는 이미지가 BinData 스토리지
+안에 압축돼 있어 파싱이 훨씬 복잡해 이번 범위에서 제외 — 기존처럼 "<그림>" 자리표시자만
+남긴다(향후 과제).
 """
 
 from __future__ import annotations
@@ -47,6 +53,85 @@ _PDF_OCR_ZOOM = 150 / 72
 # 페이지는 건너뛰고, 몇 페이지까지 처리했는지는 error 없이 method로만 구분한다(잘라도 앞부분
 # 텍스트는 실제로 쓸모 있음 — 조용히 버리는 게 아니라 일부라도 확보하는 쪽을 택함).
 _PDF_OCR_MAX_PAGES = 20
+# 2026-09-21 — 문서 안에 박힌 이미지(도표·화면 캡처)에 담긴 정보가 지금까지 통째로
+# 유실되고 있었다(표는 이미 복원하는데 이미지는 텍스트 레이어에 안 잡힘 — "정보는 얻을 수
+# 있는 만큼 최대한 수집한다" 원칙 위반). zip 기반 포맷(hwpx/docx/pptx/xlsx)과 PDF에 박힌
+# 이미지를 OCR해 본문 뒤에 덧붙인다. 로고·구분선 같은 장식용 그림까지 OCR하면 노이즈만
+# 늘어나 최소 크기 미만은 건너뛰고, 문서 하나당 처리량도 상한을 둔다(서버가 ARWS와 자원을
+# 공유하는 작은 사양이라 무제한 OCR은 부담). HWP(OLE 바이너리)는 이미지가 BinData 스토리지
+# 안에 압축된 형태로 들어있어 훨씬 복잡한 파싱이 필요해 이번 범위에서는 제외했다 — 계속
+# 기존처럼 "<그림>" 자리표시자만 남긴다(의사결정_로그 193번, 향후 과제로 기록).
+_MIN_EMBEDDED_IMAGE_DIM = 80
+_MAX_EMBEDDED_IMAGES_PER_DOC = 15
+_EMBEDDED_IMAGE_OCR_HEADER = "<문서 내 이미지 OCR>"
+
+
+def _ocr_image_bytes(data: bytes) -> str | None:
+    """이미지 하나를 OCR한다. 실패(디코딩 불가·엔진 오류)하거나 결과가 비면 None — 문서
+    전체 추출을 막으면 안 되므로 예외를 여기서 삼킨다(호출부가 이미지별로 계속 진행)."""
+    try:
+        image = Image.open(io.BytesIO(data))
+        if image.width < _MIN_EMBEDDED_IMAGE_DIM or image.height < _MIN_EMBEDDED_IMAGE_DIM:
+            return None
+        text = pytesseract.image_to_string(image, lang=_OCR_LANG).strip()
+    except Exception:  # noqa: BLE001 — 이미지 하나 실패해도 문서의 나머지 이미지는 계속 처리
+        return None
+    return text or None
+
+
+def _extract_zip_embedded_images_ocr(content: bytes, folder_prefix: str) -> str:
+    """zip 기반 포맷(hwpx/docx/pptx/xlsx) 공통 — 지정 폴더(BinData/·word/media/ 등) 밑의
+    이미지 파일들을 OCR해 하나의 텍스트 블록으로 합친다. 실패해도 빈 문자열만 반환하고
+    예외를 올리지 않는다 — 이 결과는 항상 "있으면 덧붙이는" 보조 정보이지 주 추출 성패를
+    좌우하면 안 된다."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            image_names = sorted(
+                n for n in z.namelist() if n.startswith(folder_prefix) and n.lower().endswith(_IMAGE_EXTENSIONS)
+            )[:_MAX_EMBEDDED_IMAGES_PER_DOC]
+            parts = [text for name in image_names if (text := _ocr_image_bytes(z.read(name)))]
+    except Exception:  # noqa: BLE001
+        return ""
+    if not parts:
+        return ""
+    return f"{_EMBEDDED_IMAGE_OCR_HEADER}\n" + "\n\n".join(parts)
+
+
+def _extract_pdf_embedded_images_ocr(content: bytes) -> str:
+    """PDF 페이지 안에 박힌 이미지를 OCR한다(텍스트 레이어 유무와 무관 — 텍스트 레이어가
+    있어도 그 옆에 도표·캡처가 별도 이미지로 박혀 있으면 pypdf의 텍스트 추출로는 안 잡힘).
+    같은 이미지(반복되는 로고 등)가 여러 페이지에 쓰이면 xref로 중복 판정해 한 번만 OCR."""
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception:  # noqa: BLE001
+        return ""
+    parts: list[str] = []
+    seen_xrefs: set[int] = set()
+    try:
+        for page in doc:
+            if len(seen_xrefs) >= _MAX_EMBEDDED_IMAGES_PER_DOC:
+                break
+            for img in page.get_images(full=True):
+                xref = img[0]
+                if xref in seen_xrefs:
+                    continue
+                seen_xrefs.add(xref)
+                try:
+                    image_bytes = doc.extract_image(xref)["image"]
+                except Exception:  # noqa: BLE001
+                    continue
+                text = _ocr_image_bytes(image_bytes)
+                if text:
+                    parts.append(text)
+                if len(seen_xrefs) >= _MAX_EMBEDDED_IMAGES_PER_DOC:
+                    break
+    finally:
+        doc.close()
+    if not parts:
+        return ""
+    return f"{_EMBEDDED_IMAGE_OCR_HEADER}\n" + "\n\n".join(parts)
+
+
 # OLE2 복합 문서 파일(Compound File Binary Format) 매직바이트 — 구버전 HWP5·XLS·DOC가 전부
 # 이 컨테이너를 쓴다. 확장자가 .hwpx(zip 기반이어야 정상)인데 실제로는 이 헤더를 가진 경우를
 # 잡아내는 데 쓴다(2026-09-11 실측, 나라장터의 확장자 오표기).
@@ -88,6 +173,11 @@ def _extract_pdf(content: bytes) -> ExtractResult:
         # 텍스트 레이어가 없으면 스캔본일 가능성이 높다 — 바로 실패 처리하지 않고 OCR로 폴백한다
         # (2026-09-10 OCR 도입, 구현스펙 07절 폴백 사슬 마지막 단계).
         return _extract_pdf_ocr(content)
+    # 2026-09-21 — 텍스트 레이어가 있어도 페이지에 별도로 박힌 이미지(도표·캡처)는 안 잡힌다
+    # (의사결정_로그 193번) — 있으면 덧붙인다.
+    image_text = _extract_pdf_embedded_images_ocr(content)
+    if image_text:
+        text = f"{text}\n\n{image_text}"
     return ExtractResult(text=text, method="pdf_text", ok=True)
 
 
@@ -147,6 +237,11 @@ def _extract_hwpx(content: bytes) -> ExtractResult:
         text = "\n".join(parts).strip()
     except Exception as exc:  # noqa: BLE001
         return ExtractResult(text=None, method="hwpx_xml", ok=False, error=str(exc))
+    # 2026-09-21 — 그림(BinData/ 안의 이미지)에 담긴 텍스트는 <hp:t>에 안 잡힌다(의사결정_로그
+    # 193번) — 있으면 덧붙인다. 본문 문단이 전혀 없고 이미지만 있는 문서라도 이걸로 살아난다.
+    image_text = _extract_zip_embedded_images_ocr(content, "BinData/")
+    if image_text:
+        text = f"{text}\n\n{image_text}" if text else image_text
     if not text:
         return ExtractResult(text=None, method="hwpx_xml", ok=False, error="추출된 텍스트가 비어 있음")
     return ExtractResult(text=text, method="hwpx_xml", ok=True)
@@ -170,6 +265,10 @@ def _extract_pptx(content: bytes) -> ExtractResult:
         text = "\n".join(parts).strip()
     except Exception as exc:  # noqa: BLE001
         return ExtractResult(text=None, method="pptx_xml", ok=False, error=str(exc))
+    # 2026-09-21 — 슬라이드에 박힌 이미지(도표·캡처)도 OCR해 덧붙인다(의사결정_로그 193번).
+    image_text = _extract_zip_embedded_images_ocr(content, "ppt/media/")
+    if image_text:
+        text = f"{text}\n\n{image_text}" if text else image_text
     if not text:
         return ExtractResult(text=None, method="pptx_xml", ok=False, error="추출된 텍스트가 비어 있음")
     return ExtractResult(text=text, method="pptx_xml", ok=True)
@@ -192,6 +291,10 @@ def _extract_docx(content: bytes) -> ExtractResult:
         text = "\n".join(paragraphs).strip()
     except Exception as exc:  # noqa: BLE001
         return ExtractResult(text=None, method="docx_xml", ok=False, error=str(exc))
+    # 2026-09-21 — 문서에 박힌 이미지(도표·캡처)도 OCR해 덧붙인다(의사결정_로그 193번).
+    image_text = _extract_zip_embedded_images_ocr(content, "word/media/")
+    if image_text:
+        text = f"{text}\n\n{image_text}" if text else image_text
     if not text:
         return ExtractResult(text=None, method="docx_xml", ok=False, error="추출된 텍스트가 비어 있음")
     return ExtractResult(text=text, method="docx_xml", ok=True)
@@ -237,6 +340,10 @@ def _extract_xlsx(content: bytes) -> ExtractResult:
         text = "\n".join(parts).strip()
     except Exception as exc:  # noqa: BLE001
         return ExtractResult(text=None, method="xlsx_xml", ok=False, error=str(exc))
+    # 2026-09-21 — 시트에 박힌 이미지(도표·캡처)도 OCR해 덧붙인다(의사결정_로그 193번).
+    image_text = _extract_zip_embedded_images_ocr(content, "xl/media/")
+    if image_text:
+        text = f"{text}\n\n{image_text}" if text else image_text
     if not text:
         return ExtractResult(text=None, method="xlsx_xml", ok=False, error="추출된 텍스트가 비어 있음")
     return ExtractResult(text=text, method="xlsx_xml", ok=True)
