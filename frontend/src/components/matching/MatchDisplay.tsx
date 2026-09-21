@@ -58,6 +58,7 @@ export function MatchCard({ item, bothMatched }: { item: MatchItem; bothMatched:
       variant="outlined"
       sx={{
         p: 1.5,
+        flexShrink: 0, // 세로 스크롤 컨테이너 안에서 flexbox가 카드를 찌그러뜨리지 않게 고정
         borderColor: bothMatched ? "success.main" : undefined,
         bgcolor: bothMatched ? "success.50" : undefined,
       }}
@@ -117,7 +118,9 @@ export function MatchColumn({
           {description}
         </Typography>
       </Box>
-      <Stack spacing={1.5} sx={{ overflowY: "auto", flex: 1, pr: 0.5 }}>
+      {/* minHeight:0 필수 — 없으면 flex 자식의 기본 min-height:auto 때문에 overflow가
+          안 걸리고 카드들이 찌그러져 들어간다(2026-09-21 실측 버그, 잘 알려진 flexbox 함정). */}
+      <Stack spacing={1.5} sx={{ overflowY: "auto", flex: 1, minHeight: 0, pr: 0.5 }}>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             {emptyHint}

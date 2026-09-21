@@ -38,7 +38,11 @@ export function MatchingComparisonPage() {
   const profiles = compareQuery.data?.profiles ?? [];
 
   return (
-    <Stack spacing={3}>
+    // 2026-09-21 재수정 — 가로 스크롤 영역 높이를 `calc(100vh - 320px)`로 대충 고정했더니
+    // 버튼 하나 늘어난 것만으로 헤더 높이가 바뀌어 계산이 어긋나 스크롤바 밑에 여백이
+    // 생겼다. 매직 넘버 대신 flexbox로 "화면에서 남는 공간을 그대로 채우기"로 바꾼다 —
+    // DashboardLayout의 <main>이 p:4(위아래 32px씩=64px)라 그만큼만 빼면 된다.
+    <Stack spacing={3} sx={{ height: "calc(100vh - 64px)" }}>
       <Box>
         <Typography variant="h2">매칭 방식 비교</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -89,7 +93,12 @@ export function MatchingComparisonPage() {
         <Alert severity="error">{apiErrorMessage(compareQuery.error, "비교 결과를 불러오지 못했습니다.")}</Alert>
       )}
 
-      <ProfileScroller profiles={profiles} />
+      {/* flex:1 + minHeight:0 — 위 헤더가 차지하는 만큼을 자동으로 빼고 나머지를 이
+          박스가 다 차지한다(minHeight:0 없으면 flex 기본값 때문에 overflow가 안 먹혀
+          카드가 찌그러진다 — MatchColumn과 같은 함정). */}
+      <Box sx={{ flex: 1, minHeight: 0 }}>
+        <ProfileScroller profiles={profiles} />
+      </Box>
 
       <AllSignalVariantsDialog
         customerId={customerId}

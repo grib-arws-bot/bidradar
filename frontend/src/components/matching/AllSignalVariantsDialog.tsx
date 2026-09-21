@@ -55,7 +55,8 @@ export function AllSignalVariantsDialog({
         {variantsQuery.isError && (
           <Alert severity="error">{apiErrorMessage(variantsQuery.error, "비교 결과를 불러오지 못했습니다.")}</Alert>
         )}
-        <ProfileScroller profiles={profiles} />
+        {/* Dialog 안이라 페이지처럼 flex 조상 체인이 없다 — 뷰포트 기준 고정값을 그대로 쓴다. */}
+        <ProfileScroller profiles={profiles} height="70vh" />
       </DialogContent>
     </Dialog>
   );
