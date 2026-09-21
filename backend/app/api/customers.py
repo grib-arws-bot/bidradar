@@ -17,6 +17,7 @@ from app.services.customer_interest import (
     get_interest_profile,
     list_customers,
     save_interest_profile,
+    top_matches,
 )
 from app.services.recommendation_signals import PROFILE_PRESETS, score_with_profile
 from app.services.customer_management import (
@@ -40,7 +41,7 @@ from app.services.customer_profile import (
     save_manual_profile_summary,
     summarize_customer_profile,
 )
-from app.services.interest_report import delete_report, generate_report, list_reports, send_report_email
+from app.services.interest_report import REPORT_LIMIT, delete_report, generate_report, list_reports, send_report_email
 from app.services.mailer import SmtpNotConfiguredError
 from app.services.report_commentary import (
     LLMNotConfiguredError as CommentaryLLMNotConfiguredError,
@@ -248,25 +249,44 @@ def put_interests(customer_id: int, payload: InterestPayload, _email: str = Depe
 @router.get("/{customer_id}/interest-matches/compare")
 def get_interest_matches_compare(customer_id: int, _email: str = Depends(require_auth)) -> dict:
     """추천 다중 신호 비교 샌드박스(2026-09-16 신설, 2026-09-21 신호 여러 개를 껐다 켰다
-    하며 비교하는 구조로 재설계 — 의사결정_로그 192번, MatchingComparisonPage.tsx 전용).
+    하며 비교하는 구조로 재설계 — 의사결정_로그 192·196번, MatchingComparisonPage.tsx 전용).
+    맨 앞(key="live")은 top_matches()를 그대로 호출한 실제 발송 결과이고, 나머지는
     PROFILE_PRESETS에 등록된 이름별 신호 조합마다 규칙 매칭을 기준 축으로 삼아 재정렬한
-    결과를 나란히 반환한다. **실제 고객 리포트 발송(top_matches)에는 전혀 영향 없음** —
-    여기서 비교해보고 결정한 뒤에야 반영을 검토한다."""
+    실험 결과다. **이 엔드포인트 자체는 조회만 하고 아무것도 저장하지 않는다** — 실제
+    고객 리포트 발송(top_matches 호출부인 interest_report.py)에는 전혀 영향 없음."""
     with engine.connect() as conn:
         profile = get_interest_profile(conn, customer_id)
         if profile is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
         draft = draft_from_profile(profile)
+        # 2026-09-21 사용자 지시 — "지금 실제 메일에 쓰이는 방식"을 맨 앞에 진짜 기준선으로
+        # 넣어야 나머지 실험 프로필과 공정하게 비교된다. 비교 페이지의 "규칙 매칭" 프로필은
+        # score_with_profile(min_score=0, 섹션 배분 없음)이라 top_matches()(min_score=30,
+        # 사전규격/진행중 섹션 배분, 상한 REPORT_LIMIT)와 실제로 다르다 — 그 차이 자체가
+        # 실측 없이는 안 보이므로, top_matches()를 그대로 호출해 별도 신호 없이 내려준다.
+        live_matches = [{**m, "signals": {}} for m in top_matches(conn, draft, limit=REPORT_LIMIT)]
         profiles = [
             {
-                "key": key,
-                "label": preset["label"],
-                "description": preset["description"],
-                "matches": score_with_profile(
-                    conn, draft, profile, customer_id=customer_id, enabled_signals=preset["signals"], limit=20
+                "key": "live",
+                "label": "현재 실제 발송 방식",
+                "description": (
+                    "지금 고객 리포트 이메일에 실제로 발송되는 것과 완전히 같은 함수(top_matches)를 그대로 호출한 결과입니다 — "
+                    "규칙 매칭 점수 30점 이상만, 사전규격 10건+진행중 20건으로 자리를 나눠 배분하고 상한 30건. "
+                    "아래 실험 프로필들과 비교할 진짜 기준선입니다."
                 ),
-            }
-            for key, preset in PROFILE_PRESETS.items()
+                "matches": live_matches,
+            },
+            *[
+                {
+                    "key": key,
+                    "label": preset["label"],
+                    "description": preset["description"],
+                    "matches": score_with_profile(
+                        conn, draft, profile, customer_id=customer_id, enabled_signals=preset["signals"], limit=20
+                    ),
+                }
+                for key, preset in PROFILE_PRESETS.items()
+            ],
         ]
     return {"profiles": profiles}
 

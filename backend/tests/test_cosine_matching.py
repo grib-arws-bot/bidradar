@@ -188,7 +188,8 @@ def test_weighted_cosine_scores_falls_back_to_available_embedding():
 def test_compare_endpoint_returns_named_profiles(client: TestClient):
     """API 계층 배선 확인 — 2026-09-21 신호 비교 샌드박스로 재설계(의사결정_로그 192번),
     PROFILE_PRESETS에 등록된 이름별 결과가 전부 나오는지만 본다(각 신호의 세부 동작은
-    test_recommendation_signals.py가 이미 검증)."""
+    test_recommendation_signals.py가 이미 검증). "live"는 실제 발송 함수(top_matches)를
+    그대로 호출한 진짜 기준선(196번 후속) — PROFILE_PRESETS에는 없는 별도 항목."""
     from app.services.recommendation_signals import PROFILE_PRESETS
 
     customer_id = client.post("/api/customers", json={"name": "[테스트] 비교 페이지", "plan_tier": "standard"}).json()["id"]
@@ -198,7 +199,8 @@ def test_compare_endpoint_returns_named_profiles(client: TestClient):
         assert response.status_code == 200
         body = response.json()
         returned_keys = {p["key"] for p in body["profiles"]}
-        assert returned_keys == set(PROFILE_PRESETS.keys())
+        assert returned_keys == {"live"} | set(PROFILE_PRESETS.keys())
+        assert body["profiles"][0]["key"] == "live"  # 맨 앞에 와야 함(사용자 지시)
         for p in body["profiles"]:
             assert "matches" in p and "label" in p
             assert p["description"]  # 화면에 컬럼 제목 아래 그대로 노출되는 설명 — 비어있으면 안 됨

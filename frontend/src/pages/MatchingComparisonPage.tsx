@@ -1,6 +1,8 @@
-import { Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeftOutlined";
+import ChevronRightIcon from "@mui/icons-material/ChevronRightOutlined";
+import { Alert, Box, Button, Card, Chip, CircularProgress, IconButton, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 
 import {
@@ -139,6 +141,13 @@ function MatchColumn({
 export function MatchingComparisonPage() {
   const customersQuery = useQuery({ queryKey: ["customers"], queryFn: fetchCustomers });
   const [customerId, setCustomerId] = useState<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  function scrollByColumns(direction: 1 | -1) {
+    // 2026-09-21 — 가로 스크롤이 있다는 게 안 보인다는 지적(마우스 휠/트랙패드로만 넘어가서
+    // 티가 안 남) — 컬럼 폭(320)+간격(24) 두 칸만큼 화살표 버튼으로 넘길 수 있게 한다.
+    scrollRef.current?.scrollBy({ left: direction * (320 + 24) * 2, behavior: "smooth" });
+  }
 
   useEffect(() => {
     if (customerId === null && customersQuery.data && customersQuery.data.length > 0) {
@@ -208,24 +217,59 @@ export function MatchingComparisonPage() {
       )}
 
       {profiles.length > 0 && (
-        // 2026-09-21 사용자 지시 — 7개 프로필을 가로로 나열(그리드로 줄바꿈하지 않음). 컬럼
-        // 폭을 고정하고 가로 스크롤로 전부 훑어볼 수 있게 한다.
-        <Box sx={{ display: "flex", gap: 3, overflowX: "auto", pb: 1 }}>
-          {profiles.map((p) => {
-            const otherIds = new Set(
-              profiles.filter((other) => other.key !== p.key).flatMap((other) => [...(idsByProfile.get(other.key) ?? [])])
-            );
-            return (
-              <MatchColumn
-                key={p.key}
-                title={p.label}
-                description={p.description}
-                items={p.matches}
-                otherIds={otherIds}
-                emptyHint="결과가 없습니다."
-              />
-            );
-          })}
+        // 2026-09-21 사용자 지시 — 여러 프로필을 가로로 나열(그리드로 줄바꿈하지 않음),
+        // 컬럼 폭 고정 + 가로 스크롤. 스크롤 자체가 잘 안 보인다는 지적에 화살표 버튼과
+        // 항상 보이는 스크롤바를 추가했다.
+        <Box sx={{ position: "relative" }}>
+          <IconButton
+            aria-label="왼쪽으로 스크롤"
+            onClick={() => scrollByColumns(-1)}
+            sx={{
+              position: "absolute", left: -8, top: "50%", transform: "translateY(-50%)", zIndex: 1,
+              bgcolor: "background.paper", boxShadow: 2, "&:hover": { bgcolor: "background.paper" },
+            }}
+          >
+            <ChevronLeftIcon />
+          </IconButton>
+          <Box
+            ref={scrollRef}
+            sx={{
+              display: "flex",
+              gap: 3,
+              overflowX: "auto",
+              pb: 1,
+              px: 5,
+              scrollbarWidth: "auto", // 파이어폭스 — 얇게 숨기지 않고 항상 보이게
+              "&::-webkit-scrollbar": { height: 10 },
+              "&::-webkit-scrollbar-thumb": { backgroundColor: "#9e9e9e", borderRadius: 5 },
+            }}
+          >
+            {profiles.map((p) => {
+              const otherIds = new Set(
+                profiles.filter((other) => other.key !== p.key).flatMap((other) => [...(idsByProfile.get(other.key) ?? [])])
+              );
+              return (
+                <MatchColumn
+                  key={p.key}
+                  title={p.label}
+                  description={p.description}
+                  items={p.matches}
+                  otherIds={otherIds}
+                  emptyHint="결과가 없습니다."
+                />
+              );
+            })}
+          </Box>
+          <IconButton
+            aria-label="오른쪽으로 스크롤"
+            onClick={() => scrollByColumns(1)}
+            sx={{
+              position: "absolute", right: -8, top: "50%", transform: "translateY(-50%)", zIndex: 1,
+              bgcolor: "background.paper", boxShadow: 2, "&:hover": { bgcolor: "background.paper" },
+            }}
+          >
+            <ChevronRightIcon />
+          </IconButton>
         </Box>
       )}
     </Stack>
