@@ -190,6 +190,29 @@ def test_get_marks_failed_when_job_not_found(done_analysis):
     assert "다시 시도" in result["error"]
 
 
+def test_get_marks_failed_when_job_interrupted(done_analysis):
+    """2026-09-20 sLLM팀 후속 조치 — job 상태를 파일로 영속화하고, 서버 재시작으로 중단된
+    job은 job_not_found 대신 error.code="interrupted"로 명확히 응답하도록 개선됨. 이것도
+    job_not_found와 동일하게(다시 안 돌아오는 job) 즉시 실패로 확정해야 한다."""
+    notice_id, analysis_id = done_analysis
+    with mock.patch(
+        "app.services.analysis.sllm_preview.start_extract_requirements",
+        return_value={"job_id": "job-abc", "status": "running"},
+    ):
+        with engine.begin() as conn:
+            start_sllm_preview_for_notice(conn, notice_id)
+
+    with mock.patch(
+        "app.services.analysis.sllm_preview.get_extract_requirements_status",
+        side_effect=SllmError("interrupted", "서버 재시작으로 처리가 중단됐습니다 — 다시 요청해주세요"),
+    ):
+        with engine.begin() as conn:
+            result = get_sllm_preview_for_notice(conn, notice_id)
+
+    assert result["status"] == "failed"
+    assert "다시 시도" in result["error"]
+
+
 def test_sllm_requirements_route_requires_prior_extraction(client: TestClient):
     with engine.begin() as conn:
         notice_id = conn.execute(

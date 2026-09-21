@@ -119,13 +119,24 @@ def get_sllm_preview_for_notice(conn: Connection, notice_id: int) -> dict | None
         # 날아가서 "job_not_found"가 난 사례가 있었다. 이건 일시적 오류가 아니라 그 job이
         # 영원히 다시 안 돌아온다는 뜻이라 "진행 중"으로 남겨두면 화면이 영원히 "처리
         # 중..."에 멈춰 있게 된다(조용한 실패 금지 위반) — 즉시 실패로 확정해 사용자가
-        # "다시 시도"를 누를 수 있게 한다. 그 외 오류(모델 추론 실패 등)는 일시적일 수
-        # 있으니 기존대로 진행 중 상태를 유지하고 다음 폴링에서 재시도한다.
+        # "다시 시도"를 누를 수 있게 한다.
+        # 2026-09-20 sLLM팀 후속 조치 — job 상태를 파일로 영속화하고, 서버 재시작으로
+        # 중단된 job은 이제 job_not_found 대신 error.code="interrupted"로 명확히 응답한다
+        # (job_not_found는 순수 미존재/TTL 만료 케이스로 여전히 남음, 개수 기반 TTL —
+        # 최근 100건). 두 코드 다 "이 job은 다시 안 돌아온다"는 뜻이라 동일하게 처리한다.
+        # 그 외 오류(모델 추론 실패 등)는 일시적일 수 있으니 기존대로 진행 중 상태를
+        # 유지하고 다음 폴링에서 재시도한다.
         if exc.code == "job_not_found":
+            error_message = "sLLM 작업을 찾을 수 없습니다(서버 재시작 등으로 만료됨) — 다시 시도해주세요."
+        elif exc.code == "interrupted":
+            error_message = "sLLM 서버 재시작으로 처리가 중단되었습니다 — 다시 시도해주세요."
+        else:
+            error_message = None
+        if error_message is not None:
             conn.execute(
                 analysis_sllm_preview.update()
                 .where(analysis_sllm_preview.c.analysis_id == analysis_id)
-                .values(status="failed", error="sLLM 작업을 찾을 수 없습니다(서버 재시작 등으로 만료됨) — 다시 시도해주세요.", finished_at=datetime.now(timezone.utc))
+                .values(status="failed", error=error_message, finished_at=datetime.now(timezone.utc))
             )
             row = _get_preview_row(conn, analysis_id)
             return _to_response(row)
