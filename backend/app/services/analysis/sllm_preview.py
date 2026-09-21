@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+import requests
 from sqlalchemy import insert, select
 from sqlalchemy.engine import Connection
 
@@ -144,6 +145,14 @@ def get_sllm_preview_for_notice(conn: Connection, notice_id: int) -> dict | None
         return _to_response(row)
     except SllmNotConfiguredError as exc:
         logger.warning("sLLM 미리보기 폴링 실패(analysis_id=%s): %s", analysis_id, exc)
+        return _to_response(row)
+    except requests.exceptions.RequestException as exc:
+        # 2026-09-21 실측 발견 — sLLM 서버가 잠깐 응답 불가(재시작·네트워크 순단)일 때
+        # url_guard.fetch()가 raw ConnectionError를 그대로 올려, 여기서 못 잡으면 API가
+        # 500으로 터진다(공고 1699에서 반복 관측됨). 이건 job_not_found/interrupted와
+        # 달리 그 job 자체가 죽은 게 아니라 일시적 네트워크 문제이므로, 다른 SllmError와
+        # 동일하게 진행 중 상태를 유지하고 다음 폴링에서 재시도한다.
+        logger.warning("sLLM 미리보기 폴링 중 연결 실패(analysis_id=%s): %s", analysis_id, exc)
         return _to_response(row)
 
     status_value = polled.get("status", row["status"])

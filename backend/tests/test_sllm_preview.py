@@ -16,6 +16,7 @@ os.environ.setdefault(
 )
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, insert, select
 
@@ -211,6 +212,29 @@ def test_get_marks_failed_when_job_interrupted(done_analysis):
 
     assert result["status"] == "failed"
     assert "다시 시도" in result["error"]
+
+
+def test_get_keeps_running_state_when_connection_fails_transiently(done_analysis):
+    """2026-09-21 실측 발견(공고 1699) — sLLM 서버 연결 실패 시 url_guard.fetch()가 raw
+    requests.exceptions.ConnectionError를 그대로 올리는데, 기존 코드는 이걸 못 잡아서
+    API가 500으로 터졌다. job_not_found와 달리 일시적 문제이므로 진행 중 상태를 유지해야
+    한다."""
+    notice_id, analysis_id = done_analysis
+    with mock.patch(
+        "app.services.analysis.sllm_preview.start_extract_requirements",
+        return_value={"job_id": "job-abc", "status": "running"},
+    ):
+        with engine.begin() as conn:
+            start_sllm_preview_for_notice(conn, notice_id)
+
+    with mock.patch(
+        "app.services.analysis.sllm_preview.get_extract_requirements_status",
+        side_effect=requests.exceptions.ConnectionError("Connection refused"),
+    ):
+        with engine.begin() as conn:
+            result = get_sllm_preview_for_notice(conn, notice_id)
+
+    assert result["status"] == "running"
 
 
 def test_sllm_requirements_route_requires_prior_extraction(client: TestClient):
