@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 
 import { BID_STATUS_LABELS } from "@/api/notices";
-import { fetchPublicReport, type ReportNoticeItem } from "@/api/reports";
+import { fetchPublicReport, recordPublicNoticeClick, type ReportNoticeItem } from "@/api/reports";
 import Logo from "@/components/Logo";
 
 // 리포트 3단계 섹션(2026-09-07 사용자 지시) — 백엔드(customer_interest.py _section_of)와
@@ -76,6 +76,11 @@ function PublicNoticeCard({ notice, token }: { notice: ReportNoticeItem; token: 
             variant="h3"
             component={RouterLink}
             to={`/r/${token}/notices/${notice.id}`}
+            // 행동 데이터 수집(2026-09-23) — 클릭 자체가 실패해도 이동은 막지 않는다(부가
+            // 신호일 뿐 필수 UX 아님, catch 없이 무시).
+            onClick={() => {
+              void recordPublicNoticeClick(token, notice.id);
+            }}
             sx={{ display: "block", mb: 0.5, color: "text.primary", "&:hover": { color: "primary.main" } }}
           >
             {notice.title}

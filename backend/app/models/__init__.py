@@ -34,7 +34,7 @@ from app.models.analysis import (
     analysis_sllm_preview,
 )
 from app.models.catalog import product, product_cert, product_reference, product_spec
-from app.models.reports import newsletter_report, notice_strategy, report_send_log
+from app.models.reports import newsletter_report, notice_engagement_event, notice_strategy, report_send_log
 from app.models.settings import app_setting
 from app.models.sources import (
     audit_log,
@@ -82,6 +82,7 @@ __all__ = [
     "product_reference",
     # reports
     "newsletter_report",
+    "notice_engagement_event",
     "notice_strategy",
     "report_send_log",
     # settings

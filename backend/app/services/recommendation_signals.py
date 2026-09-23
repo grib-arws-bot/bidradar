@@ -21,7 +21,7 @@ from typing import Callable
 from sqlalchemy import and_, func, select
 from sqlalchemy.engine import Connection
 
-from app.models import analysis, analysis_requirement, interest_topic, notice_score, notice_strategy
+from app.models import analysis, analysis_requirement, interest_topic, notice_engagement_event, notice_score, notice_strategy
 from app.services.cosine_matching import _query_embedding_for_profile, weighted_cosine_scores
 from app.services.customer_interest import (
     InterestDraft,
@@ -39,6 +39,13 @@ A3_MATCH_STRENGTH = 0.9
 # 2026-09-21 사용자 결정 — 열람했다고 감점·제외하지 않고 항상 긍정 신호로만 쓴다(고객이
 # 명시적으로 "관심없음"을 표시하는 별도 기능이 생기기 전까지는).
 STRATEGY_VIEWED_STRENGTH = 0.7
+# 행동 데이터 신호(2026-09-23, notice_engagement_event) — 좋아요는 명시적 의사표시라 가장
+# 강하게, 클릭은 목록에서 훑어보다 눌러본 것뿐이라 상세보기보다 약하게, 상세보기(재방문
+# 포함)는 클릭보다 살짝 강하게 잡는다. 셋 다 "표시 안 함"은 None(0점 벌점 아님) — 아직
+# 실제 고객 리포트 점수에는 안 쓴다(이 파일 자체가 비교 샌드박스 전용, 위 모듈 설명 참고).
+LIKED_SIGNAL_STRENGTH = 0.85
+CLICKED_SIGNAL_STRENGTH = 0.5
+DETAIL_VIEWED_SIGNAL_STRENGTH = 0.55
 # 사업유형 신호 — notice.work_type/notice.biz_type이 전부 제목 기반 추정이거나(연구 등)
 # API가 주는 값(물품/용역 등)이라도 "고객이 실제로 관심 있다고 밝힌 유형과 일치"라는
 # 사실 자체의 신뢰도는 규칙(키워드 L2) 매칭보다는 약하게 잡는다. 2026-09-21 — 사용자 지시로
@@ -143,6 +150,72 @@ def strategy_viewed_signal(conn: Connection, customer_id: int, notice_ids: list[
     return {notice_id: (STRATEGY_VIEWED_STRENGTH if notice_id in viewed_ids else None) for notice_id in notice_ids}
 
 
+def liked_signal(conn: Connection, customer_id: int, notice_ids: list[int]) -> dict[int, float | None]:
+    """notice_engagement_event에서 (customer_id, notice_id)의 like/unlike 이벤트 중 가장
+    최근 것이 'like'인 공고만 LIKED_SIGNAL_STRENGTH, 나머지는 None(좋아요 안 함 ≠ 비선호 —
+    0점 벌점 아님, 그냥 '표시 안 함')."""
+    if not notice_ids:
+        return {}
+    rows = conn.execute(
+        select(notice_engagement_event.c.notice_id, notice_engagement_event.c.event_type)
+        .where(
+            notice_engagement_event.c.customer_id == customer_id,
+            notice_engagement_event.c.notice_id.in_(notice_ids),
+            notice_engagement_event.c.event_type.in_(("like", "unlike")),
+        )
+        .order_by(
+            notice_engagement_event.c.notice_id,
+            notice_engagement_event.c.created_at.desc(),
+            notice_engagement_event.c.id.desc(),
+        )
+    ).all()
+    latest_type: dict[int, str] = {}
+    for row in rows:
+        latest_type.setdefault(row.notice_id, row.event_type)  # 정렬상 그룹별 첫 행이 최신
+    return {
+        notice_id: (LIKED_SIGNAL_STRENGTH if latest_type.get(notice_id) == "like" else None)
+        for notice_id in notice_ids
+    }
+
+
+def clicked_signal(conn: Connection, customer_id: int, notice_ids: list[int]) -> dict[int, float | None]:
+    """event_type='click' 행이 하나라도 있으면 CLICKED_SIGNAL_STRENGTH, 없으면 None."""
+    if not notice_ids:
+        return {}
+    clicked_ids = {
+        row.notice_id
+        for row in conn.execute(
+            select(notice_engagement_event.c.notice_id)
+            .where(
+                notice_engagement_event.c.customer_id == customer_id,
+                notice_engagement_event.c.notice_id.in_(notice_ids),
+                notice_engagement_event.c.event_type == "click",
+            )
+            .distinct()
+        )
+    }
+    return {notice_id: (CLICKED_SIGNAL_STRENGTH if notice_id in clicked_ids else None) for notice_id in notice_ids}
+
+
+def detail_viewed_signal(conn: Connection, customer_id: int, notice_ids: list[int]) -> dict[int, float | None]:
+    """event_type='view' 행이 하나라도 있으면 DETAIL_VIEWED_SIGNAL_STRENGTH, 없으면 None."""
+    if not notice_ids:
+        return {}
+    viewed_ids = {
+        row.notice_id
+        for row in conn.execute(
+            select(notice_engagement_event.c.notice_id)
+            .where(
+                notice_engagement_event.c.customer_id == customer_id,
+                notice_engagement_event.c.notice_id.in_(notice_ids),
+                notice_engagement_event.c.event_type == "view",
+            )
+            .distinct()
+        )
+    }
+    return {notice_id: (DETAIL_VIEWED_SIGNAL_STRENGTH if notice_id in viewed_ids else None) for notice_id in notice_ids}
+
+
 def _signal_weights(enabled_signals: frozenset[str]) -> dict[str, float]:
     return {"rule": 1.0, **dict.fromkeys(enabled_signals, 1.0)}
 
@@ -188,6 +261,12 @@ def score_with_profile(
         signal_values["a3_match"] = a3_match_signal(conn, notice_ids)
     if "strategy_viewed" in enabled_signals:
         signal_values["strategy_viewed"] = strategy_viewed_signal(conn, customer_id, notice_ids)
+    if "liked" in enabled_signals:
+        signal_values["liked"] = liked_signal(conn, customer_id, notice_ids)
+    if "clicked" in enabled_signals:
+        signal_values["clicked"] = clicked_signal(conn, customer_id, notice_ids)
+    if "detail_viewed" in enabled_signals:
+        signal_values["detail_viewed"] = detail_viewed_signal(conn, customer_id, notice_ids)
 
     resolved_weights = weights if weights is not None else _signal_weights(enabled_signals)
     resolved_combine_fn = combine_fn if combine_fn is not None else combine_noisy_or
@@ -256,6 +335,21 @@ PROFILE_PRESETS: dict[str, dict] = {
         "signals": frozenset({"strategy_viewed"}),
         "description": "규칙 매칭에 그 고객이 그 공고의 \"AI 사업 추진 전략\"을 실제로 열람했는지를 더합니다. 열람 자체를 관심의 긍정 신호로만 쓰고 감점·제외에는 안 씁니다. 같은 고객의 다른 공고에는 영향이 없습니다(공고별 1:1).",
     },
+    "rule_liked": {
+        "label": "규칙+좋아요",
+        "signals": frozenset({"liked"}),
+        "description": "규칙 매칭에 고객이 리포트에서 이 공고에 좋아요를 눌렀는지를 더합니다(2026-09-23 도입). 좋아요 안 함은 비선호가 아니라 '아직 표시 안 함'으로 보고 이 신호가 아예 빠집니다.",
+    },
+    "rule_clicked": {
+        "label": "규칙+클릭",
+        "signals": frozenset({"clicked"}),
+        "description": "규칙 매칭에 고객이 리포트 목록에서 이 공고를 클릭해본 적 있는지를 더합니다. 좋아요보다 약한 신호(그냥 훑어본 것일 수 있음)로 잡습니다.",
+    },
+    "rule_detail_viewed": {
+        "label": "규칙+상세보기",
+        "signals": frozenset({"detail_viewed"}),
+        "description": "규칙 매칭에 고객이 이 공고의 상세페이지를 열어본 적 있는지를 더합니다. 클릭(목록에서 누름)과 별개로 상세페이지 도달 자체를 신호로 봅니다.",
+    },
 }
 
 
@@ -302,11 +396,15 @@ def combine_weighted_average(scores: dict[str, float | None], weights: dict[str,
     return round(max(0.0, min(1.0, average)) * 100)
 
 
-# 2026-09-21 후속 — "전체 신호"(다섯 개를 한꺼번에 노이즈-OR로 결합)를 메인 비교 화면에서
+# 2026-09-21 후속 — "전체 신호"(여러 개를 한꺼번에 노이즈-OR로 결합)를 메인 비교 화면에서
 # 빼고, 결합 방식 자체를 실험하는 별도 팝업으로 옮겼다(의사결정_로그 198번) — 실측해보니
-# 신호 하나만 강해도 노이즈-OR이 100점 근처로 빠르게 포화되는데, 다섯 개를 한꺼번에
+# 신호 하나만 강해도 노이즈-OR이 100점 근처로 빠르게 포화되는데, 여러 개를 한꺼번에
 # 켜면 서로 다른 공고가 서로 다른 신호로 각자 포화돼 결과가 예측하기 어렵게 달라짐.
-ALL_SIGNALS = frozenset({"work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed"})
+# 2026-09-23 — liked/clicked/detail_viewed(행동 데이터) 3개 추가.
+ALL_SIGNALS = frozenset({
+    "work_type", "cosine_weighted", "sllm_confidence", "a3_match", "strategy_viewed",
+    "liked", "clicked", "detail_viewed",
+})
 _ALL_SIGNALS_LOW_WEIGHTS = {"rule": 1.0, **dict.fromkeys(ALL_SIGNALS, 0.5)}
 
 ALL_SIGNAL_VARIANTS: dict[str, dict] = {

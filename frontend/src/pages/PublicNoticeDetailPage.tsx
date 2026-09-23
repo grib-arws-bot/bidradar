@@ -1,14 +1,24 @@
 import ArrowBackIcon from "@mui/icons-material/ArrowBackOutlined";
 import AutoAwesomeOutlinedIcon from "@mui/icons-material/AutoAwesomeOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderOutlinedIcon from "@mui/icons-material/FavoriteBorderOutlined";
 import OpenInNewIcon from "@mui/icons-material/OpenInNewOutlined";
-import { Alert, Box, Button, Card, Chip, CircularProgress, Divider, Stack, Typography } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { Alert, Box, Button, Card, Chip, CircularProgress, Divider, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 
 import { BID_STATUS_LABELS } from "@/api/notices";
-import { fetchPublicExtraction, fetchPublicNotice, fetchPublicRequirements, generatePublicNoticeStrategy } from "@/api/reports";
+import {
+  fetchPublicExtraction,
+  fetchPublicNotice,
+  fetchPublicRequirements,
+  generatePublicNoticeStrategy,
+  recordPublicNoticeView,
+  setPublicNoticeLike,
+  type PublicNoticeDetail,
+} from "@/api/reports";
 import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
 import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDocumentsSection";
 import Logo from "@/components/Logo";
@@ -55,10 +65,27 @@ function Field({ label, value }: { label: string; value: string }) {
 export function PublicNoticeDetailPage() {
   const { token, noticeId } = useParams<{ token: string; noticeId: string }>();
   const noticeIdNum = Number(noticeId);
+  const queryClient = useQueryClient();
+  const queryKey = ["public-notice", token, noticeId];
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["public-notice", token, noticeId],
+    queryKey,
     queryFn: () => fetchPublicNotice(token!, noticeIdNum),
     retry: false,
+  });
+
+  // 행동 데이터 수집(2026-09-23) — 상세페이지 도달 자체를 신호로 남긴다. 실패해도 화면
+  // 동작에 영향 없어야 하므로(부가 신호일 뿐) catch 없이 무시한다. StrictMode 개발 모드
+  // 이중 실행은 서버 쪽 de-dupe 윈도우(5분)가 흡수한다.
+  useEffect(() => {
+    if (token) void recordPublicNoticeView(token, noticeIdNum);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, noticeIdNum]);
+
+  const likeMutation = useMutation({
+    mutationFn: (liked: boolean) => setPublicNoticeLike(token!, noticeIdNum, liked),
+    onSuccess: (result) => {
+      queryClient.setQueryData<PublicNoticeDetail>(queryKey, (prev) => (prev ? { ...prev, liked: result.liked } : prev));
+    },
   });
   const requirementsQuery = useQuery({
     queryKey: ["public-notice-requirements", token, noticeId],
@@ -186,6 +213,18 @@ export function PublicNoticeDetailPage() {
                 AI 사업 추진 전략
               </Button>
             )}
+            <Tooltip title={data.liked ? "좋아요 취소" : "좋아요"}>
+              <span>
+                <IconButton
+                  color="error"
+                  disabled={likeMutation.isPending}
+                  onClick={() => likeMutation.mutate(!data.liked)}
+                  aria-label={data.liked ? "좋아요 취소" : "좋아요"}
+                >
+                  {data.liked ? <FavoriteIcon /> : <FavoriteBorderOutlinedIcon />}
+                </IconButton>
+              </span>
+            </Tooltip>
           </Stack>
         </Card>
 

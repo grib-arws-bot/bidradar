@@ -5,7 +5,7 @@
 여러 번·여러 사람이 봐도 되고(재사용 가능), 조회수만 근사치로 집계한다(2026-09-01 결정).
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import metadata
@@ -65,4 +65,23 @@ notice_strategy = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("customer_id", "notice_id", name="uq_notice_strategy_customer_notice"),
+)
+
+# 행동 데이터(좋아요/클릭/상세보기, 2026-09-23 사용자 지시 — 향후 추천 신호로 쓰기 위해
+# 쌓아둔다) — audit_log·report_send_log와 같은 "append-only, 한 행=한 사건" 관례. 좋아요도
+# 별도 상태 테이블을 두지 않고 like/unlike 이벤트로 쌓아 "가장 최근 이벤트"로 현재 상태를
+# 계산한다 — 상태 테이블과 로그 테이블이 서로 어긋나는 이중 소스 문제를 원천적으로 없앤다.
+# report_id는 SET NULL — 리포트가 나중에 삭제돼도 참여 이력 자체는 고객+공고 신호로 계속
+# 남아야 하므로(CASCADE로 지우면 신호가 사라짐).
+notice_engagement_event = Table(
+    "notice_engagement_event",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("customer_id", Integer, ForeignKey("customer.id", ondelete="CASCADE"), nullable=False),
+    Column("notice_id", Integer, ForeignKey("notice.id", ondelete="CASCADE"), nullable=False),
+    Column("report_id", Integer, ForeignKey("newsletter_report.id", ondelete="SET NULL")),
+    Column("event_type", String(10), nullable=False),  # like/unlike/click/view
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("event_type IN ('like', 'unlike', 'click', 'view')", name="ck_notice_engagement_event_type"),
+    Index("ix_notice_engagement_event_lookup", "customer_id", "notice_id", "event_type", "created_at"),
 )

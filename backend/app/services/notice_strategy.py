@@ -29,6 +29,7 @@ from app.security.url_guard import fetch
 from app.services.analysis.structure import run_structuring_for_notice
 from app.services.analysis_pilot import AnalysisInProgressError, UnsupportedSourceError, run_extraction_pilot
 from app.services.notice_classification import notice_status_label, notice_type_of, work_type_label
+from app.services.notice_engagement import get_like_state
 from app.services.notice_query import compute_bid_status
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -120,6 +121,7 @@ def get_public_notice_summary(conn: Connection, notice_id: int, *, customer_id: 
     result["ai_summary"] = summary_row.summary if summary_row else None
 
     result["strategy"] = None
+    result["liked"] = False
     if customer_id is not None:
         strategy_row = conn.execute(
             select(notice_strategy.c.status, notice_strategy.c.strategy_md)
@@ -127,6 +129,7 @@ def get_public_notice_summary(conn: Connection, notice_id: int, *, customer_id: 
         ).first()
         if strategy_row is not None and strategy_row.status == "done":
             result["strategy"] = {"status": strategy_row.status, "strategy_md": strategy_row.strategy_md}
+        result["liked"] = get_like_state(conn, customer_id, notice_id)
 
     return result
 

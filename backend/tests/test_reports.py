@@ -19,7 +19,7 @@ from sqlalchemy import delete, func, select
 
 from app.db import engine
 from app.main import app
-from app.models import newsletter_report, notice_strategy
+from app.models import newsletter_report, notice_engagement_event, notice_strategy
 
 EMAIL = "report@grib.co.kr"
 PASSWORD = "dev-local-test-pw-123"
@@ -79,6 +79,9 @@ def grib_customer_id(client: TestClient) -> int:
         max_strategy_id_before = conn.execute(
             select(func.max(notice_strategy.c.id)).where(notice_strategy.c.customer_id == customer_id)
         ).scalar()
+        max_engagement_id_before = conn.execute(
+            select(func.max(notice_engagement_event.c.id)).where(notice_engagement_event.c.customer_id == customer_id)
+        ).scalar()
     yield customer_id
     with engine.begin() as conn:
         conn.execute(
@@ -91,6 +94,12 @@ def grib_customer_id(client: TestClient) -> int:
             delete(notice_strategy).where(
                 notice_strategy.c.customer_id == customer_id,
                 notice_strategy.c.id > (max_strategy_id_before or 0),
+            )
+        )
+        conn.execute(
+            delete(notice_engagement_event).where(
+                notice_engagement_event.c.customer_id == customer_id,
+                notice_engagement_event.c.id > (max_engagement_id_before or 0),
             )
         )
 
@@ -299,6 +308,67 @@ def test_public_notice_strategy_404_for_notice_not_in_report(client: TestClient,
     created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
     anon = TestClient(app)
     response = anon.post(f"/api/public/reports/{created['token']}/notices/999999999/strategy")
+    assert response.status_code == 404
+
+
+# ---- 행동 데이터 수집(2026-09-23) — 좋아요/클릭/상세보기 ---------------------------------
+
+
+def test_public_notice_click_and_view_return_204(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    token = created["token"]
+    notice_id = notices[0]["id"]
+
+    anon = TestClient(app)
+    assert anon.post(f"/api/public/reports/{token}/notices/{notice_id}/click").status_code == 204
+    assert anon.post(f"/api/public/reports/{token}/notices/{notice_id}/view").status_code == 204
+
+
+def test_public_notice_click_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    anon = TestClient(app)
+    response = anon.post(f"/api/public/reports/{created['token']}/notices/999999999/click")
+    assert response.status_code == 404
+
+
+def test_public_notice_view_404_for_unknown_token(client: TestClient, grib_customer_id: int):
+    anon = TestClient(app)
+    response = anon.post("/api/public/reports/does-not-exist/notices/1/view")
+    assert response.status_code == 404
+
+
+def test_public_notice_like_sets_and_reflects_in_detail(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    token = created["token"]
+    notice_id = notices[0]["id"]
+
+    anon = TestClient(app)
+    detail_before = anon.get(f"/api/public/reports/{token}/notices/{notice_id}").json()
+    assert detail_before["liked"] is False
+
+    liked_response = anon.put(f"/api/public/reports/{token}/notices/{notice_id}/like", json={"liked": True})
+    assert liked_response.status_code == 200
+    assert liked_response.json() == {"liked": True}
+
+    detail_after = anon.get(f"/api/public/reports/{token}/notices/{notice_id}").json()
+    assert detail_after["liked"] is True
+
+    unliked_response = anon.put(f"/api/public/reports/{token}/notices/{notice_id}/like", json={"liked": False})
+    assert unliked_response.json() == {"liked": False}
+    detail_final = anon.get(f"/api/public/reports/{token}/notices/{notice_id}").json()
+    assert detail_final["liked"] is False
+
+
+def test_public_notice_like_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    anon = TestClient(app)
+    response = anon.put(f"/api/public/reports/{created['token']}/notices/999999999/like", json={"liked": True})
     assert response.status_code == 404
 
 

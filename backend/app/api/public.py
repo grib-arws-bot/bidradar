@@ -12,6 +12,7 @@ from app.db import engine
 from app.services.analysis.structure import get_requirements
 from app.services.analysis_pilot import get_latest_extraction
 from app.services.interest_report import get_report_by_token
+from app.services.notice_engagement import record_click, record_view, set_like
 from app.services.notice_strategy import (
     LLMNotConfiguredError,
     NoticeNotFoundError,
@@ -94,3 +95,34 @@ def post_public_notice_strategy(token: str, notice_id: int) -> StrategyResponse:
     except Exception as exc:  # noqa: BLE001 — 고객에게는 "실패했습니다"만, 원인은 서버 로그/DB에 남음
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="전략 생성에 실패했습니다. 잠시 후 다시 시도해주세요.") from exc
     return StrategyResponse(**result)
+
+
+# 행동 데이터 수집(2026-09-23, 향후 추천 신호로 쓰기 위해 쌓아둠) — 클릭/상세보기는 실패해도
+# 화면 동작에 영향 주면 안 되는 부가 신호라 204만 반환한다. 좋아요는 토글이 아니라 원하는
+# 상태를 명시하는 PUT — 중복 클릭·네트워크 재시도에도 안전(토글이면 의도와 반대로 뒤집힐
+# 위험이 있음).
+@router.post("/reports/{token}/notices/{notice_id}/click", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def post_public_notice_click(token: str, notice_id: int) -> None:
+    report = _authorize_notice_in_report(token, notice_id)
+    record_click(report["customer_id"], notice_id, report["id"])
+
+
+@router.post("/reports/{token}/notices/{notice_id}/view", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def post_public_notice_view(token: str, notice_id: int) -> None:
+    report = _authorize_notice_in_report(token, notice_id)
+    record_view(report["customer_id"], notice_id, report["id"])
+
+
+class LikeRequest(BaseModel):
+    liked: bool
+
+
+class LikeResponse(BaseModel):
+    liked: bool
+
+
+@router.put("/reports/{token}/notices/{notice_id}/like", response_model=LikeResponse)
+def put_public_notice_like(token: str, notice_id: int, body: LikeRequest) -> LikeResponse:
+    report = _authorize_notice_in_report(token, notice_id)
+    liked = set_like(report["customer_id"], notice_id, report["id"], body.liked)
+    return LikeResponse(liked=liked)

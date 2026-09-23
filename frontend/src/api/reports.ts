@@ -120,6 +120,8 @@ export interface PublicNoticeDetail {
   // 이미 생성된 "AI 사업 추진 전략"이 있으면(2026-09-12) 다시 "생성" 버튼을 보여주지 않고
   // 바로 그 내용을 보여주기 위함 — LLM을 다시 부르지 않는 조회 전용 필드.
   strategy: { status: "done"; strategy_md: string } | null;
+  // 행동 데이터(2026-09-23) — 이 고객이 이 공고에 좋아요를 눌렀는지.
+  liked: boolean;
 }
 
 export async function fetchPublicNotice(token: string, noticeId: number): Promise<PublicNoticeDetail> {
@@ -151,5 +153,21 @@ export interface NoticeStrategyResult {
 // 프론트는 그냥 이 함수를 다시 호출하는 것만으로 "생성 중" 폴링도 겸할 수 있다.
 export async function generatePublicNoticeStrategy(token: string, noticeId: number): Promise<NoticeStrategyResult> {
   const { data } = await apiClient.post<NoticeStrategyResult>(`/public/reports/${token}/notices/${noticeId}/strategy`);
+  return data;
+}
+
+// 행동 데이터 수집(2026-09-23) — 향후 추천 신호로 쓰기 위해 쌓아둔다. 클릭/상세보기는
+// 화면 동작에 영향을 주면 안 되는 부가 신호라 호출부에서 실패를 무시(fire-and-forget)한다.
+export async function recordPublicNoticeClick(token: string, noticeId: number): Promise<void> {
+  await apiClient.post(`/public/reports/${token}/notices/${noticeId}/click`);
+}
+
+export async function recordPublicNoticeView(token: string, noticeId: number): Promise<void> {
+  await apiClient.post(`/public/reports/${token}/notices/${noticeId}/view`);
+}
+
+// 토글이 아니라 원하는 상태를 명시하는 PUT — 중복 클릭·재시도에도 안전(멱등).
+export async function setPublicNoticeLike(token: string, noticeId: number, liked: boolean): Promise<{ liked: boolean }> {
+  const { data } = await apiClient.put<{ liked: boolean }>(`/public/reports/${token}/notices/${noticeId}/like`, { liked });
   return data;
 }

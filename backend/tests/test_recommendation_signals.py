@@ -23,6 +23,7 @@ from app.models import (
     analysis_requirement,
     interest_topic,
     notice,
+    notice_engagement_event,
     notice_score,
     notice_strategy,
     source,
@@ -30,8 +31,11 @@ from app.models import (
 from app.services.customer_interest import InterestDraft
 from app.services.recommendation_signals import (
     a3_match_signal,
+    clicked_signal,
     combine_noisy_or,
     combine_weighted_average,
+    detail_viewed_signal,
+    liked_signal,
     sllm_confidence_signal,
     strategy_viewed_signal,
     work_type_signal,
@@ -53,6 +57,7 @@ def _cleanup(notice_ids: list[int]) -> None:
     with engine.begin() as conn:
         conn.execute(delete(notice_score).where(notice_score.c.notice_id.in_(notice_ids)))
         conn.execute(delete(notice_strategy).where(notice_strategy.c.notice_id.in_(notice_ids)))
+        conn.execute(delete(notice_engagement_event).where(notice_engagement_event.c.notice_id.in_(notice_ids)))
         analysis_ids = [
             r[0] for r in conn.execute(select(analysis.c.id).where(analysis.c.notice_id.in_(notice_ids)))
         ]
@@ -215,6 +220,114 @@ def test_strategy_viewed_signal_none_when_not_viewed():
     try:
         with engine.connect() as conn:
             scores = strategy_viewed_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is None
+    finally:
+        _cleanup([notice_id])
+
+
+# ---- liked_signal / clicked_signal / detail_viewed_signal(2026-09-23) ------------------
+
+
+def test_liked_signal_none_when_no_events():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+    try:
+        with engine.connect() as conn:
+            scores = liked_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_liked_signal_positive_when_latest_event_is_like():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+        conn.execute(insert(notice_engagement_event).values(customer_id=customer_id, notice_id=notice_id, event_type="like"))
+    try:
+        with engine.connect() as conn:
+            scores = liked_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is not None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_liked_signal_none_when_latest_event_is_unlike():
+    """like 다음 unlike가 쌓이면 최신 상태(unlike)를 따라야 한다 — 과거에 좋아요를 눌렀다는
+    이유로 계속 신호가 남으면 안 됨."""
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+        conn.execute(insert(notice_engagement_event).values(customer_id=customer_id, notice_id=notice_id, event_type="like"))
+        conn.execute(insert(notice_engagement_event).values(customer_id=customer_id, notice_id=notice_id, event_type="unlike"))
+    try:
+        with engine.connect() as conn:
+            scores = liked_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_clicked_signal_positive_when_click_event_exists():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+        conn.execute(insert(notice_engagement_event).values(customer_id=customer_id, notice_id=notice_id, event_type="click"))
+    try:
+        with engine.connect() as conn:
+            scores = clicked_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is not None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_clicked_signal_none_when_no_click_event():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+    try:
+        with engine.connect() as conn:
+            scores = clicked_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_detail_viewed_signal_positive_when_view_event_exists():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+        conn.execute(insert(notice_engagement_event).values(customer_id=customer_id, notice_id=notice_id, event_type="view"))
+    try:
+        with engine.connect() as conn:
+            scores = detail_viewed_signal(conn, customer_id, [notice_id])
+        assert scores[notice_id] is not None
+    finally:
+        _cleanup([notice_id])
+
+
+def test_detail_viewed_signal_none_when_no_view_event():
+    from app.models import customer as customer_table
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
+        notice_id = _make_notice(conn, source_id)
+    try:
+        with engine.connect() as conn:
+            scores = detail_viewed_signal(conn, customer_id, [notice_id])
         assert scores[notice_id] is None
     finally:
         _cleanup([notice_id])
