@@ -27,7 +27,7 @@ from app.services.notice_query import NoticeFilters, list_notices
 @pytest.fixture
 def dedup_org():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         org_id = conn.execute(
             insert(org).values(name="[테스트] 중복공고정리 발주기관", source_id=source_id).returning(org.c.id)
         ).scalar_one()

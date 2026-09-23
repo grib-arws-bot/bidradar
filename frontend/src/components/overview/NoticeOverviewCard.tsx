@@ -73,8 +73,12 @@ function dailyChartSeriesAndOptions(chart: NoticeDailyChart): { options: ApexOpt
 function DailyLineChart({ title, chart, onExpand }: { title: string; chart: NoticeDailyChart; onExpand: () => void }) {
   const { options, series } = dailyChartSeriesAndOptions(chart);
 
+  // 2026-09-23 사용자 지시 — 이 카드가 어느 위치(가로 3열/2x2 등)에 놓이는지는 호출부
+  // (NoticeOverviewCard의 Grid 구조)가 결정한다. 여기선 Grid 아이템 크기를 스스로 고정하지
+  // 않고 내용만 그린다 — 좌측 데이터수집채널 + 우측 그래프 2x2로 재배치할 때 이 컴포넌트를
+  // 안 건드려도 되게 하기 위함.
   return (
-    <Grid size={{ xs: 12, md: 4 }}>
+    <Box>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
         {title}
       </Typography>
@@ -102,7 +106,7 @@ function DailyLineChart({ title, chart, onExpand }: { title: string; chart: Noti
         </Box>
         <Chart type="line" height={280} options={options} series={series} />
       </Box>
-    </Grid>
+    </Box>
   );
 }
 
@@ -130,8 +134,9 @@ function simpleDailyChartSeriesAndOptions(chart: DailySeriesChart): { options: A
 function SimpleDailyLineChart({ title, chart, onExpand }: { title: string; chart: DailySeriesChart; onExpand: () => void }) {
   const { options, series } = simpleDailyChartSeriesAndOptions(chart);
 
+  // DailyLineChart와 같은 이유(2026-09-23) — Grid 아이템 크기는 호출부가 결정.
   return (
-    <Grid size={{ xs: 12, md: 6 }}>
+    <Box>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
         {title}
       </Typography>
@@ -159,7 +164,7 @@ function SimpleDailyLineChart({ title, chart, onExpand }: { title: string; chart
         </Box>
         <Chart type="line" height={280} options={options} series={series} />
       </Box>
-    </Grid>
+    </Box>
   );
 }
 
@@ -167,8 +172,9 @@ function SimpleDailyLineChart({ title, chart, onExpand }: { title: string; chart
 // 실제로 그리는 순서)와 맞춰서 점 색을 매핑한다(채널 목록·그래프 계열이 다른 조회라 소스
 // 구성이 완전히 일치하지 않을 수 있어, 못 찾으면 회색으로 표시).
 function ChannelLegend({ channels, sourceOrder }: { channels: ChannelStatus[]; sourceOrder: number[] }) {
+  // DailyLineChart와 같은 이유(2026-09-23) — Grid 아이템 크기는 호출부가 결정.
   return (
-    <Grid size={{ xs: 12, md: 4 }}>
+    <Box>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
         데이터 수집채널
       </Typography>
@@ -199,15 +205,18 @@ function ChannelLegend({ channels, sourceOrder }: { channels: ChannelStatus[]; s
           );
         })}
       </Stack>
-    </Grid>
+    </Box>
   );
 }
 
 // 카드 3: 공고 데이터(2026-09-12 재설계 — 사용자 지시 "매일매일의 변화 추세를 선그래프로",
-// "소스별과 전체소스를 그려줘", "데이터 수집채널을 그래프 범례로 겸하게, 셋을 가로로 배치") —
-// 데이터 수집채널·누적 데이터·수집 데이터를 한 줄에 나란히 놓는다. 분석상태(미분석/첨부완료/
-// AI완료) 구분은 값 차이가 너무 커서 의미가 없다는 피드백으로 뺐다. 채널 데이터는 시스템
-// 현황과 같은 쿼리 키("overview-system")를 그대로 재사용.
+// "소스별과 전체소스를 그려줘", "데이터 수집채널을 그래프 범례로 겸하게, 셋을 가로로 배치").
+// 2026-09-23 재배치 — 그래프가 4개(누적·수집·AI처리현황·운영현황)로 늘면서 한 줄에 다
+// 넣으면 줄바꿈이 뒤죽박죽이 됐다(채널+누적+수집 1행, AI+운영 2행). 좌측에 데이터
+// 수집채널, 우측에 그래프 4개를 2x2로 배치하도록 Grid를 2단(바깥 좌/우 + 우측 안쪽
+// 2x2)으로 재구성. 분석상태(미분석/첨부완료/AI완료) 구분은 값 차이가 너무 커서 의미가
+// 없다는 피드백으로 뺐다. 채널 데이터는 시스템 현황과 같은 쿼리 키("overview-system")를
+// 그대로 재사용.
 export function NoticeOverviewCard() {
   const { data, isLoading } = useQuery({ queryKey: ["overview-notices"], queryFn: fetchNoticeOverview });
   const { data: systemData } = useQuery({ queryKey: ["overview-system"], queryFn: fetchSystemOverview });
@@ -246,31 +255,45 @@ export function NoticeOverviewCard() {
         공고 데이터
       </Typography>
       <Grid container spacing={4}>
-        {systemData && <ChannelLegend channels={systemData.channels} sourceOrder={sourceOrder} />}
-        <DailyLineChart
-          title={cumulativeTitle}
-          chart={data.cumulative_daily}
-          onExpand={() => setExpanded({ kind: "source", title: cumulativeTitle, chart: data.cumulative_daily })}
-        />
-        <DailyLineChart
-          title={collectedTitle}
-          chart={data.collected_daily}
-          onExpand={() => setExpanded({ kind: "source", title: collectedTitle, chart: data.collected_daily })}
-        />
-        {aiData && (
-          <SimpleDailyLineChart
-            title={aiTitle}
-            chart={aiData}
-            onExpand={() => setExpanded({ kind: "simple", title: aiTitle, chart: aiData })}
-          />
-        )}
-        {opsData && (
-          <SimpleDailyLineChart
-            title={opsTitle}
-            chart={opsData}
-            onExpand={() => setExpanded({ kind: "simple", title: opsTitle, chart: opsData })}
-          />
-        )}
+        <Grid size={{ xs: 12, md: 4 }}>
+          {systemData && <ChannelLegend channels={systemData.channels} sourceOrder={sourceOrder} />}
+        </Grid>
+        <Grid size={{ xs: 12, md: 8 }}>
+          <Grid container spacing={4}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <DailyLineChart
+                title={cumulativeTitle}
+                chart={data.cumulative_daily}
+                onExpand={() => setExpanded({ kind: "source", title: cumulativeTitle, chart: data.cumulative_daily })}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <DailyLineChart
+                title={collectedTitle}
+                chart={data.collected_daily}
+                onExpand={() => setExpanded({ kind: "source", title: collectedTitle, chart: data.collected_daily })}
+              />
+            </Grid>
+            {aiData && (
+              <Grid size={{ xs: 12, md: 6 }}>
+                <SimpleDailyLineChart
+                  title={aiTitle}
+                  chart={aiData}
+                  onExpand={() => setExpanded({ kind: "simple", title: aiTitle, chart: aiData })}
+                />
+              </Grid>
+            )}
+            {opsData && (
+              <Grid size={{ xs: 12, md: 6 }}>
+                <SimpleDailyLineChart
+                  title={opsTitle}
+                  chart={opsData}
+                  onExpand={() => setExpanded({ kind: "simple", title: opsTitle, chart: opsData })}
+                />
+              </Grid>
+            )}
+          </Grid>
+        </Grid>
       </Grid>
 
       <Dialog open={!!expanded} onClose={() => setExpanded(null)} maxWidth="lg" fullWidth>

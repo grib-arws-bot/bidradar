@@ -38,7 +38,7 @@ def temp_customer():
 @pytest.fixture
 def temp_notice():
     with engine.connect() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
     with engine.begin() as conn:
         notice_id = conn.execute(
             insert(notice).values(

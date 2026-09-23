@@ -12,15 +12,15 @@ import { MatchColumn } from "./MatchDisplay";
 // 비교 팝업이 공유). 컬럼 폭 고정 + 가로 스크롤, 화살표 버튼, 항상 보이는 스크롤바까지
 // 전부 여기 있다.
 //
-// height는 호출부가 넘긴다(2026-09-21 재수정) — 처음엔 `calc(100vh - 320px)`로 대충
-// 고정했는데, 버튼이 하나 늘어나는 것만으로도 위쪽 헤더 높이가 바뀌어 계산이 어긋나
-// 스크롤바 밑에 여백이 생기는 문제가 있었다(197번의 근본 원인). 페이지 쪽은 flexbox로
-// "남는 공간을 꽉 채우기"(height="100%", 부모가 flex:1+minHeight:0)를 쓰고, 팝업(Dialog)
-// 쪽은 뷰포트 기준 고정값을 그대로 쓴다 — 두 컨텍스트의 높이 계산 방식이 다르기 때문.
+// height는 호출부가 넘긴다. 2026-09-23 사용자 지시로 기본값을 "auto"로 바꿨다 — 컬럼별
+// 세로 스크롤을 없애고(MatchDisplay.tsx의 MatchColumn 참고) 페이지 전체가 함께 스크롤
+//되게 하려면, 이 컨테이너가 스스로 높이를 고정해 세로를 잘라내면 안 되기 때문이다(페이지
+// 쪽 호출부는 height를 아예 안 넘긴다). 팝업(Dialog)은 뷰포트를 벗어날 수 없어 여전히
+// 고정값("70vh")을 넘겨 내부 스크롤을 쓴다 — 가로 스크롤(overflowX)만 공통.
 export function ProfileScroller({
   profiles,
   emptyHint = "결과가 없습니다.",
-  height = "100%",
+  height = "auto",
 }: {
   profiles: MatchProfile[];
   emptyHint?: string;

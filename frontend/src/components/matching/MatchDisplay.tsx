@@ -104,13 +104,14 @@ export function MatchColumn({
   otherIds: Set<number>;
   emptyHint: string;
 }) {
-  // 2026-09-21 사용자 지적 — 카드가 많으면 컬럼이 페이지 전체 높이만큼 늘어나서, 가로
-  // 스크롤바가 페이지 맨 아래로 밀려나 손이 안 닿는 문제가 있었다. 컬럼 자체를 세로로
-  // 고정 높이+내부 스크롤로 바꾸고(제목·설명은 위에 고정), 바깥(가로) 스크롤 영역도
-  // 고정 높이를 줘서 상하좌우 스크롤이 항상 같은 화면 안에서 끝나게 한다.
+  // 2026-09-23 사용자 지시 — 컬럼마다 따로 상하 스크롤이 생겨서 여러 컬럼을 비교하려면
+  // 손이 여러 번 오가야 했다("스크롤 방식 변경해"). 컬럼 자체의 세로 스크롤(2026-09-21에
+  // 넣었던 고정 높이+내부 스크롤)을 없애고 카드가 자연스러운 높이만큼 늘어나게 둔다 —
+  // 세로 스크롤은 이제 ProfileScroller 바깥(페이지 전체)에서 한 번만 일어나고, 가로
+  // 스크롤(컬럼 전환)만 이 안에 남는다.
   return (
-    <Stack sx={{ minWidth: 320, maxWidth: 320, flexShrink: 0, height: "100%" }}>
-      <Box sx={{ pb: 1, flexShrink: 0 }}>
+    <Stack sx={{ minWidth: 320, maxWidth: 320, flexShrink: 0 }}>
+      <Box sx={{ pb: 1 }}>
         <Typography variant="subtitle1" fontWeight={700}>
           {title} ({items.length}건)
         </Typography>
@@ -118,9 +119,7 @@ export function MatchColumn({
           {description}
         </Typography>
       </Box>
-      {/* minHeight:0 필수 — 없으면 flex 자식의 기본 min-height:auto 때문에 overflow가
-          안 걸리고 카드들이 찌그러져 들어간다(2026-09-21 실측 버그, 잘 알려진 flexbox 함정). */}
-      <Stack spacing={1.5} sx={{ overflowY: "auto", flex: 1, minHeight: 0, pr: 0.5 }}>
+      <Stack spacing={1.5} sx={{ pr: 0.5 }}>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             {emptyHint}

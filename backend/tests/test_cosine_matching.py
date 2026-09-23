@@ -85,7 +85,7 @@ def _profile() -> dict:
 
 def test_excludes_notices_without_embedding():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         with_embedding_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR)
         without_embedding_id = _make_notice(conn, source_id, embedding=None)
     try:
@@ -105,7 +105,7 @@ def test_applies_same_hard_filters_as_rule_matching():
     재사용 검증) — 두 방식이 서로 다른 후보 풀을 쓰면 비교 자체가 무의미해진다."""
     past = datetime.now(timezone.utc) - timedelta(days=1)
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         closed_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, close_dt=past)
     try:
         with mock.patch("app.services.cosine_matching.embed_texts", return_value=[QUERY_VECTOR]):
@@ -118,7 +118,7 @@ def test_applies_same_hard_filters_as_rule_matching():
 
 def test_orders_by_similarity_closest_first():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         close_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, title="[테스트] 가까운 벡터")
         far_id = _make_notice(conn, source_id, embedding=FAR_VECTOR, title="[테스트] 먼 벡터")
     try:
@@ -142,7 +142,7 @@ def test_top_matches_cosine_attachment_variant_uses_embedding_a1_column():
     """variant="attachment"는 embedding이 아니라 embedding_a1을 봐야 한다 — 반대로 채워진
     공고(embedding만 있고 embedding_a1은 없음)는 이 variant에서 제외돼야 한다."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         with_a1_id = _make_notice(conn, source_id, embedding_a1=CLOSE_VECTOR)
         title_only_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR)
     try:
@@ -160,7 +160,7 @@ def test_weighted_cosine_scores_combines_title_and_attachment():
     # 2026-09-21 — 제목 임베딩(가까움)과 첨부 임베딩(멂)을 가중 결합하면 제목 가중치만큼
     # 결과가 1.0(완전 가까움)에 더 가까워야 한다(의사결정_로그 192번).
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         both_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, embedding_a1=FAR_VECTOR)
     try:
         with engine.connect() as conn:
@@ -173,7 +173,7 @@ def test_weighted_cosine_scores_combines_title_and_attachment():
 
 def test_weighted_cosine_scores_falls_back_to_available_embedding():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         title_only_id = _make_notice(conn, source_id, embedding=CLOSE_VECTOR, embedding_a1=None)
         neither_id = _make_notice(conn, source_id, embedding=None, embedding_a1=None)
     try:

@@ -221,7 +221,16 @@ def get_notice_overview(conn: Connection) -> dict:
     합산 계열(사용자 지시 "소스별과 전체소스를 그려줘"):
     1. 누적 데이터 — 그 날짜까지의 러닝토탈(삭제된 공고는 notice 테이블에서 이미 빠져
        있으므로 "삭제 데이터 제외"가 별도 필터 없이 자동으로 성립한다)
-    2. 수집 데이터 — 그 날 신규로 수집된 건수"""
+    2. 수집 데이터 — 그 날 신규로 수집된 건수
+
+    2026-09-23 사용자 지시 — 이 "전체" 누적(소스별 raw count 합)이 공고 탐색 화면의
+    건수(중복 무효화 건 제외)보다 약 3,000건 많아 혼란을 줬다(둘 다 "전체"라는 이름이라
+    같은 값일 거라 기대하게 됨). 원인 설명 없이 숫자만 맞추면 "총 몇 건을 수집했는가"라는
+    별개로 유용한 정보가 사라지므로, 대신 "유효 공고 누적"(superseded_by_notice_id가
+    없는 것만) 계열을 별도로 추가해 둘 다 보여준다 — 공고 탐색 화면의 "전체" 탭 건수와
+    이 계열이 대응된다. 단, 이건 **현재 시점의 무효화 상태를 과거 날짜에도 그대로
+    투영한 값**이다(무효화가 언제 일어났는지 이력을 안 남기므로) — "임베딩 완료 누적"과
+    같은 방식의 근사치."""
     days = NOTICE_DAILY_SERIES_DAYS
     start_date, dates, all_sources, source_ids, before_by_source, daily_by_key = _notice_daily_raw_data(conn, days)
 
@@ -249,6 +258,17 @@ def get_notice_overview(conn: Connection) -> dict:
     cumulative_grand_total = [sum(s["counts"][i] for s in cumulative_series) for i in range(days)]
     cumulative_series.append(
         {"source_id": NOTICE_TOTAL_SOURCE_ID, "source_name": "전체", "counts": cumulative_grand_total}
+    )
+    # 2026-09-23 — 위 설명 참고. 공고 탐색 화면의 "전체" 탭과 대응되는 "유효 공고"(중복
+    # 무효화 제외) 누적.
+    cumulative_series.append(
+        {
+            "source_id": NOTICE_TOTAL_SOURCE_ID,
+            "source_name": "유효 공고 누적(중복 제외)",
+            "counts": _daily_kst_cumulative(
+                conn, notice.c.created_at, days, extra_where=notice.c.superseded_by_notice_id.is_(None)
+            ),
+        }
     )
     # 2026-09-17 사용자 지시 — 코사인 매칭 임베딩 백필 진행 상황을 매번 SQL로 직접 확인하지
     # 않아도 되게, 이 그래프에 "임베딩 완료 누적" 계열을 하나 더 얹는다(embedded_at 기준).

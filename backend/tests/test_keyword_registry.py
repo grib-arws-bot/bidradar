@@ -44,7 +44,7 @@ def client() -> TestClient:
 
 
 def _any_source_id(conn) -> int:
-    return conn.execute(select(source.c.id).limit(1)).scalar_one()
+    return conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
 
 
 @pytest.fixture

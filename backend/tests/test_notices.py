@@ -171,7 +171,7 @@ def test_biz_type_filter(client: TestClient):
     # 기존 데이터 삭제)돼 실데이터에 biz_type="물품"인 공고가 더 이상 없다 — 필터 자체의
     # 동작만 검증하기 위해 격리된 임시 공고를 하나 넣어서 확인한다.
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="입찰공고", biz_type="물품",
@@ -194,7 +194,7 @@ def test_org_category_filter_matches_all_orgs_in_that_category(client: TestClien
     """발주기관 "분야" 필터(2026-09-11) — 개별 기관을 몰라도 분야 하나로 그 분야 전 기관의
     공고가 함께 검색돼야 한다."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         org_a = conn.execute(
             insert(org).values(name="[테스트] 분야필터용 기관A", category="[테스트]교육").returning(org.c.id)
         ).scalar_one()
@@ -231,7 +231,7 @@ def test_org_category_filter_combines_with_org_id_filter_via_or(client: TestClie
     """개별 기관(org)과 분야(org_category)를 동시에 지정하면 OR로 합쳐져야 한다 — 특정
     기관 몇 개를 콕 집으면서 동시에 다른 분야 전체도 같이 보는 조합이 흔하다."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         picked_org = conn.execute(
             insert(org).values(name="[테스트] OR결합용 개별기관", category=None).returning(org.c.id)
         ).scalar_one()
@@ -281,7 +281,7 @@ def temp_notice_for_exclude(client: TestClient):
     """제목에 고유 마커 단어("가나다라마바사XYZ")를 넣은 임시 공고 하나 — 이 단어를 제외
     필터에 걸었을 때 실제로 결과에서 빠지는지 검증하는 용도(2026-09-13)."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="입찰공고",
@@ -576,7 +576,7 @@ def test_unscheduled_tab_includes_notice_without_open_dt_via_sql(client: TestCli
     # 카드 상태 라벨이 서로 다르게 보이는 사고가 난다(파일 상단 주석 참고) — 실제 API 응답으로
     # SQL 쪽도 같은 규칙을 따르는지 확인한다.
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="사전규격",

@@ -13,9 +13,11 @@ os.environ.setdefault(
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, insert, select
 
 from app.db import engine
 from app.main import app
+from app.models import notice, source
 from app.services.overview import (
     _last_n_months,
     get_ai_processing_overview,
@@ -153,6 +155,45 @@ def test_get_notice_overview_embedded_cumulative_series_present_and_non_decreasi
     assert len(embedded) == 14
     assert all(embedded[i] <= embedded[i + 1] for i in range(len(embedded) - 1))
     assert not any(s["source_name"] == "임베딩 완료 누적" for s in result["collected_daily"]["series"])
+
+
+def test_get_notice_overview_valid_cumulative_excludes_superseded_notices():
+    """2026-09-23 사용자 지시 — 전체현황의 "누적 데이터"(9,000대)와 공고 탐색 건수
+    (6,000대)가 안 맞는 문제. 원인은 중복 무효화(superseded_by_notice_id) 처리 차이 —
+    "유효 공고 누적"은 이 필드가 있는 공고를 빼고 세야 한다. 공유 개발 DB에 이미 다른
+    무효화 건이 있을 수 있어(실측 확인됨) 절대값 대신 전/후 델타로 검증한다 — 새 공고
+    2건(하나는 다른 하나에 의해 무효화됨)을 넣으면 "전체"는 정확히 +2, "유효"는 무효화
+    안 된 것 하나만큼만 +1이어야 한다."""
+    with engine.connect() as conn:
+        before = get_notice_overview(conn)
+    total_before = _series_by_name(before["cumulative_daily"]["series"], "전체")["counts"][-1]
+    valid_before = _series_by_name(before["cumulative_daily"]["series"], "유효 공고 누적(중복 제외)")["counts"][-1]
+
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        latest_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 유효 공고 누적 검증 최신",
+                url="https://example.grib-test.kr/notice/valid-cumulative-latest",
+            ).returning(notice.c.id)
+        ).scalar_one()
+        superseded_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 유효 공고 누적 검증 무효화",
+                url="https://example.grib-test.kr/notice/valid-cumulative-superseded",
+                superseded_by_notice_id=latest_id,
+            ).returning(notice.c.id)
+        ).scalar_one()
+    try:
+        with engine.connect() as conn:
+            after = get_notice_overview(conn)
+        total_after = _series_by_name(after["cumulative_daily"]["series"], "전체")["counts"][-1]
+        valid_after = _series_by_name(after["cumulative_daily"]["series"], "유효 공고 누적(중복 제외)")["counts"][-1]
+        assert total_after == total_before + 2
+        assert valid_after == valid_before + 1
+    finally:
+        with engine.begin() as conn:
+            conn.execute(delete(notice).where(notice.c.id.in_([superseded_id, latest_id])))
 
 
 def test_get_ai_processing_overview_shape():

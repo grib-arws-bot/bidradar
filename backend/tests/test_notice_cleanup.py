@@ -36,7 +36,7 @@ def _make_notice(conn, source_id: int, *, close_dt, title: str, open_dt=None, ex
 
 def test_delete_expired_notices_removes_only_past_retention_window():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         long_closed = _make_notice(conn, source_id, close_dt=_NOW - timedelta(days=40), title="40일전마감_삭제대상")
         recently_closed = _make_notice(conn, source_id, close_dt=_NOW - timedelta(days=5), title="5일전마감_유예기간")
         still_open = _make_notice(conn, source_id, close_dt=_NOW + timedelta(days=5), title="진행중_보존")
@@ -69,7 +69,7 @@ def test_delete_expired_notices_removes_only_past_retention_window():
 
 def test_delete_expired_notices_cleans_up_non_cascading_analysis_and_award_rows():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         expired_id = _make_notice(conn, source_id, close_dt=_NOW - timedelta(days=40), title="마감_분석기록보유")
         analysis_id = conn.execute(
             insert(analysis).values(notice_id=expired_id, source_kind="notice", input_ref="x", status="done", ver=1)
@@ -100,7 +100,7 @@ def test_delete_expired_notices_removes_no_close_dt_past_notice_date_retention()
     """마감일이 없는 공고(발주계획·사전규격·IRIS 등)는 close_dt 대신 "공고일"
     (extra.ancmDe/nticeDt, 둘 다 없으면 open_dt)이 no_close_retention_days를 넘으면 삭제된다."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         old_ancm = _make_notice(
             conn, source_id, close_dt=None, title="IRIS_공고일오래됨_삭제대상",
             open_dt=_NOW - timedelta(days=200), extra={"ancmDe": "2020-01-01"},

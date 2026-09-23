@@ -236,7 +236,7 @@ def two_topic_notices():
     최소 두 개의 서로 다른 topic_id가 필요하다."""
     with engine.connect() as conn:
         from app.models import interest_topic
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topics = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(2)).scalars().all()
     high_topic_id, normal_topic_id = topics[0], topics[1]
 
@@ -381,7 +381,7 @@ def priced_notices():
     전부 같은 관심주제에 매칭시켜 topic 조건은 항상 통과하게 두고 가격 필터만 검증한다."""
     with engine.connect() as conn:
         from app.models import interest_topic
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
 
     with engine.begin() as conn:
@@ -444,7 +444,7 @@ def deadline_notices():
     맞지 않게 돼 사전규격으로 교체."""
     with engine.connect() as conn:
         from app.models import interest_topic
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
 
     now = datetime.now(timezone.utc)
@@ -528,7 +528,7 @@ def oversubscribed_prenotice_notices():
     발주계획 단계가 매칭 대상에서 아예 빠지면서 사전규격으로 교체)."""
     with engine.connect() as conn:
         from app.models import interest_topic
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
 
     count = SECTION_LIMITS["prenotice"] + 3
@@ -571,7 +571,7 @@ def test_plan_stage_excluded_from_matching():
     "낮은 점수라 우연히 안 뽑힌 것"이 아니라 하드 제외임을 확인할 수 있다."""
     with engine.connect() as conn:
         from app.models import interest_topic
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
 
     with engine.begin() as conn:

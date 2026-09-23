@@ -77,7 +77,7 @@ def rescan_topics():
 @pytest.fixture
 def rescan_notice_with_analysis():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 재채점 대상 공고",
@@ -166,7 +166,7 @@ def test_rescan_replaces_previous_rule_based_topics_not_additive(rescan_topics, 
 def test_rescan_ignores_failed_extraction_docs():
     """extract_ok=False인 문서 텍스트는 재채점에 안 쓴다 — 실패한 추출 결과를 신뢰하면 안 됨."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 실패문서 제외 확인",

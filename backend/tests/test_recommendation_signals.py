@@ -96,7 +96,7 @@ def test_work_type_signal_all_none_when_customer_has_no_preference():
 
 def test_sllm_confidence_signal_picks_max_across_matched_topics():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
         conn.execute(
@@ -115,7 +115,7 @@ def test_sllm_confidence_signal_picks_max_across_matched_topics():
 
 def test_sllm_confidence_signal_none_when_not_yet_checked():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
     try:
@@ -146,7 +146,7 @@ def _insert_analysis(conn, notice_id: int, *, ver: int, judgement: str | None) -
 
 def test_a3_match_signal_true_when_latest_analysis_has_ok_judgement():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
         _insert_analysis(conn, notice_id, ver=1, judgement="ok")
     try:
@@ -159,7 +159,7 @@ def test_a3_match_signal_true_when_latest_analysis_has_ok_judgement():
 
 def test_a3_match_signal_none_when_no_analysis():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
     try:
         with engine.connect() as conn:
@@ -173,7 +173,7 @@ def test_a3_match_signal_only_looks_at_latest_analysis_version():
     """재분석으로 이전 버전의 'ok' 판정이 최신 버전에서 사라지면(v2에 ok 요구사항이
     없음) 더 이상 매치로 치면 안 된다 — 최신 버전 기준으로만 판단해야 함."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
         _insert_analysis(conn, notice_id, ver=1, judgement="ok")
         _insert_analysis(conn, notice_id, ver=2, judgement="no")
@@ -192,7 +192,7 @@ def test_strategy_viewed_signal_true_when_done():
     from app.models import customer as customer_table
 
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
         customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
         conn.execute(
@@ -209,7 +209,7 @@ def test_strategy_viewed_signal_true_when_done():
 def test_strategy_viewed_signal_none_when_not_viewed():
     from app.models import customer as customer_table
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         customer_id = conn.execute(select(customer_table.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
     try:
@@ -290,7 +290,7 @@ def test_combine_weighted_average_respects_relative_weights():
 
 def test_score_with_profile_matches_rule_baseline_when_no_extra_signals():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id)
         conn.execute(
@@ -309,7 +309,7 @@ def test_score_with_profile_matches_rule_baseline_when_no_extra_signals():
 
 def test_score_with_profile_boosts_when_work_type_signal_enabled():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id, work_type="고도화")
         conn.execute(
@@ -334,7 +334,7 @@ def test_score_with_profile_lowers_score_when_work_type_is_disliked():
     """2026-09-21 사용자 지시 — 감리·구매처럼 비선호로 지정한 사업유형은 규칙 매칭
     점수보다 낮아져야 한다(끝까지 통합 테스트로 확인)."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id, work_type="감리")
         conn.execute(
@@ -360,7 +360,7 @@ def test_score_with_profile_includes_signal_breakdown():
     안 한 신호는 breakdown에 아예 안 들어가야 하고(계산도 안 했으므로), 활성화했는데 값이
     없는 신호는 None으로 남아야 한다(0점과 구분)."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id, work_type="고도화")
         conn.execute(
@@ -391,7 +391,7 @@ def test_score_with_profile_signal_floor_treats_weak_value_as_none():
     """2026-09-21 — 코사인처럼 항상 어떤 값이든 나오는 신호가 약한 값으로도 점수를
     만들어내지 못하게, signal_floor 미만이면 None 취급되는지 확인."""
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id, work_type="고도화")
     try:
@@ -413,7 +413,7 @@ def test_score_with_profile_signal_floor_treats_weak_value_as_none():
 
 def test_score_with_profile_accepts_custom_combine_fn_and_weights():
     with engine.begin() as conn:
-        source_id = conn.execute(select(source.c.id).limit(1)).scalar_one()
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
         topic_id = conn.execute(select(interest_topic.c.id).limit(1)).scalar_one()
         notice_id = _make_notice(conn, source_id, work_type="고도화")
         conn.execute(
