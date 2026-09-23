@@ -12,6 +12,15 @@ from app.db import engine
 from app.logging_config import configure_logging
 from app.security.passwords import hash_password
 
+# Windows 콘솔 코드페이지(cp949 등)가 기본이면 em dash("—") 같은 유니코드를 못 만나
+# UnicodeEncodeError로 죽는다(2026-09-23 실측 — self-hosted 배포 러너의 "시드 데이터
+# 확인" 단계가 이걸로 실패). 플랫폼·터미널 상태와 무관하게 항상 UTF-8로 출력하도록
+# 강제한다 — stdout/stderr가 reconfigure를 지원 안 하는 환경(예: 테스트 캡처)에서는
+# 조용히 건너뛴다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 # app/scheduler.py·app/main.py와 같은 이유(2026-09-13) — 루트 로거 기본 레벨(WARNING)로는
 # app/collector/adapters/openapi.py의 "OpenAPI 호출" INFO 로그가 CLI 실행(collect·
 # process-pending 등) 중엔 하나도 안 보였다. 2026-09-14부터 콘솔뿐 아니라 영속 파일에도 남긴다
