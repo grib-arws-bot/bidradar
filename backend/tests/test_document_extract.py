@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from pathlib import Path
 from unittest import mock
 
 from app.services.document_extract import extract_document
@@ -174,15 +175,31 @@ def test_extract_hwp_preview_missing_stream_reports_failure():
     assert "PrvText" in result.error
 
 
-def _fake_hwp5proc_xml_run(xml_body: str):
+def _fake_hwp5proc_xml_run(xml_body: str, *, bindata_images: dict[str, bytes] | None = None):
     """subprocess.run(["hwp5proc", "xml", ..., "--output", <path>]) 모킹 — 실제로 그 경로에
-    XML을 써서 뒤이은 ElementTree.parse(dest)가 읽을 수 있게 한다."""
+    XML을 써서 뒤이은 ElementTree.parse(dest)가 읽을 수 있게 한다.
+
+    2026-09-23 — `_extract_hwp_full`이 이제 같은 subprocess.run으로 `hwp5proc unpack`도
+    호출한다(BinData 이미지 OCR용). `bindata_images`가 없으면(대부분의 기존 테스트) unpack
+    호출은 실패로 처리해 이미지 없는 기존 동작을 그대로 유지하고, 있으면 실제 unpack이
+    했을 것처럼 <outdir>/BinData/ 밑에 파일을 써준다."""
 
     def _run(args, **kwargs):
-        out_path = args[args.index("--output") + 1]
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(xml_body)
-        return mock.Mock(returncode=0)
+        if "--output" in args:
+            out_path = args[args.index("--output") + 1]
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(xml_body)
+            return mock.Mock(returncode=0)
+        if "unpack" in args:
+            if not bindata_images:
+                return mock.Mock(returncode=1)
+            outdir = Path(args[-1])
+            bindir = outdir / "BinData"
+            bindir.mkdir(parents=True)
+            for name, data in bindata_images.items():
+                (bindir / name).write_bytes(data)
+            return mock.Mock(returncode=0)
+        return mock.Mock(returncode=1)
 
     return _run
 
@@ -540,3 +557,67 @@ def test_extract_pdf_embedded_image_ocr_failure_does_not_break_text_extraction()
         result = extract_document("이미지깨짐.pdf", doc_bytes)
     assert result.ok is True
     assert "PDF TEXT LAYER BODY" in result.text
+
+
+# ---- HWP(OLE) 내 이미지 OCR(2026-09-23 — 의사결정_로그 193번에서 미뤄뒀던 마지막 형식) ------
+
+
+def test_extract_hwp_appends_ocr_text_from_bindata_image():
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>hwp 본문입니다</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    run_fn = _fake_hwp5proc_xml_run(xml_body, bindata_images={"BIN0001.png": _make_png((200, 200))})
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=run_fn):
+        with mock.patch(
+            "app.services.document_extract.pytesseract.image_to_string", return_value="hwp 그림 안의 글자"
+        ):
+            result = extract_document("도표포함.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert "hwp 본문입니다" in result.text
+    assert "hwp 그림 안의 글자" in result.text
+
+
+def test_extract_hwp_with_only_bindata_image_and_no_body_text_still_succeeds():
+    """hwpx와 동일한 패턴 — 본문 문단이 전혀 없어도 이미지 OCR만으로 살아나야 한다."""
+    xml_body = '<?xml version="1.0" encoding="utf-8"?><HwpDoc><BodyText></BodyText></HwpDoc>'
+    run_fn = _fake_hwp5proc_xml_run(xml_body, bindata_images={"BIN0001.png": _make_png((200, 200))})
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=run_fn):
+        with mock.patch(
+            "app.services.document_extract.pytesseract.image_to_string", return_value="이미지뿐인 hwp의 글자"
+        ):
+            result = extract_document("이미지만.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert "이미지뿐인 hwp의 글자" in result.text
+
+
+def test_extract_hwp_skips_small_decorative_bindata_images():
+    from app.services import document_extract
+
+    tiny = (document_extract._MIN_EMBEDDED_IMAGE_DIM - 10, document_extract._MIN_EMBEDDED_IMAGE_DIM - 10)
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>본문입니다</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    run_fn = _fake_hwp5proc_xml_run(xml_body, bindata_images={"BIN0001.png": _make_png(tiny)})
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=run_fn):
+        with mock.patch(
+            "app.services.document_extract.pytesseract.image_to_string", return_value="작은이미지글자"
+        ) as mock_ocr:
+            result = extract_document("작은이미지.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert "작은이미지글자" not in result.text
+    mock_ocr.assert_not_called()
+
+
+def test_extract_hwp_bindata_unpack_failure_does_not_break_text_extraction():
+    """unpack이 실패해도(구버전 형식·손상 등) 이미 성공한 본문 추출까지 실패로 만들면
+    안 된다 — 이미지는 보조 정보일 뿐이다."""
+    xml_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<HwpDoc><BodyText><Paragraph><LineSeg><Text>본문은 살아있다</Text></LineSeg></Paragraph></BodyText></HwpDoc>"
+    )
+    with mock.patch("app.services.document_extract.subprocess.run", side_effect=_fake_hwp5proc_xml_run(xml_body)):
+        result = extract_document("공고문.hwp", b"\xd0\xcf\x11\xe0fake-ole")
+    assert result.ok is True
+    assert result.text == "본문은 살아있다"

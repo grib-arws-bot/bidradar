@@ -16,8 +16,12 @@ HWPX도 동일 — LibreOffice가 이 배포판에서 두 형식 모두 못 읾�
 2026-09-21 — 문서 안에 박힌 이미지(도표·화면 캡처)는 텍스트 레이어에 안 잡혀 지금까지
 통째로 유실되고 있었다(의사결정_로그 193번). PDF·hwpx·docx·pptx·xlsx에 대해 본문 추출과
 별도로 이미지를 찾아 OCR한 뒤 덧붙인다. HWP(OLE 바이너리)는 이미지가 BinData 스토리지
-안에 압축돼 있어 파싱이 훨씬 복잡해 이번 범위에서 제외 — 기존처럼 "<그림>" 자리표시자만
-남긴다(향후 과제).
+안에 압축돼 있어 파싱이 훨씬 복잡해 이번 범위에서 제외했었다(향후 과제로 미룸).
+
+2026-09-23 — 미뤄뒀던 HWP도 적용(의사결정_로그 200번대 후속). OLE+zlib를 직접 다루는
+대신 `hwp5proc xml`과 같이 이미 쓰고 있는 pyhwp의 `unpack` 서브커맨드로 BinData 스토리지를
+통째로 풀어 이미지 파일을 얻는다 — 직접 파싱보다 훨씬 단순하고, hwp5proc xml이 이미
+검증된 도구라 신뢰도도 같다.
 """
 
 from __future__ import annotations
@@ -58,9 +62,9 @@ _PDF_OCR_MAX_PAGES = 20
 # 있는 만큼 최대한 수집한다" 원칙 위반). zip 기반 포맷(hwpx/docx/pptx/xlsx)과 PDF에 박힌
 # 이미지를 OCR해 본문 뒤에 덧붙인다. 로고·구분선 같은 장식용 그림까지 OCR하면 노이즈만
 # 늘어나 최소 크기 미만은 건너뛰고, 문서 하나당 처리량도 상한을 둔다(서버가 ARWS와 자원을
-# 공유하는 작은 사양이라 무제한 OCR은 부담). HWP(OLE 바이너리)는 이미지가 BinData 스토리지
-# 안에 압축된 형태로 들어있어 훨씬 복잡한 파싱이 필요해 이번 범위에서는 제외했다 — 계속
-# 기존처럼 "<그림>" 자리표시자만 남긴다(의사결정_로그 193번, 향후 과제로 기록).
+# 공유하는 작은 사양이라 무제한 OCR은 부담). HWP(OLE 바이너리, BinData 스토리지)도
+# 2026-09-23부터 같은 상수를 공유해 OCR한다(_extract_hwp_bindata_images_ocr 참고,
+# 의사결정_로그 193번에서 미뤄뒀던 마지막 형식).
 _MIN_EMBEDDED_IMAGE_DIM = 80
 _MAX_EMBEDDED_IMAGES_PER_DOC = 15
 _EMBEDDED_IMAGE_OCR_HEADER = "<문서 내 이미지 OCR>"
@@ -392,6 +396,33 @@ def _walk_hwp_element(elem: ElementTree.Element) -> str:
     return text
 
 
+def _extract_hwp_bindata_images_ocr(src: Path, workdir: Path) -> str:
+    """HWP5(OLE) 문서의 BinData 스토리지 안 이미지를 OCR한다(2026-09-23, 의사결정_로그
+    200번 후속 — 그동안 "이번 범위 제외"로 미뤄뒀던 마지막 형식). BinData 스트림은 문서
+    수준 압축 플래그가 켜져 있으면 zlib로 압축돼 있는데, 직접 OLE+zlib를 다루는 대신
+    이미 `hwp5proc xml`로 쓰고 있는 pyhwp의 `unpack` 서브커맨드를 재사용한다 — 문서 수준
+    압축을 그대로 풀어 BinData/BIN0001.jpg 같은 실제 이미지 파일로 꺼내준다(개별 BinData
+    항목이 문서 기본과 다르게 압축을 오버라이드하는 드문 경우까지는 pyhwp가 반영하지
+    않지만, 실무 문서 대부분은 문서 전체 압축 플래그를 그대로 따른다). 실패해도 빈
+    문자열만 반환하고 본문 추출 자체는 막지 않는다."""
+    outdir = workdir / "unpacked"
+    try:
+        result = subprocess.run(
+            ["hwp5proc", "unpack", str(src), str(outdir)],
+            capture_output=True, timeout=_HWP5TXT_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    bindir = outdir / "BinData"
+    if result.returncode != 0 or not bindir.is_dir():
+        return ""
+    image_paths = sorted(p for p in bindir.iterdir() if p.suffix.lower() in _IMAGE_EXTENSIONS)
+    parts = [text for p in image_paths[:_MAX_EMBEDDED_IMAGES_PER_DOC] if (text := _ocr_image_bytes(p.read_bytes()))]
+    if not parts:
+        return ""
+    return f"{_EMBEDDED_IMAGE_OCR_HEADER}\n" + "\n\n".join(parts)
+
+
 def _extract_hwp_full(content: bytes) -> ExtractResult | None:
     """pyhwp(hwp5proc xml)로 HWP5 전체 XML 모델을 뽑아 직접 걷는다 — 바이너리가 없거나
     실패하면 None(호출부가 PrvText 미리보기로 폴백).
@@ -400,11 +431,16 @@ def _extract_hwp_full(content: bytes) -> ExtractResult | None:
     (TableControl)를 안의 내용은 다 버리고 "<표>" 문자만 남기도록 만들어져 있었다(pyhwp
     자체 한계, 실제 XML 모델엔 셀 내용이 완전히 들어있음을 hwp5proc xml로 확인). 규격서의
     "세부사업(내역사업)"·문의처 담당자·평가항목 배점 등 핵심 정보가 표에만 있는 경우가
-    많아 원문 XML을 직접 걸어 표 내용을 복원한다."""
+    많아 원문 XML을 직접 걸어 표 내용을 복원한다.
+
+    2026-09-23 — 문서에 박힌 이미지(도표·캡처)도 OCR해 덧붙인다(다른 형식은 의사결정_로그
+    193번에서 이미 처리, HWP만 남아있던 마지막 형식). 본문 문단이 전혀 없고 이미지만 있는
+    문서라도 이걸로 살아난다(hwpx와 동일한 패턴)."""
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            src = Path(tmpdir) / "input.hwp"
-            dest = Path(tmpdir) / "output.xml"
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            src = tmpdir / "input.hwp"
+            dest = tmpdir / "output.xml"
             src.write_bytes(content)
             result = subprocess.run(
                 ["hwp5proc", "xml", str(src), "--output", str(dest)],
@@ -417,8 +453,11 @@ def _extract_hwp_full(content: bytes) -> ExtractResult | None:
             if bodytext is None:
                 return None
             text = "".join(_walk_hwp_element(child) for child in bodytext).strip()
+            image_text = _extract_hwp_bindata_images_ocr(src, tmpdir)
     except (OSError, subprocess.SubprocessError, ElementTree.ParseError):
         return None
+    if image_text:
+        text = f"{text}\n\n{image_text}" if text else image_text
     if not text:
         return None
     return ExtractResult(text=text, method="hwp5xml", ok=True)
