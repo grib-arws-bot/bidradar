@@ -18,7 +18,11 @@ export interface NoticeFilterValues {
   price_max: string;
   close_in: string;
   status: string;
-  qualified: string;
+  // 입찰 자격요건 검증(2026-09-23, U17 5단계) — 예전 "자격 충족/미충족"(qualified,
+  // requirement.we_qualify — 시드 데이터라 실제로는 채워지는 적이 없었음)을 대체. 고객마다
+  // 자격 프로필이 다르므로 고객 선택이 함께 있어야 필터가 걸린다(고객 없으면 상태 선택 비활성).
+  eligibility_customer_id: string;
+  eligibility_status: string; // ""/"ok"/"no"/"unknown"
   // 제목 제외 키워드(2026-09-13) — 관리 UI는 별도 화면이 아니라 공고 탐색 페이지 자체의
   // 인라인 박스(NoticeExcludeWordsBox.tsx)에 있다. exclude_group은 그 박스에 저장된 목록
   // 전체를 켜고 끄는 스위치, exclude_extra는 이번 조회에만 쓰는 단어(저장 안 됨).
@@ -39,15 +43,19 @@ export const EMPTY_FILTERS: NoticeFilterValues = {
   price_max: "",
   close_in: "",
   status: "",
-  qualified: "",
+  eligibility_customer_id: "",
+  eligibility_status: "",
   exclude_group: false,
   exclude_extra: [],
 };
+
+const ELIGIBILITY_STATUS_LABELS: Record<string, string> = { ok: "충족", no: "미충족", unknown: "확인 필요" };
 
 interface Props {
   options: FilterOptions | undefined;
   values: NoticeFilterValues;
   onChange: (values: NoticeFilterValues) => void;
+  customers?: { id: number; name: string }[];
 }
 
 // "공고기관" 필터는 채널(공고기관) 단위로 선택하지만 실제 값은 개별 source_id 배열로
@@ -60,8 +68,8 @@ function selectedChannels(
   return channels.filter((c) => c.source_ids.every((id) => sourceIds.includes(id)));
 }
 
-// 필터 9종(구현스펙 04절): domain·org·source·price(min+max 합쳐 1종)·region·stage·close_in·status·qualified
-export function NoticeFilterBar({ options, values, onChange }: Props) {
+// 필터 9종(구현스펙 04절): domain·org·source·price(min+max 합쳐 1종)·region·stage·close_in·status·자격요건(2026-09-23 qualified 대체)
+export function NoticeFilterBar({ options, values, onChange, customers = [] }: Props) {
   const set = <K extends keyof NoticeFilterValues>(key: K, value: NoticeFilterValues[K]) =>
     onChange({ ...values, [key]: value });
 
@@ -193,22 +201,44 @@ export function NoticeFilterBar({ options, values, onChange }: Props) {
         <TextField
           select
           size="small"
-          label="자격 충족"
-          sx={{ width: 140 }}
-          value={values.qualified}
-          onChange={(e) => set("qualified", e.target.value)}
+          label="자격요건 대상 고객"
+          sx={{ width: 180 }}
+          value={values.eligibility_customer_id}
+          onChange={(e) => {
+            const nextCustomerId = e.target.value;
+            // 고객을 지우면 상태 선택도 같이 초기화 — 고객 없이 상태만 남으면 필터가 안
+            // 걸리는데(NoticeFilters 계약) 화면에는 선택된 것처럼 보이는 혼동을 막는다.
+            onChange({ ...values, eligibility_customer_id: nextCustomerId, eligibility_status: nextCustomerId ? values.eligibility_status : "" });
+          }}
         >
           <MenuItem value="">전체</MenuItem>
-          <MenuItem value="true">충족</MenuItem>
-          <MenuItem value="false">미충족</MenuItem>
+          {customers.map((c) => (
+            <MenuItem key={c.id} value={String(c.id)}>
+              {c.name}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          select
+          size="small"
+          label="자격요건"
+          sx={{ width: 140 }}
+          value={values.eligibility_status}
+          disabled={!values.eligibility_customer_id}
+          onChange={(e) => set("eligibility_status", e.target.value)}
+        >
+          <MenuItem value="">전체</MenuItem>
+          <MenuItem value="ok">충족</MenuItem>
+          <MenuItem value="no">미충족</MenuItem>
+          <MenuItem value="unknown">확인 필요</MenuItem>
         </TextField>
       </Stack>
-      <AppliedChips options={options} values={values} onChange={onChange} />
+      <AppliedChips options={options} values={values} onChange={onChange} customers={customers} />
     </Stack>
   );
 }
 
-function AppliedChips({ options, values, onChange }: Props) {
+function AppliedChips({ options, values, onChange, customers = [] }: Props) {
   const chips: { key: string; label: string; onDelete: () => void }[] = [];
 
   values.domain.forEach((id) => {
@@ -290,11 +320,12 @@ function AppliedChips({ options, values, onChange }: Props) {
       onDelete: () => onChange({ ...values, status: "" }),
     });
   }
-  if (values.qualified) {
+  if (values.eligibility_customer_id && values.eligibility_status) {
+    const customerName = customers.find((c) => String(c.id) === values.eligibility_customer_id)?.name;
     chips.push({
-      key: "qualified",
-      label: values.qualified === "true" ? "자격 충족" : "자격 미충족",
-      onDelete: () => onChange({ ...values, qualified: "" }),
+      key: "eligibility",
+      label: `자격요건(${customerName ?? "고객"}): ${ELIGIBILITY_STATUS_LABELS[values.eligibility_status] ?? values.eligibility_status}`,
+      onDelete: () => onChange({ ...values, eligibility_customer_id: "", eligibility_status: "" }),
     });
   }
   if (values.exclude_group) {

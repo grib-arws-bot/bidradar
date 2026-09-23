@@ -187,3 +187,79 @@ def test_get_notice_eligibility_route_requires_auth():
     anon = TestClient(app)
     response = anon.get("/api/notices/1/eligibility", params={"customer_id": 1})
     assert response.status_code == 401
+
+
+# ---- 공고 목록 자격요건 필터(2026-09-23, 5단계) ------------------------------------------
+
+
+def test_list_notices_filters_by_eligibility_status(client: TestClient, temp_customer: int):
+    ok_axes = _ALL_NO_RESTRICTION
+    no_axes = dict(_ALL_NO_RESTRICTION, company_size_allowed_tiers=["대기업"], company_size_cite="제2장 (1)")
+    with engine.begin() as conn:
+        ok_notice_id = _make_notice_with_eligibility(conn, axes=ok_axes)
+        no_notice_id = _make_notice_with_eligibility(conn, axes=no_axes)
+        conn.execute(customer.update().where(customer.c.id == temp_customer).values(eligibility_company_size_tier="중소기업"))
+    try:
+        response_ok = client.get(
+            "/api/notices",
+            params={"tab": "all", "eligibility_customer_id": temp_customer, "eligibility_status": "ok"},
+        )
+        assert response_ok.status_code == 200
+        ok_ids = {item["id"] for item in response_ok.json()["items"]}
+        assert ok_notice_id in ok_ids
+        assert no_notice_id not in ok_ids
+
+        response_no = client.get(
+            "/api/notices",
+            params={"tab": "all", "eligibility_customer_id": temp_customer, "eligibility_status": "no"},
+        )
+        no_ids = {item["id"] for item in response_no.json()["items"]}
+        assert no_notice_id in no_ids
+        assert ok_notice_id not in no_ids
+    finally:
+        _cleanup([ok_notice_id, no_notice_id])
+
+
+def test_list_notices_eligibility_filter_excludes_unanalyzed_notices(client: TestClient, temp_customer: int):
+    """A2가 자격요건까지 구조화하지 않은 공고는 어떤 status를 물어봐도 후보군에서 아예
+    빠져야 한다(하드 필터) — "확인 필요"를 물어봐도 이 공고 자체가 안 나온다."""
+    with engine.begin() as conn:
+        unanalyzed_notice_id = _make_notice_with_eligibility(conn, axes=None)
+        conn.execute(customer.update().where(customer.c.id == temp_customer).values(eligibility_company_size_tier="중소기업"))
+    try:
+        response = client.get(
+            "/api/notices",
+            params={"tab": "all", "eligibility_customer_id": temp_customer, "eligibility_status": "unknown"},
+        )
+        ids = {item["id"] for item in response.json()["items"]}
+        assert unanalyzed_notice_id not in ids
+    finally:
+        _cleanup([unanalyzed_notice_id])
+
+
+def test_list_notices_eligibility_filter_reports_correct_total_and_pagination(client: TestClient, temp_customer: int):
+    with engine.begin() as conn:
+        notice_ids = [_make_notice_with_eligibility(conn, axes=_ALL_NO_RESTRICTION) for _ in range(3)]
+        conn.execute(customer.update().where(customer.c.id == temp_customer).values(eligibility_company_size_tier="중소기업"))
+    try:
+        response = client.get(
+            "/api/notices",
+            params={
+                "tab": "all", "eligibility_customer_id": temp_customer, "eligibility_status": "ok",
+                "page": 1, "size": 2,
+            },
+        )
+        body = response.json()
+        assert body["total"] >= 3  # 공유 개발 DB에 다른 ok 판정 공고가 있을 수 있어 >=로 확인
+        returned_ids = {item["id"] for item in body["items"]}
+        assert returned_ids <= set(notice_ids) or len(body["items"]) == 2  # 페이지 크기 준수
+        assert len(body["items"]) <= 2
+    finally:
+        _cleanup(notice_ids)
+
+
+def test_list_notices_ignores_eligibility_status_without_customer(client: TestClient):
+    """customer_id 없이 status만 주면 자격요건 필터 자체가 적용 안 돼야 한다(둘 다 있어야
+    필터가 걸림 — NoticeFilters 계약)."""
+    response = client.get("/api/notices", params={"tab": "all", "eligibility_status": "ok"})
+    assert response.status_code == 200  # 422 등으로 거부하지 않고 그냥 무시

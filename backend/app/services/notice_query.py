@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.engine import Connection
 
-from app.models import analysis, customer, interest_topic, notice, notice_score, org, requirement, source
+from app.models import analysis, analysis_eligibility, customer, interest_topic, notice, notice_score, org, source
+from app.services.analysis.eligibility import Judgement
 from app.services.notice_classification import notice_status_label, notice_type_of, work_type_label
+from app.services.notice_eligibility import filter_notice_ids_by_eligibility
 
 SORT_OPTIONS = ("notice_date_desc", "open_desc", "close_asc", "priority", "price_desc")
 
@@ -101,7 +103,11 @@ class NoticeFilters:
     work_types: list[str] = field(default_factory=list)  # 사업유형(개발/운영/유지보수 등, 근사 추정)
     close_in: int | None = None  # 이 안(일)에 마감
     status: str | None = None  # open/closed
-    qualified: bool | None = None
+    # 입찰 자격요건 검증(2026-09-23, U17) — 예전 "자격 충족/미충족"(requirement.we_qualify,
+    # 시드 데이터라 실제로는 채워지는 적이 없었음)을 대체. 고객마다 자격 프로필이 다르므로
+    # 반드시 고객 지정이 함께 필요하다 — 둘 다 있어야 필터가 걸린다(_apply_filters 참고).
+    eligibility_customer_id: int | None = None
+    eligibility_status: Judgement | None = None  # "ok"/"no"/"unknown"
     # 제목 제외 키워드(2026-09-13) — 저장된 그룹(notice_exclude_words)과 화면에서 그때그때
     # 추가한 단어가 API 라우터 단계에서 이미 하나의 목록으로 합쳐져 들어온다(app/api/notices.py
     # _notice_filters) — 이 계층은 "그룹"이라는 개념 자체를 몰라도 된다.
@@ -250,9 +256,14 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
         conditions.append(notice.c.close_dt.is_not(None))
         conditions.append(notice.c.close_dt < now)
 
-    if filters.qualified is not None:
+    if filters.eligibility_status is not None:
+        # 실제 상태 일치 여부(ok/no/unknown)는 규칙 함수(eligibility.py)로만 판정하고 SQL로
+        # 재구현하지 않는다(list_notices()의 별도 경로에서 Python 후처리) — 여기서는 "A2가
+        # 자격요건까지 구조화해둔 공고"로만 후보군을 좁힌다(하드 필터, 후처리 스캔량 축소용).
         conditions.append(
-            exists().where(and_(requirement.c.notice_id == notice.c.id, requirement.c.we_qualify == filters.qualified))
+            exists().where(
+                and_(analysis.c.notice_id == notice.c.id, analysis_eligibility.c.analysis_id == analysis.c.id)
+            )
         )
 
     if conditions:
@@ -292,6 +303,9 @@ def _apply_sort(stmt: Select, sort: str, priority_sq) -> Select:
 
 
 def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:
+    if filters.eligibility_customer_id is not None and filters.eligibility_status is not None:
+        return _list_notices_by_eligibility(conn, filters)
+
     priority_sq = _priority_subquery()
     stmt = _base_select(priority_sq)
     stmt = _apply_filters(stmt, filters)
@@ -306,6 +320,46 @@ def list_notices(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], 
 
     rows = conn.execute(stmt).mappings().all()
     items = [_normalize_row(dict(row)) for row in rows]
+    _attach_scores(conn, items)
+    return items, total
+
+
+def _list_notices_by_eligibility(conn: Connection, filters: NoticeFilters) -> tuple[list[dict], int]:
+    """자격요건 필터 전용 경로 — 판정(app/services/analysis/eligibility.py)이 SQL 술어가
+    아니라 Python 규칙 함수라 여기서 후처리한다(판정 로직을 SQL로 다시 구현해 두 곳에서
+    유지하지 않기 위함). `_apply_filters()`가 이미 "A2 자격요건 구조화까지 끝난 공고"로
+    후보군을 하드 필터링해두므로(exists 조건), 전량 스캔량은 실제로 작다.
+
+    ordered_ids()와 같은 패턴(select(notice.c.id) + 같은 조인)으로 필터·정렬을 그대로 적용해
+    전체 후보 id 순서를 구한 뒤, 그 순서를 유지한 채로 자격요건 판정을 통과한 것만 남기고
+    페이지네이션한다."""
+    priority_sq = _priority_subquery()
+    id_stmt = (
+        select(notice.c.id)
+        .select_from(notice)
+        .join(org, org.c.id == notice.c.org_id, isouter=True)
+        .join(priority_sq, priority_sq.c.notice_id == notice.c.id, isouter=True)
+    )
+    id_stmt = _apply_filters(id_stmt, filters)
+    id_stmt = _apply_sort(id_stmt, filters.sort, priority_sq)
+    candidate_ids = [row[0] for row in conn.execute(id_stmt)]
+
+    matched_ids = filter_notice_ids_by_eligibility(
+        conn, candidate_ids, filters.eligibility_customer_id, filters.eligibility_status
+    )
+    ordered_matched_ids = [nid for nid in candidate_ids if nid in matched_ids]
+
+    total = len(ordered_matched_ids)
+    page = max(filters.page, 1)
+    size = filters.size or PAGE_SIZE
+    page_ids = ordered_matched_ids[(page - 1) * size : (page - 1) * size + size]
+    if not page_ids:
+        return [], total
+
+    page_priority_sq = _priority_subquery()
+    page_stmt = _base_select(page_priority_sq).where(notice.c.id.in_(page_ids))
+    rows_by_id = {row["id"]: dict(row) for row in conn.execute(page_stmt).mappings().all()}
+    items = [_normalize_row(rows_by_id[nid]) for nid in page_ids if nid in rows_by_id]
     _attach_scores(conn, items)
     return items, total
 

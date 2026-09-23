@@ -53,7 +53,8 @@ def _notice_filters(
     work_type: list[str] = Query(default_factory=list, alias="work_type[]"),
     close_in: int | None = Query(None),
     status_: str | None = Query(None, alias="status"),
-    qualified: bool | None = Query(None),
+    eligibility_customer_id: int | None = Query(None),
+    eligibility_status: str | None = Query(None),  # "ok"/"no"/"unknown"
     sort: str = Query("notice_date_desc"),  # 공고일 최신순 기본(2026-09-08 사용자 지시)
     # 제목 제외 키워드(2026-09-13) — exclude_group을 켜면 저장된 그룹 전체가, exclude_extra는
     # 화면에서 그때그때 추가한 단어가 각각 최종 제외 목록에 합쳐진다(둘 다/둘 중 하나만도 가능).
@@ -79,7 +80,8 @@ def _notice_filters(
         work_types=work_type,
         close_in=close_in,
         status=status_,
-        qualified=qualified,
+        eligibility_customer_id=eligibility_customer_id,
+        eligibility_status=eligibility_status,
         sort=sort,
         exclude_words=exclude_words,
     )

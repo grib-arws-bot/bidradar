@@ -26,6 +26,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { fetchCustomers } from "@/api/customerInterests";
 import {
   fetchFilterOptions,
   fetchNoticeCounts,
@@ -87,7 +88,8 @@ function paramsToFilters(sp: URLSearchParams): NoticeFilterValues {
     price_max: sp.get("price_max") ?? "",
     close_in: sp.get("close_in") ?? "",
     status: sp.get("status") ?? "",
-    qualified: sp.get("qualified") ?? "",
+    eligibility_customer_id: sp.get("eligibility_customer_id") ?? "",
+    eligibility_status: sp.get("eligibility_status") ?? "",
     exclude_group: sp.get("exclude_group") === "true",
     exclude_extra: sp.getAll("exclude_extra[]"),
   };
@@ -168,7 +170,8 @@ export function NoticeExplorePage() {
       price_max: next.price_max || null,
       close_in: next.close_in || null,
       status: next.status || null,
-      qualified: next.qualified || null,
+      eligibility_customer_id: next.eligibility_customer_id || null,
+      eligibility_status: next.eligibility_status || null,
       exclude_group: next.exclude_group ? "true" : null,
       "exclude_extra[]": next.exclude_extra,
       page: null,
@@ -177,6 +180,8 @@ export function NoticeExplorePage() {
 
   const filterOptionsQuery = useQuery({ queryKey: ["filter-options"], queryFn: fetchFilterOptions });
   const countsQuery = useQuery({ queryKey: ["notice-counts"], queryFn: fetchNoticeCounts });
+  // 자격요건 필터(2026-09-23, U17 5단계)용 고객 목록 — MatchingComparisonPage.tsx와 같은 조회.
+  const customersQuery = useQuery({ queryKey: ["customers"], queryFn: fetchCustomers });
 
   // 동일 발주기관·동일 사업명이 발주계획/사전규격/입찰공고 단계에 중복 등장하는 문제 정리
   // (2026-09-06) — 관리자가 눌러서 실행, 자동 실행 아님(S8 원칙 3과 같은 이유).
@@ -282,7 +287,12 @@ export function NoticeExplorePage() {
                 {total.toLocaleString("ko-KR")}건
               </Typography>
             </Stack>
-            <NoticeFilterBar options={filterOptionsQuery.data} values={filters} onChange={handleFiltersChange} />
+            <NoticeFilterBar
+              options={filterOptionsQuery.data}
+              values={filters}
+              onChange={handleFiltersChange}
+              customers={customersQuery.data}
+            />
           </Stack>
         </Card>
         <Box sx={{ flex: 1, width: "100%" }}>
