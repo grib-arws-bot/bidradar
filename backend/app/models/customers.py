@@ -74,6 +74,17 @@ customer = Table(
     # run_due_customer_emails) — 관리자가 명시적으로 켜는 설정이라 CLAUDE.md 원칙 3
     # "자동 실행 금지"와 충돌하지 않는다(source의 auto_extract/auto_analyze와 같은 논리).
     Column("report_auto_send_schedule", JSONB, nullable=False, server_default="[]"),
+    # 입찰 자격요건 검증(2026-09-23, docs/구현스펙.md 07절 "향후 과제") — 고객사 자신의
+    # 자격 프로필. NULL은 전부 "아직 입력 안 함"이지 "미보유"가 아니다 — 규칙 비교
+    # (app/services/analysis/eligibility.py)는 NULL을 절대 미보유로 해석하지 않고
+    # "확인 필요"로 처리한다(match.py의 product_value=None 처리와 같은 원칙). 이 값들은
+    # 점수(recommendation_signals.py)에 절대 섞이지 않는다 — 자격 미달이어도 우회하는
+    # 사례가 있어 점수에 섞이면 오도된다는 사용자 지시로 별도 필터 전용.
+    Column("eligibility_company_size_tier", String(10)),  # "중소기업"|"중견기업"|"대기업"|NULL
+    Column("eligibility_has_research_institute", Boolean),  # NULL=미입력
+    Column("eligibility_venture_cert", Boolean),  # NULL=미입력
+    Column("eligibility_industry_codes", JSONB, nullable=False, server_default="[]"),
+    Column("eligibility_certifications", JSONB, nullable=False, server_default="[]"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 

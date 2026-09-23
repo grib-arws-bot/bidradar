@@ -29,6 +29,7 @@ from app.models.analysis import (
     analysis,
     analysis_check,
     analysis_doc,
+    analysis_eligibility,
     analysis_flag,
     analysis_requirement,
     analysis_sllm_preview,
@@ -75,6 +76,7 @@ __all__ = [
     "analysis_flag",
     "analysis_check",
     "analysis_sllm_preview",
+    "analysis_eligibility",
     # catalog
     "product",
     "product_spec",

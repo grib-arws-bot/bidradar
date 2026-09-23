@@ -9,9 +9,10 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.db import engine
-from app.services.analysis.structure import get_requirements
+from app.services.analysis.structure_query import get_requirements
 from app.services.analysis_pilot import get_latest_extraction
 from app.services.interest_report import get_report_by_token
+from app.services.notice_eligibility import get_eligibility_verdict
 from app.services.notice_engagement import record_click, record_view, set_like
 from app.services.notice_strategy import (
     LLMNotConfiguredError,
@@ -72,6 +73,16 @@ def get_public_notice_extraction(token: str, notice_id: int) -> dict | None:
     _authorize_notice_in_report(token, notice_id)
     with engine.connect() as conn:
         return get_latest_extraction(conn, notice_id)
+
+
+@router.get("/reports/{token}/notices/{notice_id}/eligibility")
+def get_public_notice_eligibility(token: str, notice_id: int) -> dict | None:
+    """입찰 자격요건 검증(2026-09-23) — 토큰에서 이미 고객이 정해지므로 별도 선택 없이
+    자동 조회된다. 점수와 무관한 별도 판정이라 다른 공개 조회 함수들과 같은 방식으로
+    노출해도 안전하다."""
+    report = _authorize_notice_in_report(token, notice_id)
+    with engine.connect() as conn:
+        return get_eligibility_verdict(conn, report["customer_id"], notice_id)
 
 
 class StrategyResponse(BaseModel):

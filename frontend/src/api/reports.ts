@@ -1,6 +1,7 @@
 import type { ExtractionResult, RequirementsResult } from "@/api/analysis";
 import { apiClient } from "@/api/client";
 import type { BidStatus } from "@/api/notices";
+import type { EligibilityVerdict } from "@/api/noticeEligibility";
 
 export interface ReportNoticeItem {
   id: number;
@@ -139,6 +140,12 @@ export async function fetchPublicRequirements(token: string, noticeId: number): 
 
 export async function fetchPublicExtraction(token: string, noticeId: number): Promise<ExtractionResult | null> {
   const { data } = await apiClient.get<ExtractionResult | null>(`/public/reports/${token}/notices/${noticeId}/extract`);
+  return data;
+}
+
+// 입찰 자격요건 검증(2026-09-23) — 토큰에서 고객이 이미 정해지므로 별도 선택 없이 자동 조회.
+export async function fetchPublicEligibility(token: string, noticeId: number): Promise<EligibilityVerdict | null> {
+  const { data } = await apiClient.get<EligibilityVerdict | null>(`/public/reports/${token}/notices/${noticeId}/eligibility`);
   return data;
 }
 

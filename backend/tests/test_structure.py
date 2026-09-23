@@ -23,7 +23,7 @@ from sqlalchemy import delete, insert, select
 from app.config import settings
 from app.db import engine
 from app.main import app
-from app.models import analysis, analysis_doc, analysis_requirement, interest_topic, notice, notice_score, source
+from app.models import analysis, analysis_doc, analysis_eligibility, analysis_requirement, interest_topic, notice, notice_score, source
 from app.services.analysis.structure import (
     LLMNotConfiguredError,
     StructuringInProgressError,
@@ -158,6 +158,7 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
     assert result == {
         "analysis_id": done_analysis, "extracted": 2, "saved": 1, "skipped_no_cite": 1,
         "input_tokens": 1000, "output_tokens": 200, "cost_usd": round(1000 / 1e6 * 1.00 + 200 / 1e6 * 5.00, 4),
+        "eligibility_axes_saved": 0,  # 이 테스트의 _SAMPLE_SUMMARY엔 eligibility.structured가 없음
     }
 
     with engine.connect() as conn:
@@ -179,6 +180,98 @@ def test_run_structuring_saves_valid_items_and_skips_missing_cite(done_analysis,
     assert updated.step == "A2_structure"
     assert updated.llm_tokens == 1200
     assert updated.summary == _SAMPLE_SUMMARY
+
+
+# ---- 자격요건 구조화(2026-09-23) --------------------------------------------------------
+
+
+def test_run_structuring_saves_eligibility_axes_with_cite(done_analysis, monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    summary = dict(
+        _SAMPLE_SUMMARY,
+        eligibility=dict(
+            _SAMPLE_SUMMARY["eligibility"],
+            structured={
+                "company_size": {"restricted": True, "allowed_tiers": ["중소기업"], "cite": "제2장 신청자격 (1)"},
+                "research_institute": {"required": False, "cite": ""},
+                "venture_cert": {"required": False, "cite": ""},
+                "industry_codes": {"restricted": False, "codes": [], "cite": ""},
+                "certifications": {"restricted": False, "items": [], "cite": ""},
+            },
+        ),
+    )
+    with mock.patch(
+        "app.services.analysis.structure.fetch", return_value=_mock_anthropic_response([], summary=summary)
+    ):
+        with engine.begin() as conn:
+            result = run_structuring(conn, done_analysis)
+
+    assert result["eligibility_axes_saved"] == 5  # 5축 전부 확인됨(제한 있음 1개 + 제한 없음 4개)
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(analysis_eligibility).where(analysis_eligibility.c.analysis_id == done_analysis)
+        ).mappings().one()
+    assert row["company_size_allowed_tiers"] == ["중소기업"]
+    assert row["company_size_cite"] == "제2장 신청자격 (1)"
+    assert row["research_institute_required"] is False
+    assert row["venture_cert_required"] is False
+    assert row["industry_codes_required"] == []
+    assert row["certifications_required"] == []
+
+
+def test_run_structuring_drops_restricted_axis_without_cite(done_analysis, monkeypatch):
+    """근거(cite) 없는 "제한 있음" 주장은 저장하지 않는다(S8 원칙 2, _valid_items와 동일
+    철학) — 값도 cite도 NULL로 남아 비교기가 "확인 필요"로 처리하게 한다."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    summary = dict(
+        _SAMPLE_SUMMARY,
+        eligibility=dict(
+            _SAMPLE_SUMMARY["eligibility"],
+            structured={
+                "company_size": {"restricted": True, "allowed_tiers": ["중소기업"], "cite": ""},  # cite 없음 → 드롭
+                "research_institute": {"required": True, "cite": ""},  # cite 없음 → 드롭
+                "venture_cert": {"required": False, "cite": ""},
+                "industry_codes": {"restricted": False, "codes": [], "cite": ""},
+                "certifications": {"restricted": False, "items": [], "cite": ""},
+            },
+        ),
+    )
+    with mock.patch(
+        "app.services.analysis.structure.fetch", return_value=_mock_anthropic_response([], summary=summary)
+    ):
+        with engine.begin() as conn:
+            result = run_structuring(conn, done_analysis)
+
+    assert result["eligibility_axes_saved"] == 3  # venture_cert/industry_codes/certifications만(제한 없음)
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(analysis_eligibility).where(analysis_eligibility.c.analysis_id == done_analysis)
+        ).mappings().one()
+    assert row["company_size_allowed_tiers"] is None
+    assert row["company_size_cite"] is None
+    assert row["research_institute_required"] is None
+    assert row["research_institute_cite"] is None
+    assert row["venture_cert_required"] is False
+
+
+def test_run_structuring_saves_nothing_when_no_structured_eligibility(done_analysis, monkeypatch):
+    """구 버전 A2 응답(structured 필드 자체가 없음)이면 analysis_eligibility 행 자체를 안
+    만든다 — 값이 전부 확인불가라는 사실은 행이 없는 것 자체로 이미 표현됨."""
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test")
+    with mock.patch(
+        "app.services.analysis.structure.fetch", return_value=_mock_anthropic_response([])  # _SAMPLE_SUMMARY(structured 없음)
+    ):
+        with engine.begin() as conn:
+            result = run_structuring(conn, done_analysis)
+
+    assert result["eligibility_axes_saved"] == 0
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(analysis_eligibility).where(analysis_eligibility.c.analysis_id == done_analysis)
+        ).first()
+    assert row is None
 
 
 def test_run_structuring_rescans_interest_topics_from_content_not_title(done_analysis, monkeypatch):

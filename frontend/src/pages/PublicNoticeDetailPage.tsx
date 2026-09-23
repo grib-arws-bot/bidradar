@@ -10,7 +10,9 @@ import { useEffect, useState } from "react";
 import { Link as RouterLink, useParams } from "react-router-dom";
 
 import { BID_STATUS_LABELS } from "@/api/notices";
+import { ELIGIBILITY_AXIS_LABELS } from "@/api/noticeEligibility";
 import {
+  fetchPublicEligibility,
   fetchPublicExtraction,
   fetchPublicNotice,
   fetchPublicRequirements,
@@ -24,6 +26,13 @@ import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDoc
 import Logo from "@/components/Logo";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { isAttachmentDownloadUrl } from "@/utils/noticeLinks";
+
+const ELIGIBILITY_JUDGEMENT_COLOR: Record<string, "success" | "error" | "warning"> = {
+  ok: "success",
+  no: "error",
+  unknown: "warning",
+};
+const ELIGIBILITY_JUDGEMENT_LABEL: Record<string, string> = { ok: "충족", no: "미충족", unknown: "확인 필요" };
 
 function formatPrice(value: number | null): string {
   if (value === null) return "미공개";
@@ -94,6 +103,10 @@ export function PublicNoticeDetailPage() {
   const extractionQuery = useQuery({
     queryKey: ["public-notice-extraction", token, noticeId],
     queryFn: () => fetchPublicExtraction(token!, noticeIdNum),
+  });
+  const eligibilityQuery = useQuery({
+    queryKey: ["public-notice-eligibility", token, noticeId],
+    queryFn: () => fetchPublicEligibility(token!, noticeIdNum),
   });
 
   // "AI 사업 추진 전략" — 예전엔 별도 페이지(/strategy)로 이동했으나, 이 페이지 하단에 섹션으로
@@ -283,6 +296,40 @@ export function PublicNoticeDetailPage() {
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 3, textAlign: "center" }}>
               이 내용은 검토를 돕는 참고자료이며, 참여 여부에 대한 최종 판단은 별도로 필요합니다.
             </Typography>
+          </Card>
+        )}
+
+        {/* 입찰 자격요건 검증(2026-09-23) — 토큰에서 고객이 이미 정해지므로 선택 없이 자동
+            조회. AI분석이 아직 자격요건까지 구조화하지 않았으면 카드 자체를 숨긴다(빈
+            카드로 혼동 주지 않기 위함). */}
+        {eligibilityQuery.data && (
+          <Card sx={{ p: { xs: 2, md: 3 } }}>
+            <Typography variant="h3" sx={{ mb: 1.5 }}>
+              자격요건 확인
+            </Typography>
+            <Stack spacing={1}>
+              {Object.entries(eligibilityQuery.data.axes).map(([axis, verdict]) => (
+                <Stack
+                  key={axis}
+                  direction="row"
+                  spacing={1.5}
+                  alignItems="center"
+                  sx={{ p: 1, borderRadius: 1, bgcolor: verdict.judgement === "no" ? "error.lighter" : "transparent" }}
+                >
+                  <Chip label={ELIGIBILITY_AXIS_LABELS[axis] ?? axis} size="small" />
+                  <Chip
+                    label={ELIGIBILITY_JUDGEMENT_LABEL[verdict.judgement]}
+                    size="small"
+                    color={ELIGIBILITY_JUDGEMENT_COLOR[verdict.judgement]}
+                    variant={verdict.judgement === "no" ? "filled" : "outlined"}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {verdict.reason}
+                    {verdict.cite && ` (${verdict.cite})`}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
           </Card>
         )}
 

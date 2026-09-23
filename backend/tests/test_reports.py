@@ -242,6 +242,29 @@ def test_public_notice_requirements_404_for_notice_not_in_report(client: TestCli
     assert response.status_code == 404
 
 
+def test_public_notice_eligibility_matches_admin_route_shape(client: TestClient, grib_customer_id: int):
+    """공개 라우트가 관리자용(get_eligibility_verdict)과 같은 서비스 함수를 그대로 쓰므로,
+    응답이 같아야 한다(대부분 A2 자격요건 구조화가 아직 없어 둘 다 None일 것)."""
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    token = created["token"]
+    notices = created["notices"]
+    if not notices:
+        pytest.skip("그립 고객에 매칭된 공고가 없어 이 테스트를 건너뜀")
+    notice_id = notices[0]["id"]
+
+    admin_result = client.get(f"/api/notices/{notice_id}/eligibility", params={"customer_id": grib_customer_id}).json()
+    anon = TestClient(app)
+    public_result = anon.get(f"/api/public/reports/{token}/notices/{notice_id}/eligibility").json()
+    assert public_result == admin_result
+
+
+def test_public_notice_eligibility_404_for_notice_not_in_report(client: TestClient, grib_customer_id: int):
+    created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
+    anon = TestClient(app)
+    response = anon.get(f"/api/public/reports/{created['token']}/notices/999999999/eligibility")
+    assert response.status_code == 404
+
+
 def test_public_notice_extraction_matches_admin_route_shape(client: TestClient, grib_customer_id: int):
     created = client.post(f"/api/customers/{grib_customer_id}/reports").json()
     token = created["token"]

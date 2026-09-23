@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.db import engine
 from app.deps import require_auth
 from app.services import audit
+from app.services.customer_eligibility import EligibilityDraft, get_eligibility_profile, save_eligibility_profile
 from app.services.customer_interest import (
     InterestDraft,
     draft_from_profile,
@@ -244,6 +245,47 @@ def put_interests(customer_id: int, payload: InterestPayload, _email: str = Depe
             save_interest_profile(conn, customer_id, payload.to_draft())
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+class EligibilityProfilePayload(BaseModel):
+    company_size_tier: str | None = None
+    has_research_institute: bool | None = None
+    venture_cert: bool | None = None
+    industry_codes: list[str] = []
+    certifications: list[str] = []
+
+    def to_draft(self) -> EligibilityDraft:
+        return EligibilityDraft(
+            company_size_tier=self.company_size_tier,
+            has_research_institute=self.has_research_institute,
+            venture_cert=self.venture_cert,
+            industry_codes=self.industry_codes,
+            certifications=self.certifications,
+        )
+
+
+@router.get("/{customer_id}/eligibility-profile")
+def get_eligibility_profile_route(customer_id: int, _email: str = Depends(require_auth)) -> dict:
+    with engine.connect() as conn:
+        profile = get_eligibility_profile(conn, customer_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+    return profile
+
+
+@router.put("/{customer_id}/eligibility-profile", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+def put_eligibility_profile_route(customer_id: int, payload: EligibilityProfilePayload, email: str = Depends(require_auth)) -> None:
+    with engine.begin() as conn:
+        if get_eligibility_profile(conn, customer_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="고객을 찾을 수 없습니다.")
+        try:
+            save_eligibility_profile(conn, customer_id, payload.to_draft())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        audit.record(
+            conn, actor=email, action="customer.eligibility_profile", target_type="customer", target_id=customer_id,
+            detail=payload.model_dump(),
+        )
 
 
 @router.get("/{customer_id}/interest-matches/compare")

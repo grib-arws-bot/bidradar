@@ -19,6 +19,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { fetchCustomersFull, toCustomerDraft, updateCustomer, type CustomerDraft } from "@/api/customers";
 import { CustomerDocumentsSection } from "@/components/customer-detail/CustomerDocumentsSection";
 import { CustomerEmailCard } from "@/components/customer-detail/CustomerEmailCard";
+import { CustomerEligibilitySection } from "@/components/customer-detail/CustomerEligibilitySection";
 import { CustomerInterestSection } from "@/components/customer-detail/CustomerInterestSection";
 import { LoadingButton } from "@/components/LoadingButton";
 import { useToast } from "@/components/ToastProvider";
@@ -180,6 +181,7 @@ export function CustomerDetailPage() {
       <CustomerEmailCard customer={customer} />
       <CustomerDocumentsSection customer={customer} />
       <CustomerInterestSection customerId={customer.id} />
+      <CustomerEligibilitySection customerId={customer.id} />
     </Stack>
   );
 }

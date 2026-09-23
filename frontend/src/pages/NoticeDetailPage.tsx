@@ -1,16 +1,25 @@
 import ArrowBackIcon from "@mui/icons-material/ArrowBackIosNewOutlined";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForwardIosOutlined";
-import { Button, Card, Chip, CircularProgress, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { Button, Card, Chip, CircularProgress, IconButton, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link as RouterLink, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { fetchLatestExtraction, fetchRequirements, runExtraction, runStructuring, type LlmModel } from "@/api/analysis";
+import { fetchCustomers } from "@/api/customerInterests";
 import { fetchFilterOptions, fetchNeighbors, fetchNoticeDetail } from "@/api/notices";
+import { ELIGIBILITY_AXIS_LABELS, fetchNoticeEligibility } from "@/api/noticeEligibility";
 import { AnalysisTabsSection } from "@/components/notice-detail/AnalysisTabsSection";
 import { AnalyzedDocumentsSection } from "@/components/notice-detail/AnalyzedDocumentsSection";
 import { NoticeTopSection } from "@/components/notice-detail/NoticeTopSection";
 import { useToast } from "@/components/ToastProvider";
+
+const ELIGIBILITY_JUDGEMENT_COLOR: Record<string, "success" | "error" | "warning"> = {
+  ok: "success",
+  no: "error",
+  unknown: "warning",
+};
+const ELIGIBILITY_JUDGEMENT_LABEL: Record<string, string> = { ok: "충족", no: "미충족", unknown: "확인 필요" };
 
 export function NoticeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +65,16 @@ export function NoticeDetailPage() {
   const requirementsQuery = useQuery({
     queryKey: ["notice-requirements", noticeId],
     queryFn: () => fetchRequirements(noticeId),
+  });
+
+  // 입찰 자격요건 검증(2026-09-23) — 고객마다 자격 프로필이 다르므로 관리자가 직접 고른다
+  // (MatchingComparisonPage.tsx의 고객 선택 패턴과 동일).
+  const customersQuery = useQuery({ queryKey: ["customers"], queryFn: fetchCustomers });
+  const [eligibilityCustomerId, setEligibilityCustomerId] = useState<number | "">("");
+  const eligibilityQuery = useQuery({
+    queryKey: ["notice-eligibility", noticeId, eligibilityCustomerId],
+    queryFn: () => fetchNoticeEligibility(noticeId, eligibilityCustomerId as number),
+    enabled: eligibilityCustomerId !== "",
   });
 
   // 실패 사유를 화면에 보여주기 위한 상태(2026-09-06) — 예전엔 추출 실패(run_extraction_pilot이
@@ -167,34 +186,65 @@ export function NoticeDetailPage() {
         allTopics={filterOptionsQuery.data?.topics ?? []}
       />
 
-      {/* 시드 데이터의 참여자격 요건(requirement 테이블) — S8 이전부터 있던 별개 개념, 실제
-          수집기가 채우지 않아 대부분 공고는 비어 있다. */}
-      {notice.requirements.length > 0 && (
-        <Card sx={{ p: 3 }}>
-          <Typography variant="h3" sx={{ mb: 1.5 }}>
-            참여 자격 요건
+      {/* 입찰 자격요건 검증(2026-09-23) — 고객마다 자사 프로필이 다르므로 선택이 필요하다.
+          예전 "참여 자격 요건"(requirement 테이블, we_qualify) 블록은 시드 데이터라 실제
+          수집기가 채우지 않아 대부분 비어 있었고 이름도 겹쳐 혼동을 줘 이 기능으로 대체했다. */}
+      <Card sx={{ p: 3 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+          <Typography variant="h3">입찰 자격요건 검증</Typography>
+          <TextField
+            select
+            size="small"
+            label="고객 선택"
+            value={eligibilityCustomerId}
+            onChange={(e) => setEligibilityCustomerId(e.target.value === "" ? "" : Number(e.target.value))}
+            sx={{ minWidth: 220 }}
+          >
+            {(customersQuery.data ?? []).map((c) => (
+              <MenuItem key={c.id} value={c.id}>
+                {c.name}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Stack>
+
+        {eligibilityCustomerId === "" && (
+          <Typography variant="body2" color="text.secondary">
+            고객을 선택하면 자사 자격 프로필과 이 공고의 자격요건을 대조해 보여줍니다.
           </Typography>
+        )}
+        {eligibilityCustomerId !== "" && eligibilityQuery.isLoading && <CircularProgress size={24} />}
+        {eligibilityCustomerId !== "" && !eligibilityQuery.isLoading && eligibilityQuery.data == null && (
+          <Typography variant="body2" color="text.secondary">
+            아직 이 공고의 자격요건이 구조화되지 않았습니다(AI분석 미완료).
+          </Typography>
+        )}
+        {eligibilityQuery.data && (
           <Stack spacing={1}>
-            {notice.requirements.map((req) => (
+            {Object.entries(eligibilityQuery.data.axes).map(([axis, verdict]) => (
               <Stack
-                key={req.id}
+                key={axis}
                 direction="row"
                 spacing={1.5}
-                sx={{ p: 1, borderRadius: 1, bgcolor: req.we_qualify === false ? "error.lighter" : "transparent" }}
+                alignItems="center"
+                sx={{ p: 1, borderRadius: 1, bgcolor: verdict.judgement === "no" ? "error.lighter" : "transparent" }}
               >
-                <Chip label={req.type} size="small" />
-                <Typography
-                  variant="body2"
-                  sx={{ color: req.we_qualify === false ? "error.main" : "text.primary", fontWeight: req.we_qualify === false ? 600 : 400 }}
-                >
-                  {req.value}
-                  {req.we_qualify === false && " — 미충족"}
+                <Chip label={ELIGIBILITY_AXIS_LABELS[axis] ?? axis} size="small" />
+                <Chip
+                  label={ELIGIBILITY_JUDGEMENT_LABEL[verdict.judgement]}
+                  size="small"
+                  color={ELIGIBILITY_JUDGEMENT_COLOR[verdict.judgement]}
+                  variant={verdict.judgement === "no" ? "filled" : "outlined"}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  {verdict.reason}
+                  {verdict.cite && ` (${verdict.cite})`}
                 </Typography>
               </Stack>
             ))}
           </Stack>
-        </Card>
-      )}
+        )}
+      </Card>
 
       <AnalysisTabsSection requirements={requirementsQuery.data} extraction={extractionQuery.data} noticeId={noticeId} />
 

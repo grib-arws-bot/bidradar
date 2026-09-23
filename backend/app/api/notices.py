@@ -11,9 +11,10 @@ from app.services.analysis.structure import (
     LLMNotConfiguredError,
     MODEL_ALIASES,
     StructuringInProgressError,
-    get_requirements,
     run_structuring_for_notice,
 )
+from app.services.analysis.structure_query import get_requirements
+from app.services.notice_eligibility import get_eligibility_verdict
 from app.services.analysis.sllm_preview import (
     SllmPreviewInProgressError,
     get_sllm_preview_for_notice,
@@ -209,6 +210,17 @@ def post_structure(notice_id: int, payload: StructureRequest, _email: str = Depe
 def get_requirements_route(notice_id: int, _email: str = Depends(require_auth)) -> dict | None:
     with engine.connect() as conn:
         return get_requirements(conn, notice_id)
+
+
+@router.get("/{notice_id}/eligibility")
+def get_notice_eligibility_route(
+    notice_id: int, customer_id: int, _email: str = Depends(require_auth)
+) -> dict | None:
+    """입찰 자격요건 검증(2026-09-23) — customer_id로 지정한 고객의 자격 프로필과 이
+    공고의 구조화된 자격요건을 대조한다. 점수(recommendation_signals.py)와는 무관한
+    별도 필터 전용 판정 — None이면 아직 판정 불가(A2 미완료 또는 고객 없음)."""
+    with engine.connect() as conn:
+        return get_eligibility_verdict(conn, customer_id, notice_id)
 
 
 @router.post("/{notice_id}/sllm-requirements")

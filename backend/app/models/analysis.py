@@ -83,6 +83,31 @@ analysis_requirement = Table(
     Column("note", Text),
 )
 
+# 입찰 자격요건(회사 단위) 검증(2026-09-23, docs/구현스펙.md 07절 "향후 과제") — A3(제품
+# 스펙 대조)와 달리 회사 자체의 참여 자격을 본다. A2가 요약으로만 뽑던
+# analysis.summary.eligibility의 free-text 필드를 tri-state(제한 있음/없음/확인불가)로
+# 구조화해 규칙 비교가 가능하게 한다. analysis 1건당 1행(축이 5개로 고정돼 있어
+# analysis_requirement처럼 여러 행일 필요가 없음). 각 축: NULL=추출 실패/확인불가(판정은
+# "확인 필요") · []/false=문서에 제한이 명시적으로 없음(cite 불필요, 판정은 "충족") ·
+# 값 있음=제한 있음(cite 필수 — 근거 없는 판정 금지, S8 원칙 2).
+analysis_eligibility = Table(
+    "analysis_eligibility",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("analysis_id", Integer, ForeignKey("analysis.id", ondelete="CASCADE"), nullable=False, unique=True),
+    Column("company_size_allowed_tiers", JSONB),
+    Column("company_size_cite", Text),
+    Column("research_institute_required", Boolean),
+    Column("research_institute_cite", Text),
+    Column("venture_cert_required", Boolean),
+    Column("venture_cert_cite", Text),
+    Column("industry_codes_required", JSONB),
+    Column("industry_codes_cite", Text),
+    Column("certifications_required", JSONB),
+    Column("certifications_cite", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
 analysis_flag = Table(
     "analysis_flag",
     metadata,
