@@ -88,6 +88,9 @@ function paramsToFilters(sp: URLSearchParams): NoticeFilterValues {
     price_max: sp.get("price_max") ?? "",
     close_in: sp.get("close_in") ?? "",
     status: sp.get("status") ?? "",
+    // 다른 필터와 달리 미설정 시 빈 문자열("전체")이 아니라 "7"(기본 적용 상태) — URL에
+    // 없으면 기본값이 켜진 것으로 화면에 그대로 반영돼야 한다.
+    exclude_imminent_days: sp.get("exclude_imminent_days") ?? "7",
     eligibility_customer_id: sp.get("eligibility_customer_id") ?? "",
     eligibility_status: sp.get("eligibility_status") ?? "",
     exclude_group: sp.get("exclude_group") === "true",
@@ -104,6 +107,8 @@ function buildQuery(sp: URLSearchParams): URLSearchParams {
   if (!out.get("page")) out.set("page", "1");
   // 3의 배수로(2026-09-07 사용자 지시) — 3열 그리드 보기에서 마지막 줄이 빈 칸 없이 꽉 차게.
   if (!out.get("size")) out.set("size", "21");
+  // 마감임박 제외 기본값(2026-09-28, 백엔드 MIN_LEAD_DAYS_DEFAULT와 동일한 7일).
+  if (!out.get("exclude_imminent_days")) out.set("exclude_imminent_days", "7");
   return out;
 }
 
@@ -170,6 +175,7 @@ export function NoticeExplorePage() {
       price_max: next.price_max || null,
       close_in: next.close_in || null,
       status: next.status || null,
+      exclude_imminent_days: next.exclude_imminent_days || null,
       eligibility_customer_id: next.eligibility_customer_id || null,
       eligibility_status: next.eligibility_status || null,
       exclude_group: next.exclude_group ? "true" : null,

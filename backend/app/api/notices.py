@@ -31,7 +31,7 @@ from app.services.classification import ClassificationError, record_classificati
 from app.services.notice_dedup import find_and_mark_superseded
 from app.services.notice_detail import follow_org, get_neighbors, get_notice_detail
 from app.services.notice_exclude_words import list_exclude_words
-from app.services.notice_query import DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
+from app.services.notice_query import MIN_LEAD_DAYS_DEFAULT, DEFAULT_TAB, NoticeFilters, count_tabs, filter_options, list_notices
 from app.services.notice_topics import add_topic, remove_topic
 from app.services.sllm_client import SllmNotConfiguredError
 
@@ -53,6 +53,8 @@ def _notice_filters(
     work_type: list[str] = Query(default_factory=list, alias="work_type[]"),
     close_in: int | None = Query(None),
     status_: str | None = Query(None, alias="status"),
+    # 마감임박 제외(2026-09-28, 기본 7일) — "마감 임박"(close_in)과 반대 방향. 0이면 해제.
+    exclude_imminent_days: int = Query(MIN_LEAD_DAYS_DEFAULT),
     eligibility_customer_id: int | None = Query(None),
     eligibility_status: str | None = Query(None),  # "ok"/"no"/"unknown"
     sort: str = Query("notice_date_desc"),  # 공고일 최신순 기본(2026-09-08 사용자 지시)
@@ -80,6 +82,7 @@ def _notice_filters(
         work_types=work_type,
         close_in=close_in,
         status=status_,
+        exclude_imminent_days=exclude_imminent_days,
         eligibility_customer_id=eligibility_customer_id,
         eligibility_status=eligibility_status,
         sort=sort,

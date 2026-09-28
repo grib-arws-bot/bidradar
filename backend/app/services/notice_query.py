@@ -115,6 +115,12 @@ class NoticeFilters:
     work_types: list[str] = field(default_factory=list)  # 사업유형(개발/운영/유지보수 등, 근사 추정)
     close_in: int | None = None  # 이 안(일)에 마감
     status: str | None = None  # open/closed
+    # 마감임박 제외(2026-09-28 사용자 지시) — 마감까지 이 값(일) 이내로 남은 공고는 너무
+    # 촉박하다고 보고 제외한다. "마감 임박"(close_in, 마감 임박인 것만 보기)과는 반대
+    # 방향이라 화면에서 구분되도록 이름을 다르게 뒀다. 0이면 필터 해제. 처음엔 화면에
+    # 안 보이는 항상-적용 하드 필터였으나, 기준을 눈으로 보고 바꿀 수 있어야 한다는
+    # 사용자 피드백으로 드롭다운으로 노출(기본값은 그대로 7일 유지).
+    exclude_imminent_days: int = MIN_LEAD_DAYS_DEFAULT
     # 입찰 자격요건 검증(2026-09-23, U17) — 예전 "자격 충족/미충족"(requirement.we_qualify,
     # 시드 데이터라 실제로는 채워지는 적이 없었음)을 대체. 고객마다 자격 프로필이 다르므로
     # 반드시 고객 지정이 함께 필요하다 — 둘 다 있어야 필터가 걸린다(_apply_filters 참고).
@@ -209,11 +215,11 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
     # 필터 옵션이 아니라 무조건 적용(하드 삭제는 안 하지만 탐색 화면엔 최신 건만 보여야 함).
     conditions.append(notice.c.superseded_by_notice_id.is_(None))
 
-    # 마감임박(D-7 이내) 공고는 참여 준비가 사실상 불가능하다고 보고 항상 제외한다
-    # (2026-09-28 사용자 지시) — superseded 제외와 같은 이유로 필터 옵션이 아니라 무조건
-    # 적용. 공고 탐색은 고객 맥락이 없는 일반 화면이라 전역 기본값 하나만 쓴다(고객별
-    # 재정의는 customer_interest.py._passes_hard_filters에서 처리).
-    conditions.append(_min_lead_days_condition(MIN_LEAD_DAYS_DEFAULT, now))
+    # 마감임박 제외(2026-09-28 사용자 지시) — 화면의 "마감임박 제외" 드롭다운 값(기본 7일).
+    # 0이면 필터 해제. 고객 추천 쪽 재정의(customer_interest.py._passes_hard_filters)와는
+    # 별개 축 — 여기는 고객 맥락 없는 일반 화면이라 세션에서 직접 조절하는 값을 쓴다.
+    if filters.exclude_imminent_days > 0:
+        conditions.append(_min_lead_days_condition(filters.exclude_imminent_days, now))
 
     if filters.tab in BID_STATUSES:
         conditions.append(_bid_status_condition(filters.tab, now))

@@ -18,6 +18,10 @@ export interface NoticeFilterValues {
   price_max: string;
   close_in: string;
   status: string;
+  // 마감임박 제외(2026-09-28) — "마감 임박"(close_in, 임박한 것만 보기)과 반대 방향. 다른
+  // 필터와 달리 기본값이 빈 문자열("전체")이 아니라 "7"(항상 켜져 있는 게 정상 상태) —
+  // 완전히 끄려면 명시적으로 "0"(해제)을 골라야 한다.
+  exclude_imminent_days: string;
   // 입찰 자격요건 검증(2026-09-23, U17 5단계) — 예전 "자격 충족/미충족"(qualified,
   // requirement.we_qualify — 시드 데이터라 실제로는 채워지는 적이 없었음)을 대체. 고객마다
   // 자격 프로필이 다르므로 고객 선택이 함께 있어야 필터가 걸린다(고객 없으면 상태 선택 비활성).
@@ -43,6 +47,7 @@ export const EMPTY_FILTERS: NoticeFilterValues = {
   price_max: "",
   close_in: "",
   status: "",
+  exclude_imminent_days: "7",
   eligibility_customer_id: "",
   eligibility_status: "",
   exclude_group: false,
@@ -189,6 +194,20 @@ export function NoticeFilterBar({ options, values, onChange, customers = [] }: P
         <TextField
           select
           size="small"
+          label="마감임박 제외"
+          sx={{ width: 140 }}
+          value={values.exclude_imminent_days}
+          onChange={(e) => set("exclude_imminent_days", e.target.value)}
+        >
+          <MenuItem value="0">해제</MenuItem>
+          <MenuItem value="3">3일 이내</MenuItem>
+          <MenuItem value="7">7일 이내</MenuItem>
+          <MenuItem value="14">14일 이내</MenuItem>
+          <MenuItem value="30">30일 이내</MenuItem>
+        </TextField>
+        <TextField
+          select
+          size="small"
           label="상태"
           sx={{ width: 120 }}
           value={values.status}
@@ -311,6 +330,14 @@ function AppliedChips({ options, values, onChange, customers = [] }: Props) {
       key: "close_in",
       label: `${values.close_in}일 이내 마감`,
       onDelete: () => onChange({ ...values, close_in: "" }),
+    });
+  }
+  // 기본값(7일)은 "정상 상태"라 칩을 안 보여준다 — 해제했거나 다른 일수로 바꿨을 때만 표시.
+  if (values.exclude_imminent_days !== "7") {
+    chips.push({
+      key: "exclude_imminent_days",
+      label: values.exclude_imminent_days === "0" ? "마감임박 제외 해제" : `마감임박 제외: ${values.exclude_imminent_days}일`,
+      onDelete: () => onChange({ ...values, exclude_imminent_days: "7" }),
     });
   }
   if (values.status) {

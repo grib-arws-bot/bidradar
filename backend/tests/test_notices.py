@@ -320,6 +320,24 @@ def test_notice_explore_excludes_imminent_closing_notice_by_default(client: Test
     assert temp_notice_imminent_close not in ids
 
 
+def test_notice_explore_exclude_imminent_days_zero_disables_filter(client: TestClient, temp_notice_imminent_close: int):
+    """화면의 "마감임박 제외" 드롭다운에서 "해제"(0)를 고르면 다시 보여야 한다(2026-09-28)."""
+    response = client.get(
+        "/api/notices", params={"tab": "all", "q": "카타파타XYZ", "size": 20, "exclude_imminent_days": 0}
+    )
+    ids = {item["id"] for item in response.json()["items"]}
+    assert temp_notice_imminent_close in ids
+
+
+def test_notice_explore_exclude_imminent_days_can_be_widened(client: TestClient, temp_notice_imminent_close: int):
+    """3일로 좁히면 D-3짜리 임시 공고는 그 기준 밖이라(3일 미만 아님) 다시 보여야 한다."""
+    response = client.get(
+        "/api/notices", params={"tab": "all", "q": "카타파타XYZ", "size": 20, "exclude_imminent_days": 1}
+    )
+    ids = {item["id"] for item in response.json()["items"]}
+    assert temp_notice_imminent_close in ids
+
+
 def test_exclude_extra_hides_matching_title(client: TestClient, temp_notice_for_exclude: int):
     without_filter = client.get("/api/notices", params={"tab": "all", "q": "가나다라마바사XYZ", "size": 20}).json()
     assert any(item["id"] == temp_notice_for_exclude for item in without_filter["items"])
