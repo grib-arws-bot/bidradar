@@ -294,6 +294,32 @@ def temp_notice_for_exclude(client: TestClient):
         conn.execute(delete(notice).where(notice.c.id == notice_id))
 
 
+@pytest.fixture
+def temp_notice_imminent_close(client: TestClient):
+    """마감까지 3일 남은 임시 공고 하나(제목에 고유 마커) — 마감임박(기본 D-7) 제외 필터가
+    공고 탐색에서도 적용되는지 검증(2026-09-28)."""
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        notice_id = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고",
+                title="[테스트] 카타파타XYZ 마감임박 공고탐색 검증용",
+                url="https://example.grib-test.kr/notice/imminent-close-explore",
+                close_dt=now + timedelta(days=3),
+            ).returning(notice.c.id)
+        ).scalar_one()
+    yield notice_id
+    with engine.begin() as conn:
+        conn.execute(delete(notice).where(notice.c.id == notice_id))
+
+
+def test_notice_explore_excludes_imminent_closing_notice_by_default(client: TestClient, temp_notice_imminent_close: int):
+    response = client.get("/api/notices", params={"tab": "all", "q": "카타파타XYZ", "size": 20})
+    ids = {item["id"] for item in response.json()["items"]}
+    assert temp_notice_imminent_close not in ids
+
+
 def test_exclude_extra_hides_matching_title(client: TestClient, temp_notice_for_exclude: int):
     without_filter = client.get("/api/notices", params={"tab": "all", "q": "가나다라마바사XYZ", "size": 20}).json()
     assert any(item["id"] == temp_notice_for_exclude for item in without_filter["items"])

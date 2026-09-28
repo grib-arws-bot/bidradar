@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.engine import Connection
@@ -23,7 +23,7 @@ from app.models import (
     source,
 )
 from app.services.notice_classification import notice_status_label, notice_type_of, work_type_label
-from app.services.notice_query import compute_bid_status
+from app.services.notice_query import MIN_LEAD_DAYS_DEFAULT, compute_bid_status
 
 # 스펙에 구체적 수치가 없어 U5b에서 확정. 고객별로 달라져야 하면 그때 customer 컬럼으로 승격.
 MIN_SCORE = 30
@@ -76,6 +76,10 @@ class InterestDraft:
     # 관심 공고 추천 시 적용할 금액 하한(2026-09-07 사용자 지시) — 이 값 이상인 est_price를
     # 가진 공고만 추천 대상. None이면 필터 없음(기존 동작과 동일).
     price_min: int | None = None
+    # 마감임박 제외 기준(2026-09-28 사용자 지시) — 마감까지 이 값(일) 이내로 남은 공고는
+    # 너무 촉박해 제외. price_min과 달리 None은 "필터 없음"이 아니라 "전역 기본값
+    # (notice_query.MIN_LEAD_DAYS_DEFAULT) 사용" — 필터를 완전히 끄려면 0을 명시해야 한다.
+    min_lead_days: int | None = None
     # 관심 사업유형 선호(2026-09-21, 의사결정_로그 192번) — app/collector/work_type.
     # WORK_TYPE_CATALOG 중 값 -> "positive"(선호)/"negative"(비선호). 지정 안 한 사업유형은
     # 중립(신호 자체가 안 켜짐). 같은 날 후속 지시로 단순 선택(있다/없다)에서 3단계로
@@ -104,7 +108,8 @@ def get_topic_catalog(conn: Connection) -> list[dict]:
 def get_interest_profile(conn: Connection, customer_id: int) -> dict | None:
     cust = conn.execute(
         select(
-            customer.c.id, customer.c.name, customer.c.interest_price_min, customer.c.interest_work_types
+            customer.c.id, customer.c.name, customer.c.interest_price_min, customer.c.interest_work_types,
+            customer.c.interest_min_lead_days,
         ).where(customer.c.id == customer_id)
     ).mappings().first()
     if cust is None:
@@ -134,6 +139,11 @@ def get_interest_profile(conn: Connection, customer_id: int) -> dict | None:
         "topics": get_topic_catalog(conn),
         "work_type_prefs": cust["interest_work_types"] if isinstance(cust["interest_work_types"], dict) else {},
         "work_types": list(WORK_TYPE_CATALOG),
+        # None이면 전역 기본값을 쓴다는 뜻이지만, 화면에는 실제 적용되는 숫자를 그대로
+        # 보여줘야 "지금 며칠 기준인지" 헷갈리지 않는다 — min_lead_days_default를 별도로
+        # 내려주고 min_lead_days 자체는 고객이 명시적으로 재정의했는지 그대로 노출한다.
+        "min_lead_days": cust["interest_min_lead_days"],
+        "min_lead_days_default": MIN_LEAD_DAYS_DEFAULT,
     }
 
 
@@ -144,6 +154,8 @@ def save_interest_profile(conn: Connection, customer_id: int, draft: InterestDra
             raise ValueError(f"허용되지 않은 우선순위: {priority} (허용: {', '.join(TOPIC_PRIORITIES)})")
     if draft.price_min is not None and draft.price_min < 0:
         raise ValueError(f"금액 하한은 0 이상이어야 합니다: {draft.price_min}")
+    if draft.min_lead_days is not None and draft.min_lead_days < 0:
+        raise ValueError(f"마감임박 제외 기준은 0 이상이어야 합니다: {draft.min_lead_days}")
     for work_type, pref in draft.work_type_prefs.items():
         if work_type not in WORK_TYPE_CATALOG:
             raise ValueError(f"허용되지 않은 사업유형: {work_type} (허용: {', '.join(WORK_TYPE_CATALOG)})")
@@ -152,7 +164,10 @@ def save_interest_profile(conn: Connection, customer_id: int, draft: InterestDra
 
     conn.execute(
         customer.update().where(customer.c.id == customer_id)
-        .values(interest_price_min=draft.price_min, interest_work_types=draft.work_type_prefs)
+        .values(
+            interest_price_min=draft.price_min, interest_work_types=draft.work_type_prefs,
+            interest_min_lead_days=draft.min_lead_days,
+        )
     )
 
     conn.execute(delete(customer_interest).where(customer_interest.c.customer_id == customer_id))
@@ -260,6 +275,11 @@ def _passes_hard_filters(n: dict, draft: InterestDraft, now: datetime) -> bool:
     # 금액 하한(2026-09-07) — est_price가 하한 미만이거나 아예 미공개(None)면 제외한다.
     # 미공개 공고는 하한을 만족하는지 확인할 방법이 없어 점수와 무관하게 하드 필터한다.
     if draft.price_min is not None and (n["est_price"] is None or n["est_price"] < draft.price_min):
+        return False
+    # 마감임박 제외(2026-09-28) — None이면 전역 기본값(price_min과 달리 "필터 없음"이 아님).
+    # close_dt가 없으면(마감 미정) 판단 근거가 없어 제외 대상이 아니다.
+    min_lead_days = draft.min_lead_days if draft.min_lead_days is not None else MIN_LEAD_DAYS_DEFAULT
+    if n["close_dt"] is not None and n["close_dt"] < now + timedelta(days=min_lead_days):
         return False
     return True
 
@@ -377,5 +397,6 @@ def draft_from_profile(profile: dict) -> InterestDraft:
         terms=profile["terms"],
         followed_org_ids=profile["followed_org_ids"],
         price_min=profile["price_min"],
+        min_lead_days=profile["min_lead_days"],
         work_type_prefs=profile["work_type_prefs"],
     )

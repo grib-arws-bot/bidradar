@@ -212,6 +212,9 @@ class InterestPayload(BaseModel):
     terms: list[str] = []
     followed_org_ids: list[int] = []
     price_min: int | None = None  # 관심 공고 추천 금액 하한(2026-09-07), 없으면 필터 없음
+    # 마감임박 제외 기준(2026-09-28, 일 단위) — None이면 전역 기본값(7일) 적용. price_min과
+    # 달리 None이 "필터 없음"이 아니다 — 완전히 끄려면 0을 명시해야 한다.
+    min_lead_days: int | None = None
     # 관심 사업유형 선호(2026-09-21, 의사결정_로그 192번) — {사업유형: "positive"/"negative"},
     # 지정 안 한 사업유형은 중립.
     work_type_prefs: dict[str, str] = {}
@@ -223,6 +226,7 @@ class InterestPayload(BaseModel):
             terms=self.terms,
             followed_org_ids=self.followed_org_ids,
             price_min=self.price_min,
+            min_lead_days=self.min_lead_days,
             work_type_prefs=self.work_type_prefs,
         )
 

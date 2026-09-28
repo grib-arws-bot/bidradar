@@ -43,6 +43,18 @@ BID_STATUSES = ("unscheduled", "upcoming", "in_progress", "closed")
 TABS = ("all",) + BID_STATUSES
 DEFAULT_TAB = "in_progress"
 
+# 마감임박 제외 기준(2026-09-28 사용자 지시) — 마감까지 이 값(일) 이내로 남은 공고는 너무
+# 촉박해 참여 준비가 불가능하다고 보고 제외한다. 공고 탐색(이 전역 기본값 하나만 공통 적용)
+# 과 고객 추천(app/services/customer_interest.py, 고객마다 customer.interest_min_lead_days로
+# 재정의 가능 — 이 상수는 그 fallback) 양쪽이 공유하는 기준값.
+MIN_LEAD_DAYS_DEFAULT = 7
+
+
+def _min_lead_days_condition(min_lead_days: int, now: datetime):
+    """마감(close_dt)까지 min_lead_days일 넘게 남은 것만 통과시킨다. close_dt가 아예 없으면
+    (마감 미정) "촉박하다"는 판단 자체가 안 되므로 걸러내지 않는다."""
+    return notice.c.close_dt.is_(None) | (notice.c.close_dt >= now + timedelta(days=min_lead_days))
+
 
 # 2026-09-05 — 처음엔 "사전규격/발주계획/공모예고 단계는 항상 unscheduled로 고정"하는
 # stage 기반 예외를 뒀었는데, IRIS 접수예정(stage="공모예고")이 실제로는 rcveStrDe(접수시작일)
@@ -196,6 +208,12 @@ def _apply_filters(stmt: Select, filters: NoticeFilters):
     # 이전 단계는 항상 목록·건수에서 뺀다(2026-09-06, notice_dedup.find_and_mark_superseded) —
     # 필터 옵션이 아니라 무조건 적용(하드 삭제는 안 하지만 탐색 화면엔 최신 건만 보여야 함).
     conditions.append(notice.c.superseded_by_notice_id.is_(None))
+
+    # 마감임박(D-7 이내) 공고는 참여 준비가 사실상 불가능하다고 보고 항상 제외한다
+    # (2026-09-28 사용자 지시) — superseded 제외와 같은 이유로 필터 옵션이 아니라 무조건
+    # 적용. 공고 탐색은 고객 맥락이 없는 일반 화면이라 전역 기본값 하나만 쓴다(고객별
+    # 재정의는 customer_interest.py._passes_hard_filters에서 처리).
+    conditions.append(_min_lead_days_condition(MIN_LEAD_DAYS_DEFAULT, now))
 
     if filters.tab in BID_STATUSES:
         conditions.append(_bid_status_condition(filters.tab, now))

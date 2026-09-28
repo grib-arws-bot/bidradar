@@ -24,6 +24,7 @@ const EMPTY_DRAFT: InterestDraft = {
   terms: [],
   followed_org_ids: [],
   price_min: null,
+  min_lead_days: null,
   work_type_prefs: {},
 };
 
@@ -79,6 +80,7 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
       terms: profileQuery.data.terms,
       followed_org_ids: profileQuery.data.followed_org_ids,
       price_min: profileQuery.data.price_min,
+      min_lead_days: profileQuery.data.min_lead_days,
       work_type_prefs: profileQuery.data.work_type_prefs,
     };
     const last = lastSyncedRef.current;
@@ -244,6 +246,28 @@ export function CustomerInterestSection({ customerId }: { customerId: number }) 
             slotProps={{ htmlInput: { min: 0, step: 100 } }}
             sx={{ width: 220 }}
             helperText="추정가격이 이 금액 미만이거나 미공개인 공고는 추천에서 제외됩니다. 비워두면 제한 없음."
+          />
+        </Box>
+
+        <Box>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            마감임박 제외 기준
+          </Typography>
+          <TextField
+            size="small"
+            type="number"
+            label="마감까지 이 일수 이내면 제외"
+            value={draft.min_lead_days ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              update({ min_lead_days: raw === "" ? null : Math.max(0, Math.round(Number(raw))) });
+            }}
+            slotProps={{ htmlInput: { min: 0, step: 1 } }}
+            sx={{ width: 220 }}
+            helperText={
+              `마감까지 이 일수 이내로 남은 공고는 너무 촉박하다고 보고 추천에서 제외합니다. ` +
+              `비워두면 기본값(${profileQuery.data?.min_lead_days_default ?? 7}일) 적용 — 완전히 끄려면 0을 입력하세요.`
+            }
           />
         </Box>
 

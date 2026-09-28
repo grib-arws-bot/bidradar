@@ -20,6 +20,9 @@ export interface InterestDraft {
   // 관심 공고 추천 금액 하한(2026-09-07) — 이 값 이상인 est_price를 가진 공고만 추천 대상.
   // null이면 필터 없음(미공개 est_price 공고는 하한이 걸려 있으면 항상 제외됨).
   price_min: number | null;
+  // 마감임박 제외 기준(2026-09-28, 일 단위) — price_min과 달리 null이 "필터 없음"이 아니라
+  // "전역 기본값(min_lead_days_default) 사용". 완전히 끄려면 0을 명시해야 한다.
+  min_lead_days: number | null;
   // 관심 사업유형 선호(2026-09-21, 의사결정_로그 192번, 같은 날 +/중립/- 3단계로 확장) —
   // {사업유형: "positive"/"negative"}. 지정 안 한 사업유형(work_types 카탈로그에는 있지만
   // 이 맵에 키가 없는 것)은 중립 — 감리·구매처럼 "들어가면 오히려 감점해야 할" 유형을
@@ -34,6 +37,9 @@ export interface InterestProfile extends InterestDraft {
   // 사업유형 고정 카탈로그(개발/연구/구매/구축/물품/용역/유지보수/운영/고도화) — 화면
   // 체크리스트용. interest_topic처럼 관리자가 편집하는 카탈로그가 아니라 코드에 고정된 값.
   work_types: string[];
+  // min_lead_days가 null일 때 실제로 적용되는 전역 기본값(현재 7) — 화면에 "지금 며칠
+  // 기준인지" 그대로 보여주기 위함.
+  min_lead_days_default: number;
 }
 
 export async function fetchCustomers(): Promise<CustomerSummary[]> {

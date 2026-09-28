@@ -93,6 +93,9 @@ def test_get_interests_shape(client: TestClient, customer_a_id: int):
     assert {"topic_ids", "topic_priorities", "terms", "followed_org_ids", "price_min", "topics"} <= body.keys()
     assert len(body["topics"]) > 0
     assert body["price_min"] is None
+    # 마감임박 제외 기준(2026-09-28) — 미설정이면 None, 실제 적용되는 전역 기본값도 함께 내려줌.
+    assert body["min_lead_days"] is None
+    assert body["min_lead_days_default"] == 7
 
 
 def test_get_interests_404_for_unknown_customer(client: TestClient):
@@ -193,6 +196,40 @@ def test_save_rejects_negative_price_min(client: TestClient, customer_a_id: int)
     response = client.put(
         f"/api/customers/{customer_a_id}/interests",
         json={"topic_ids": [], "terms": [], "followed_org_ids": [], "price_min": -1},
+    )
+    assert response.status_code == 400
+
+
+def test_save_and_load_min_lead_days(client: TestClient, customer_a_id: int):
+    response = client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "min_lead_days": 14},
+    )
+    assert response.status_code == 204
+    profile = client.get(f"/api/customers/{customer_a_id}/interests").json()
+    assert profile["min_lead_days"] == 14
+
+    # 0은 "필터를 완전히 끔"이라는 유효한 값이라 None과 구분돼 저장돼야 한다.
+    client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "min_lead_days": 0},
+    )
+    profile = client.get(f"/api/customers/{customer_a_id}/interests").json()
+    assert profile["min_lead_days"] == 0
+
+    # 다시 비우면(null) 전역 기본값을 쓴다는 뜻으로 되돌아가야 한다.
+    client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "min_lead_days": None},
+    )
+    profile = client.get(f"/api/customers/{customer_a_id}/interests").json()
+    assert profile["min_lead_days"] is None
+
+
+def test_save_rejects_negative_min_lead_days(client: TestClient, customer_a_id: int):
+    response = client.put(
+        f"/api/customers/{customer_a_id}/interests",
+        json={"topic_ids": [], "terms": [], "followed_org_ids": [], "min_lead_days": -1},
     )
     assert response.status_code == 400
 
@@ -458,7 +495,9 @@ def deadline_notices():
         notice_open = conn.execute(
             insert(notice).values(
                 source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 아직 마감 전 공고",
-                url="https://example.grib-test.kr/notice/deadline-open", close_dt=now + timedelta(days=7),
+                # 2026-09-28 — 마감임박(D-7 이내) 제외 필터가 새로 생겨서, 이 테스트의 취지
+                # ("아직 마감 안 지남")와 별개인 그 필터에 걸리지 않도록 충분히 멀리 잡는다.
+                url="https://example.grib-test.kr/notice/deadline-open", close_dt=now + timedelta(days=30),
             ).returning(notice.c.id)
         ).scalar_one()
         notice_no_deadline = conn.execute(
@@ -486,6 +525,76 @@ def test_already_closed_notice_excluded_from_recommendations(deadline_notices):
     assert deadline_notices["notice_closed"] not in matched_ids
     assert deadline_notices["notice_open"] in matched_ids
     assert deadline_notices["notice_no_deadline"] in matched_ids
+
+
+# ---- 마감임박 제외 기준(2026-09-28 사용자 지시, 기본 D-7) -------------------------------
+
+
+@pytest.fixture
+def imminent_notices():
+    """마감까지 3일 남은 것(기본 D-7 안에 걸림)·10일 남은 것(안 걸림)·마감일 없는 것 3건."""
+    with engine.connect() as conn:
+        from app.models import interest_topic
+        source_id = conn.execute(select(source.c.id).order_by(source.c.id).limit(1)).scalar_one()
+        topic_id = conn.execute(select(interest_topic.c.id).order_by(interest_topic.c.id).limit(1)).scalar_one()
+
+    now = datetime.now(timezone.utc)
+    with engine.begin() as conn:
+        notice_3d = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 마감 3일 남은 공고",
+                url="https://example.grib-test.kr/notice/lead-3d", close_dt=now + timedelta(days=3),
+            ).returning(notice.c.id)
+        ).scalar_one()
+        notice_10d = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="입찰공고", title="[테스트] 마감 10일 남은 공고",
+                url="https://example.grib-test.kr/notice/lead-10d", close_dt=now + timedelta(days=10),
+            ).returning(notice.c.id)
+        ).scalar_one()
+        notice_none = conn.execute(
+            insert(notice).values(
+                source_id=source_id, source_ver=1, stage="사전규격", title="[테스트] 마감일 없는 공고(마감임박 검증용)",
+                url="https://example.grib-test.kr/notice/lead-none", close_dt=None,
+            ).returning(notice.c.id)
+        ).scalar_one()
+        ids = [notice_3d, notice_10d, notice_none]
+        for nid in ids:
+            conn.execute(insert(notice_score).values(notice_id=nid, interest_topic_id=topic_id, l2_score=4, reason="테스트", rule_ver=1))
+
+    yield {"topic_id": topic_id, "notice_3d": notice_3d, "notice_10d": notice_10d, "notice_none": notice_none}
+
+    with engine.begin() as conn:
+        conn.execute(delete(notice_score).where(notice_score.c.notice_id.in_(ids)))
+        conn.execute(delete(notice).where(notice.c.id.in_(ids)))
+
+
+def test_default_min_lead_days_excludes_imminent_closing_notice(imminent_notices):
+    draft = InterestDraft(topic_ids=[imminent_notices["topic_id"]])  # min_lead_days=None -> 기본값 7일
+    with engine.connect() as conn:
+        scored = _score_all(conn, draft, min_score=0)
+    matched_ids = {n["id"] for n, _s, _m in scored}
+    assert imminent_notices["notice_3d"] not in matched_ids
+    assert imminent_notices["notice_10d"] in matched_ids
+    assert imminent_notices["notice_none"] in matched_ids
+
+
+def test_min_lead_days_zero_disables_the_filter(imminent_notices):
+    draft = InterestDraft(topic_ids=[imminent_notices["topic_id"]], min_lead_days=0)
+    with engine.connect() as conn:
+        scored = _score_all(conn, draft, min_score=0)
+    matched_ids = {n["id"] for n, _s, _m in scored}
+    assert imminent_notices["notice_3d"] in matched_ids
+
+
+def test_min_lead_days_customer_override_is_stricter(imminent_notices):
+    draft = InterestDraft(topic_ids=[imminent_notices["topic_id"]], min_lead_days=14)
+    with engine.connect() as conn:
+        scored = _score_all(conn, draft, min_score=0)
+    matched_ids = {n["id"] for n, _s, _m in scored}
+    assert imminent_notices["notice_3d"] not in matched_ids
+    assert imminent_notices["notice_10d"] not in matched_ids  # 14일 기준으로는 10일도 촉박
+    assert imminent_notices["notice_none"] in matched_ids
 
 
 # ---- 리포트 2단계 섹션(사전규격·접수예정/입찰접수·접수중, 2026-09-07) ----------------------
