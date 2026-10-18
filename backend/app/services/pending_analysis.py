@@ -17,6 +17,8 @@ source.auto_extract/auto_analyze가 "관리자가 미리 정해둔 설정"이라
 
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import and_, select
 from sqlalchemy.engine import Connection
 
@@ -211,14 +213,27 @@ def process_new_notices(
     }
 
 
-def run_pending_analysis(source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT) -> dict:
+def run_pending_analysis(
+    source_id: int | None = None, *, batch_limit: int = DEFAULT_BATCH_LIMIT, deadline: float | None = None
+) -> dict:
     """대기 중인 A1·A2를 공고 단위로 각각 별도 트랜잭션에서 실행한다. source_id를 주면 그
-    소스만, 생략하면 auto_extract/auto_analyze가 켜진 모든 소스를 대상으로 한다."""
+    소스만, 생략하면 auto_extract/auto_analyze가 켜진 모든 소스를 대상으로 한다.
+
+    deadline(2026-10-18, time.monotonic() 기준 시각) — OCR 폴백 사슬(app/services/
+    document_extract.py)이 도입된 뒤 잔고가 크면(스캔본 PDF·HWP 이미지 OCR은 공고 하나도
+    수십 초씩 걸릴 수 있음) 이 함수 하나가 몇 시간씩 끝나지 않는 사고가 실측됐다
+    (bidradar-scheduler-1 리소스 폭주, thingx.grib-iot.com 공유 서버에 영향 — ARWS 세션이
+    OOM으로 강제 종료됨). run_pending_backlog(app/scheduler.py)가 10분 주기 실행 예산 안에서
+    이 시각을 넘기면 다음 공고부터는 시작하지 않고 이번 회차를 끝낸다 — 이미 시작한 공고는
+    끝까지 처리하고(중간에 끊으면 analysis 레코드가 어중간한 상태로 남을 수 있음), 남은
+    후보는 그대로 다음 회차(10분 뒤)로 넘어간다(아무것도 "완료"로 안 찍혔으니 안전)."""
     auto_extracted = 0
     with engine.connect() as conn:
         extraction_candidates = _pending_extraction_notice_ids(conn, source_id, batch_limit)
 
     for notice_id in extraction_candidates:
+        if deadline is not None and time.monotonic() > deadline:
+            break
         try:
             with engine.begin() as conn:
                 run_extraction_pilot(conn, notice_id)
@@ -233,6 +248,8 @@ def run_pending_analysis(source_id: int | None = None, *, batch_limit: int = DEF
         analyze_candidates = _pending_analyze_notice_ids(conn, source_id, batch_limit)
 
     for notice_id in analyze_candidates:
+        if deadline is not None and time.monotonic() > deadline:
+            break
         # try/except를 with 블록 안에 둬야 실패 기록이 롤백 없이 커밋된다(위 process_new_
         # notices와 같은 이유, 2026-09-08).
         with engine.begin() as conn:

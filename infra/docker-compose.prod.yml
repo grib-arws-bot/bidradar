@@ -49,8 +49,17 @@ services:
       # 내부 리스닝 포트일 뿐 외부에서 직접 안 열림.
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://thingx.grib-iot.com:9997}
 
-  # scheduler는 애초에 호스트 포트를 안 쓰므로(docker-compose.yml에 ports 자체가 없음) 여기 별도
-  # 오버라이드가 불필요 — ENVIRONMENT는 스케줄러 자체 동작(수집 로직)엔 영향 없어 생략.
+  # 2026-10-18 — mem_limit 안전장치(의사결정_로그 208번). OCR 폴백 사슬(document_extract.py)
+  # 도입 뒤 잔고가 크면 이 컨테이너가 리소스를 과점하는 사고가 실측됐다(bidradar-scheduler-1이
+  # 2.8GiB/368% CPU까지 치솟아 이 서버를 공유하는 ARWS 세션이 OOM으로 강제 종료됨). 근본
+  # 원인(run_pending_backlog가 끝없이 도는 문제)은 app/scheduler.py에 실행 예산(5분)을 둬서
+  # 고쳤지만, 이 서버는 ARWS·n8n·Baserow와 메모리를 나눠 쓰므로(2026-09-09 서버 공유 계획 때
+  # 이미 권장됐던 안전장치, 그때는 실제로 적용 안 돼 있었음) 코드 버그가 또 생기더라도 이
+  # 컨테이너 하나가 호스트 전체를 못 끌고 내려가게 상한을 이중으로 건다. memswap_limit을
+  # mem_limit과 같게 둬 스왑까지 끌어쓰지 못하게 막는다(이번 사고에서 스왑도 거의 소진됨).
+  scheduler:
+    mem_limit: 3g
+    memswap_limit: 3g
 
   frontend:
     ports: !override []

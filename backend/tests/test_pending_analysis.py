@@ -422,6 +422,56 @@ def test_process_new_notices_background_actually_completes(monkeypatch):
         _cleanup(source_id, [notice_id])
 
 
+# ---- deadline(2026-10-18) — OCR 잔고 폭주 사고 이후 도입된 실행 예산 ----------------------
+
+
+def test_run_pending_analysis_deadline_already_passed_skips_extraction(monkeypatch):
+    """deadline이 이미 지난 시각이면 추출 후보는 찾되(쿼리는 이미 끝난 뒤 받은 값) 하나도
+    시작하지 않아야 한다 — bidradar-scheduler-1 리소스 폭주 사고(2026-10-18) 이후 추가한
+    실행 예산이 실제로 작동하는지 확인."""
+    pilot_fetch = mock.Mock()
+    monkeypatch.setattr("app.services.analysis_pilot.fetch", pilot_fetch)
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, auto_extract=True)
+        notice_id = _make_notice(conn, source_id, "https://www.iris.go.kr/test/TESTDEADLINE1")
+
+    try:
+        result = run_pending_analysis(source_id, deadline=time.monotonic() - 1)
+        assert result["extraction_candidates"] == 1
+        assert result["auto_extracted"] == 0
+        pilot_fetch.assert_not_called()
+
+        with engine.connect() as conn:
+            has_analysis = conn.execute(select(analysis.c.id).where(analysis.c.notice_id == notice_id)).first()
+        assert has_analysis is None  # 어중간한 상태로 남지 않음 — 다음 회차에 그대로 재시도 가능
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
+def test_run_pending_analysis_deadline_already_passed_skips_analyze(monkeypatch):
+    """A1까지는 이미 완료된 공고라도, deadline이 지났으면 A2(구조화)는 시작하지 않아야 한다."""
+    structure_fetch = mock.Mock()
+    monkeypatch.setattr("app.services.analysis.structure.fetch", structure_fetch)
+
+    with engine.begin() as conn:
+        source_id = _make_temp_source(conn, auto_extract=True, auto_analyze=True)
+        notice_id = _make_notice(conn, source_id, "https://www.iris.go.kr/test/TESTDEADLINE2")
+        conn.execute(
+            insert(analysis).values(
+                notice_id=notice_id, source_kind="notice", input_ref="x", step="A1_extract", status="done", ver=1,
+            )
+        )
+
+    try:
+        result = run_pending_analysis(source_id, deadline=time.monotonic() - 1)
+        assert result["analyze_candidates"] == 1
+        assert result["auto_analyzed"] == 0
+        structure_fetch.assert_not_called()
+    finally:
+        _cleanup(source_id, [notice_id])
+
+
 def test_process_new_notices_records_a2_failure_instead_of_losing_it(monkeypatch):
     """2026-09-08 실측 버그 회귀 테스트 — A2(LLM 호출)가 실패하면 그 실패가 DB에 남아야
     한다("시도조차 안 한 것"처럼 조용히 사라지면 안 됨, CLAUDE.md S8). 원인은

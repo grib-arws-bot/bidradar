@@ -128,7 +128,11 @@ def test_run_pending_backlog_returns_counts_from_run_pending_analysis():
     with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result) as mock_run, \
          mock.patch("app.scheduler.run_pending_embeddings", return_value={"candidates": 0, "embedded": 0}) as mock_embed:
         result = run_pending_backlog()
-    mock_run.assert_called_once_with()
+    # 2026-10-18 -- 실행 예산(deadline)이 추가되며 run_pending_analysis가 키워드 인자 하나를
+    # 받게 됐다 -- 정확한 monotonic 값은 의미가 없으니 "float 하나를 deadline으로 넘겼는지"만 확인.
+    mock_run.assert_called_once()
+    assert mock_run.call_args.args == ()
+    assert isinstance(mock_run.call_args.kwargs.get("deadline"), float)
     assert mock_embed.call_count == 2  # variant="title" 1회 + variant="attachment" 1회, 각각 대기열 소진되자마자 중단
     assert result == fake_result
 
@@ -157,6 +161,29 @@ def test_run_pending_backlog_drains_embedding_backlog_within_one_tick():
         run_pending_backlog()
     # title: 대기열 없음(1회로 중단) + attachment: 200+200+50 세 번 만에 소진(50 < 상한에서 중단)
     assert mock_embed.call_count == 1 + 3
+
+
+def test_run_pending_backlog_stops_once_time_budget_exceeded(monkeypatch):
+    """2026-10-18 -- bidradar-scheduler-1 리소스 폭주 사고 재현 테스트. 대기열이 아무리 커도
+    (여기선 attachment 변인가 매번 배치 상한만큼 꽉 차서 더 남아있는 것처럼 굴어도) 실행
+    예산(deadline)을 넘기면 그 다음 배치를 새로 시작하지 않아야 한다 -- 임베딩뿐 아니라
+    그 뒤의 sLLM 시맨틱 매칭도 이어서 시작하지 않는다(이미 예산을 넘긴 상태이므로)."""
+    from app.services.embeddings import DEFAULT_BATCH_LIMIT
+
+    fake_result = {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
+    full_batch = {"candidates": DEFAULT_BATCH_LIMIT, "embedded": DEFAULT_BATCH_LIMIT}
+    # time.monotonic() 호출 순서: ①deadline 계산 ②title while조건 ③attachment while조건(1회차)
+    # ④attachment while조건(2회차, 예산 초과로 False) ⑤sLLM while조건(이미 초과라 바로 False).
+    monotonic_values = iter([0, 1, 2, 400, 400])
+    monkeypatch.setattr("app.scheduler.time.monotonic", lambda: next(monotonic_values))
+
+    with mock.patch("app.scheduler.run_pending_analysis", return_value=fake_result), \
+         mock.patch("app.scheduler.run_pending_embeddings", side_effect=[{"candidates": 0, "embedded": 0}, full_batch]) as mock_embed, \
+         mock.patch("app.scheduler.run_pending_sllm_topic_match") as mock_topic:
+        run_pending_backlog()
+
+    assert mock_embed.call_count == 2  # title 1회(대기열 없음) + attachment 1회(두 번째 배치는 예산 초과로 생략)
+    mock_topic.assert_not_called()  # 임베딩만으로 이미 예산을 다 써서 sLLM 매칭은 아예 시작 안 함
 
 
 def test_run_pending_backlog_does_not_raise_when_run_pending_analysis_fails():

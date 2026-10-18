@@ -149,6 +149,19 @@ def run_due_customer_emails(now: datetime | None = None) -> list[int]:
     return sent
 
 
+#  2026-10-18 — OCR 폴백 사슬(document_extract.py, 2026-09-21/23 도입) 때문에 공고 한 건의
+# A1 추출이 스캔본 PDF·HWP 이미지 OCR로 수십 초씩 걸릴 수 있게 됐다. 그 상태에서 잔고가 크게
+# 쌓이면(오늘 실측: A1 대기 3,010건 + sLLM 주제매칭 대기 7,721건) 이 함수 한 번의 호출이
+# 몇 시간째 안 끝나는 사고가 실제로 발생 — run_pending_backlog가 max_instances=1이라 다음
+# 예정 실행들이 계속 skip되고, 그 몇 시간 동안 쉬지 않고 OCR·sLLM 호출을 돌리는 바람에
+# thingx.grib-iot.com(ARWS·n8n·Baserow와 공유하는 서버)의 CPU·메모리를 독점해 ARWS 세션이
+# OOM으로 강제 종료됨. 잔고 자체를 한 회차에 다 비우려 하지 않고, 이 예산을 넘기면 이번
+# 회차를 깔끔히 끝내고 나머지는 다음 10분 뒤 회차로 넘긴다 — 스케줄 간격(10분)보다 짧게 잡아
+# 컨테이너가 매 주기 반드시 쉬는 구간을 갖게 한다(전부 멈추는 게 아니라 "조금씩 계속 줄어듦"
+# 으로 바꾸는 것 — 잔고가 아무리 커도 다음 회차에 또 이어서 처리되므로 데이터는 안 잃음).
+_BACKLOG_TIME_BUDGET_SECONDS = 300
+
+
 def run_pending_backlog() -> dict:
     """`process_new_notices`(방금 수집한 공고 전용)가 못 잡는 잔고를 주기적으로 쓸어담는다
     (2026-09-13, 의사결정_로그 126번). 웹 페이지의 "재분석" 버튼은 첨부 재추출(A1) 뒤 AI분석
@@ -157,8 +170,9 @@ def run_pending_backlog() -> dict:
     "이번에 새로 수집된 공고"만 봄) — 실사례(notice_id=5476)로 발견. 사용자 지시: "수집/분석
     자동화는 웹 페이지가 떠 있든 말든 백그라운드에서 자동으로 되어야 한다" — run_due_sources와
     별개로 몇 분마다 이 함수가 대신 훑어 마저 처리한다."""
+    deadline = time.monotonic() + _BACKLOG_TIME_BUDGET_SECONDS
     try:
-        result = run_pending_analysis()
+        result = run_pending_analysis(deadline=deadline)
     except Exception:  # noqa: BLE001 — 이번 회차 실패가 다음 예정 실행(run_due_sources 등)을 막으면 안 됨
         logger.exception("잔고 처리(run_pending_analysis) 실패")
         return {"extraction_candidates": 0, "auto_extracted": 0, "analyze_candidates": 0, "auto_analyzed": 0}
@@ -186,7 +200,7 @@ def run_pending_backlog() -> dict:
         total_candidates = 0
         total_embedded = 0
         try:
-            while True:
+            while time.monotonic() < deadline:
                 embed_result = run_pending_embeddings(variant=variant)
                 total_candidates += embed_result["candidates"]
                 total_embedded += embed_result["embedded"]
@@ -216,7 +230,7 @@ def run_pending_backlog() -> dict:
     total_topic_candidates = 0
     total_topic_matched = 0
     try:
-        while True:
+        while time.monotonic() < deadline:
             topic_result = run_pending_sllm_topic_match()
             total_topic_candidates += topic_result["candidates"]
             total_topic_matched += topic_result["matched"]
